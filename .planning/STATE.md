@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-02-28T15:00:00.000Z"
+last_updated: "2026-02-28T19:14:15.125Z"
 progress:
   total_phases: 1
   completed_phases: 0
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 Phase: 1 of 3 (Transport and Core Keyboard)
 Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-02-28 — Completed plan 01-04 (QR pairing + Dynamic Island Live Activity)
+Last activity: 2026-02-28 — Completed quick task 1: swap the "select all" and "tab" shortcut positions
 
 Progress: [████████░░] 80% (4 of 5 phase plans with SUMMARY)
 
@@ -81,6 +81,12 @@ None.
 - [Phase 1]: AWDL entitlement requirements for self-signed personal-use provisioning are LOW confidence — must test NWBrowser + NWListener on a physical device with infrastructure Wi-Fi and Bluetooth disabled before writing any AWDL-dependent code
 - [Phase 1]: usbmuxd iOS 18 TCP forwarding behavior needs physical-device validation before building the full transport layer
 - [Phase 2]: AXObserver cross-process PID behavior for Safari and Firefox web content processes — verify before implementing real-time reflection
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 1 | swap the "select all" and "tab" shortcut positions | 2026-02-28 | c1b35cb | [1-swap-the-select-all-and-tab-shortcut-pos](./quick/1-swap-the-select-all-and-tab-shortcut-pos/) |
 
 ## Session Continuity
 
