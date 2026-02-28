@@ -3,18 +3,39 @@ import SwiftUI
 @main
 struct KeydApp: App {
     @StateObject private var transportManager = TransportManager()
-    @State private var isSecureInputActive = false
+    @StateObject private var pairingManager = PairingManager()
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(transportManager)
-                .onAppear {
-                    transportManager.onSecureInputChanged = { active in
-                        isSecureInputActive = active
-                    }
+            Group {
+                if pairingManager.isPaired {
+                    // Keyboard is active — full app
+                    RootView()
+                        .environmentObject(transportManager)
+                        .environmentObject(pairingManager)
+                } else {
+                    // First launch — show QR pairing screen
+                    PairingView(pairingManager: pairingManager)
+                        .environmentObject(transportManager)
+                        .onAppear {
+                            // Start transport so we can send PairingRequest after QR scan
+                            transportManager.start()
+                        }
+                }
+            }
+            .onReceive(pairingManager.$isPaired) { paired in
+                if paired {
+                    // Just paired — restart transport with authenticated connection
                     transportManager.start()
                 }
+            }
+            // Handle keyd://reconnect deep link from Dynamic Island reconnect button
+            // CONTEXT.md locked decision: expanded Dynamic Island has reconnect button
+            .onOpenURL { url in
+                guard url.scheme == "keyd", url.host == "reconnect" else { return }
+                print("[KeydApp] Reconnect triggered from Dynamic Island")
+                transportManager.start()
+            }
         }
     }
 }
