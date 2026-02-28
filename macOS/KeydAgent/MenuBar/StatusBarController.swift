@@ -76,6 +76,13 @@ final class StatusBarController {
         }
     }
 
+    /// Red xmark.circle.fill icon for missing permission items.
+    private static let redXImage: NSImage? = {
+        let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+        return NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "not granted")?
+            .withSymbolConfiguration(config)
+    }()
+
     private func buildMenu() {
         let menu = NSMenu()
         let target = MenuTarget(checker: checker, permissions: permissions)
@@ -91,20 +98,22 @@ final class StatusBarController {
             // that opens its specific System Settings privacy page.
             if !permissions.accessibility {
                 let axItem = NSMenuItem(
-                    title: "❌  Accessibility",
+                    title: "Accessibility",
                     action: #selector(MenuTarget.openAccessibilitySettings),
                     keyEquivalent: ""
                 )
+                axItem.image = Self.redXImage
                 axItem.target = target
                 menu.addItem(axItem)
             }
 
             if !permissions.inputMonitoring {
                 let imItem = NSMenuItem(
-                    title: "❌  Input Monitoring",
+                    title: "Input Monitoring",
                     action: #selector(MenuTarget.openInputMonitoringSettings),
                     keyEquivalent: ""
                 )
+                imItem.image = Self.redXImage
                 imItem.target = target
                 menu.addItem(imItem)
             }
@@ -158,9 +167,10 @@ private final class MenuTarget: NSObject {
     }
 
     @objc func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        // AXIsProcessTrustedWithOptions(prompt:true) is the official API for opening
+        // the Accessibility privacy pane — more reliable than URL schemes on Sequoia.
+        let options: CFDictionary = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
     }
 
     @objc func openInputMonitoringSettings() {
