@@ -70,9 +70,28 @@ final class TransportManager {
     }
 
     private func handleNewConnection(_ connection: NWConnection, transport: ConnectionKind) async {
-        connection.start(queue: .global(qos: .userInteractive))
-        logEvent("\(transport) connection received")
+        logEvent("\(transport) connection accepted")
 
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                Task { @MainActor in
+                    await self?.activateConnection(connection, transport: transport)
+                }
+            case .failed(let error):
+                Task { @MainActor in
+                    self?.logEvent("\(transport) connection failed before ready: \(error.localizedDescription)")
+                }
+            default:
+                break
+            }
+        }
+
+        connection.start(queue: .global(qos: .userInteractive))
+    }
+
+    private func activateConnection(_ connection: NWConnection, transport: ConnectionKind) async {
+        logEvent("\(transport) connection ready")
         switch (connectionState, transport) {
         case (.awdlConnected(let old), .usb), (.pairingAWDL(let old), .usb):
             // USB connects while AWDL was active — promote USB (re-plug case)
@@ -83,6 +102,11 @@ final class TransportManager {
         case (.disconnected, .usb):
             connectionState = .usbConnected(connection)
             statusBar.update(state: .usb)
+        case (.awdlConnected(let old), .awdl):
+            old.cancel()
+            connectionState = .awdlConnected(connection)
+            statusBar.update(state: .awdl)
+            logEvent("Replaced stale AWDL connection")
         case (.disconnected, .awdl):
             if pairingManager.isPaired {
                 connectionState = .awdlConnected(connection)
@@ -102,7 +126,7 @@ final class TransportManager {
             logEvent("AWDL pre-warmed while USB active (standby)")
             startAWDLStandby(connection)
             return
-        case (.usbConnected, .usb), (.awdlConnected, .awdl):
+        case (.usbConnected, .usb):
             logEvent("Ignoring duplicate \(transport) connection")
             connection.cancel()
             return
