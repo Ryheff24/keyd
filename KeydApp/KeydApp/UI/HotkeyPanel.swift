@@ -51,7 +51,7 @@ struct HotkeyPanel: View {
         Hotkey("Select All",                                                key: VirtualKey.a, mods: .command),
         Hotkey("Delete Word",                                              key: VirtualKey.delete, mods: .option),
         Hotkey("Delete Line",                                              key: VirtualKey.delete, mods: .command),
-        Hotkey("Screenshot",                                              key: VirtualKey.three, mods: [.command, .shift]),
+        Hotkey("Screenshot",                                              key: VirtualKey.four, mods: [.command, .shift]),
         Hotkey("Quit",                                                   key: VirtualKey.q, mods: .command, destructive: true),
     ]
 
