@@ -35,6 +35,8 @@ final class PairingManager: ObservableObject {
         pairingError = nil
 
         do {
+            transportManager.logConnectionEvent("QR scan received")
+
             // Decode QR payload
             guard let qrData = qrString.data(using: .utf8),
                   let payload = try? JSONDecoder().decode(QRPayload.self, from: qrData) else {
@@ -53,6 +55,7 @@ final class PairingManager: ObservableObject {
             let iOSPrivateKey = Curve25519.KeyAgreement.PrivateKey()
             let iOSPublicKey = iOSPrivateKey.publicKey
 
+            transportManager.logConnectionEvent("Waiting for pairing transport")
             try await transportManager.waitForConnection()
 
             // Send pairing request to macOS
@@ -60,8 +63,9 @@ final class PairingManager: ObservableObject {
                 publicKeyData: iOSPublicKey.rawRepresentation,
                 deviceID: UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
             )
-            try await transportManager.sendMessage(.pairingRequest(request))
+            try await transportManager.sendPairingRequest(request)
 
+            transportManager.logConnectionEvent("Waiting for pairing response")
             let response = try await transportManager.awaitPairingResponse()
             guard response.accepted else {
                 throw PairingError.rejectedByMac

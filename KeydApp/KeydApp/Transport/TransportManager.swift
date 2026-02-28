@@ -259,6 +259,24 @@ final class TransportManager: ObservableObject {
         throw TransportError.notConnected
     }
 
+    func sendPairingRequest(_ request: PairingRequest) async throws {
+        let message = KeydMessage.pairingRequest(request)
+
+        if await usbTransport.hasConnection() {
+            try await usbTransport.sendBestEffort(message)
+            logConnectionEvent("Queued pairing request over USB")
+            return
+        }
+
+        if await awdlTransport.hasConnection() {
+            try await awdlTransport.sendBestEffort(message)
+            logConnectionEvent("Queued pairing request over AWDL")
+            return
+        }
+
+        throw TransportError.notConnected
+    }
+
     func waitForConnection(timeoutNanoseconds: UInt64 = 8_000_000_000) async throws {
         let usbConnected = await usbTransport.hasConnection()
         let awdlConnected = await awdlTransport.hasConnection()

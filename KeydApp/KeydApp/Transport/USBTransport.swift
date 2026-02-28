@@ -136,6 +136,14 @@ actor USBTransport {
         }
     }
 
+    func sendBestEffort(_ message: KeydMessage) throws {
+        guard let conn = connection else {
+            throw URLError(.notConnectedToInternet)
+        }
+        let frame = try encoder.encode(message)
+        conn.send(content: frame, completion: .idempotent)
+    }
+
     func disconnect() {
         connection?.cancel()
         connection = nil

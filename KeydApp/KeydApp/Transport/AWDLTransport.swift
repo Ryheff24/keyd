@@ -127,6 +127,14 @@ actor AWDLTransport {
         }
     }
 
+    func sendBestEffort(_ message: KeydMessage) throws {
+        guard let conn = connection else {
+            throw URLError(.notConnectedToInternet)
+        }
+        let frame = try encoder.encode(message)
+        conn.send(content: frame, completion: .idempotent)
+    }
+
     var isConnected: Bool { connection != nil }
 
     func hasConnection() -> Bool { connection != nil }
