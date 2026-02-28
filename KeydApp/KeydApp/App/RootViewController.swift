@@ -100,12 +100,11 @@ struct RootView: View {
                     transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: keyCode, keyDown: false)))
                 },
                 onBackspaceStart: {
-                    // Long-press (0.5s) entered word-delete mode: send Option-Backspace
+                    // Sustained backspace hold ramped into word-delete repeat: send Option-Backspace
                     sendHotkey(virtualKey: VirtualKey.delete, modifiers: .option)
                 },
                 onBackspaceEnd: {
-                    // No-op: word-delete is sent as a single atomic event in onBackspaceStart
-                    // (unlike char-delete which is continuous -- word-delete fires once per hold trigger)
+                    // No-op: word-delete repeats are driven directly from backspace repeat events.
                 }
             )
         }

@@ -172,18 +172,16 @@ private final class KeyboardInputContainer: UIView {
 
 private final class InterceptingTextField: UITextField {
     private static let backingText = "\u{200B}"
-    private static let wordDeleteDelay: TimeInterval = 0.5
-    private static let holdRecognitionFloor: TimeInterval = 0.28
+    private static let repeatRecognitionFloor: TimeInterval = 0.22
+    private static let wordDeleteRampDelay: TimeInterval = 3.0
     private static let holdContinuationTimeout: TimeInterval = 0.8
 
     var onBackspace: (() -> Void)?
     var onBackspaceStart: (() -> Void)?
     var onBackspaceEnd: (() -> Void)?
 
-    private var backspaceBurstStartedAt: TimeInterval?
     private var lastBackspaceEventAt: TimeInterval?
-    private var isHoldSequence = false
-    private var didTriggerWordDelete = false
+    private var repeatStartedAt: TimeInterval?
     private var releaseWorkItem: DispatchWorkItem?
 
     override var canBecomeFirstResponder: Bool { true }
@@ -206,7 +204,7 @@ private final class InterceptingTextField: UITextField {
 
         let now = ProcessInfo.processInfo.systemUptime
         guard let lastBackspaceEventAt else {
-            beginBackspaceBurst(at: now)
+            beginBackspaceBurst()
             onBackspace?()
             self.lastBackspaceEventAt = now
             scheduleBackspaceRelease()
@@ -216,7 +214,7 @@ private final class InterceptingTextField: UITextField {
 
         let gap = now - lastBackspaceEventAt
         guard gap <= Self.holdContinuationTimeout else {
-            beginBackspaceBurst(at: now)
+            beginBackspaceBurst()
             onBackspace?()
             self.lastBackspaceEventAt = now
             scheduleBackspaceRelease()
@@ -224,11 +222,11 @@ private final class InterceptingTextField: UITextField {
             return
         }
 
-        if !isHoldSequence {
-            if gap >= Self.holdRecognitionFloor {
-                isHoldSequence = true
+        if repeatStartedAt == nil {
+            if gap >= Self.repeatRecognitionFloor {
+                repeatStartedAt = now
             } else {
-                beginBackspaceBurst(at: now)
+                beginBackspaceBurst()
                 onBackspace?()
                 self.lastBackspaceEventAt = now
                 scheduleBackspaceRelease()
@@ -237,10 +235,10 @@ private final class InterceptingTextField: UITextField {
             }
         }
 
-        if !didTriggerWordDelete, let backspaceBurstStartedAt,
-           now - backspaceBurstStartedAt >= Self.wordDeleteDelay {
-            didTriggerWordDelete = true
+        if let repeatStartedAt, now - repeatStartedAt >= Self.wordDeleteRampDelay {
             onBackspaceStart?()
+        } else {
+            onBackspace?()
         }
 
         self.lastBackspaceEventAt = now
@@ -248,13 +246,11 @@ private final class InterceptingTextField: UITextField {
         restoreBackingText()
     }
 
-    private func beginBackspaceBurst(at now: TimeInterval) {
+    private func beginBackspaceBurst() {
         releaseWorkItem?.cancel()
         releaseWorkItem = nil
-        backspaceBurstStartedAt = now
         lastBackspaceEventAt = nil
-        isHoldSequence = false
-        didTriggerWordDelete = false
+        repeatStartedAt = nil
     }
 
     private func scheduleBackspaceRelease() {
@@ -272,14 +268,12 @@ private final class InterceptingTextField: UITextField {
     }
 
     private func finishBackspaceBurst() {
-        if didTriggerWordDelete {
+        if repeatStartedAt != nil {
             onBackspaceEnd?()
         }
 
-        backspaceBurstStartedAt = nil
         lastBackspaceEventAt = nil
-        isHoldSequence = false
-        didTriggerWordDelete = false
+        repeatStartedAt = nil
         releaseWorkItem = nil
     }
 
