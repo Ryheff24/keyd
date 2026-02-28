@@ -7,35 +7,35 @@
 
 ### Transport
 
-- [ ] **TRANS-01**: iOS app connects to macOS agent over USB via usbmuxd TCP tunnel
-- [ ] **TRANS-02**: iOS app connects to macOS agent over AWDL via Bonjour service discovery (`_keyd._tcp`)
-- [ ] **TRANS-03**: Connection automatically falls back from USB to AWDL when USB cable is unplugged
-- [ ] **TRANS-04**: AWDL transport is pre-warmed while USB is active (no delay on unplug fallback)
+- [x] **TRANS-01**: iOS app connects to macOS agent over USB via usbmuxd TCP tunnel
+- [x] **TRANS-02**: iOS app connects to macOS agent over AWDL via Bonjour service discovery (`_keyd._tcp`)
+- [x] **TRANS-03**: Connection automatically falls back from USB to AWDL when USB cable is unplugged
+- [x] **TRANS-04**: AWDL transport is pre-warmed while USB is active (no delay on unplug fallback)
 - [ ] **TRANS-05**: Transport protocol is bidirectional (iOS→Mac and Mac→iOS message types defined in Phase 1, even if Mac→iOS unused until Phase 2)
 - [ ] **TRANS-06**: Wire protocol uses length-prefixed binary framing (4-byte big-endian length + payload)
-- [ ] **TRANS-07**: USB connection retries with backoff on failure (device takes 2–5s to become available after plug-in)
+- [x] **TRANS-07**: USB connection retries with backoff on failure (device takes 2–5s to become available after plug-in)
 
 ### Keyboard
 
-- [ ] **KEY-01**: User can type characters into the currently focused macOS text field from the iOS keyboard
-- [ ] **KEY-02**: User can press Backspace, Return, Tab, and Escape from iOS keyboard
-- [ ] **KEY-03**: iOS keyboard displays as standard full-width keyboard layout at bottom of screen
-- [ ] **KEY-04**: iOS app is a foreground UIViewController-based app (NOT a UIInputViewController keyboard extension)
-- [ ] **KEY-05**: iOS screen does not auto-lock while keyboard is connected
+- [x] **KEY-01**: User can type characters into the currently focused macOS text field from the iOS keyboard
+- [x] **KEY-02**: User can press Backspace, Return, Tab, and Escape from iOS keyboard
+- [x] **KEY-03**: iOS keyboard displays as standard full-width keyboard layout at bottom of screen
+- [x] **KEY-04**: iOS app is a foreground UIViewController-based app (NOT a UIInputViewController keyboard extension)
+- [x] **KEY-05**: iOS screen does not auto-lock while keyboard is connected
 
 ### Shortcuts
 
-- [ ] **SHORT-01**: User can send Command-C (copy) from iOS hotkey panel
-- [ ] **SHORT-02**: User can send Command-X (cut) from iOS hotkey panel
-- [ ] **SHORT-03**: User can send Command-V (paste) from iOS hotkey panel
-- [ ] **SHORT-04**: User can send Command-Z (undo) from iOS hotkey panel
-- [ ] **SHORT-05**: User can send Command-Y (redo) from iOS hotkey panel
-- [ ] **SHORT-06**: User can send Command-A (select all) from iOS hotkey panel
-- [ ] **SHORT-07**: User can send Command-Q (quit) from iOS hotkey panel
-- [ ] **SHORT-08**: User can send Command-Backspace (delete word left) from iOS hotkey panel
-- [ ] **SHORT-09**: User can send Command-Delete (delete entire line) from iOS hotkey panel
-- [ ] **SHORT-10**: User can send Command-Shift-4 (screenshot) from iOS hotkey panel
-- [ ] **SHORT-11**: Modifier key-up events are always sent, even if connection drops mid-sequence (prevents stuck Cmd key)
+- [x] **SHORT-01**: User can send Command-C (copy) from iOS hotkey panel
+- [x] **SHORT-02**: User can send Command-X (cut) from iOS hotkey panel
+- [x] **SHORT-03**: User can send Command-V (paste) from iOS hotkey panel
+- [x] **SHORT-04**: User can send Command-Z (undo) from iOS hotkey panel
+- [x] **SHORT-05**: User can send Command-Y (redo) from iOS hotkey panel
+- [x] **SHORT-06**: User can send Command-A (select all) from iOS hotkey panel
+- [x] **SHORT-07**: User can send Command-Q (quit) from iOS hotkey panel
+- [x] **SHORT-08**: User can send Command-Backspace (delete word left) from iOS hotkey panel
+- [x] **SHORT-09**: User can send Command-Delete (delete entire line) from iOS hotkey panel
+- [x] **SHORT-10**: User can send Command-Shift-4 (screenshot) from iOS hotkey panel
+- [x] **SHORT-11**: Modifier key-up events are always sent, even if connection drops mid-sequence (prevents stuck Cmd key)
 
 ### Editing (Phase 2)
 
@@ -67,9 +67,9 @@
 
 ### UX / Design
 
-- [ ] **UX-01**: iOS app uses Liquid Glass (Glassmorphism) visual style throughout, using SwiftUI `.ultraThinMaterial` as foundation
-- [ ] **UX-02**: iOS app displays connection status indicator (USB / AWDL / disconnected) with color coding, always visible
-- [ ] **UX-03**: iOS keyboard layout: standard keyboard on bottom, macOS hotkey row above it (Phase 1)
+- [x] **UX-01**: iOS app uses Liquid Glass (Glassmorphism) visual style throughout, using SwiftUI `.ultraThinMaterial` as foundation
+- [x] **UX-02**: iOS app displays connection status indicator (USB / AWDL / disconnected) with color coding, always visible
+- [x] **UX-03**: iOS keyboard layout: standard keyboard on bottom, macOS hotkey row above it (Phase 1)
 - [ ] **UX-04**: iOS keyboard layout in Phase 2: adds predictive text bar above keyboard and text preview box above that
 
 ## v2 Requirements
@@ -110,38 +110,38 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRANS-01 | Phase 1 | Pending |
-| TRANS-02 | Phase 1 | Pending |
-| TRANS-03 | Phase 1 | Pending |
-| TRANS-04 | Phase 1 | Pending |
+| TRANS-01 | Phase 1 | Complete |
+| TRANS-02 | Phase 1 | Complete |
+| TRANS-03 | Phase 1 | Complete |
+| TRANS-04 | Phase 1 | Complete |
 | TRANS-05 | Phase 1 | Pending |
 | TRANS-06 | Phase 1 | Pending |
-| TRANS-07 | Phase 1 | Pending |
-| KEY-01 | Phase 1 | Pending |
-| KEY-02 | Phase 1 | Pending |
-| KEY-03 | Phase 1 | Pending |
-| KEY-04 | Phase 1 | Pending |
-| KEY-05 | Phase 1 | Pending |
-| SHORT-01 | Phase 1 | Pending |
-| SHORT-02 | Phase 1 | Pending |
-| SHORT-03 | Phase 1 | Pending |
-| SHORT-04 | Phase 1 | Pending |
-| SHORT-05 | Phase 1 | Pending |
-| SHORT-06 | Phase 1 | Pending |
-| SHORT-07 | Phase 1 | Pending |
-| SHORT-08 | Phase 1 | Pending |
-| SHORT-09 | Phase 1 | Pending |
-| SHORT-10 | Phase 1 | Pending |
-| SHORT-11 | Phase 1 | Pending |
+| TRANS-07 | Phase 1 | Complete |
+| KEY-01 | Phase 1 | Complete |
+| KEY-02 | Phase 1 | Complete |
+| KEY-03 | Phase 1 | Complete |
+| KEY-04 | Phase 1 | Complete |
+| KEY-05 | Phase 1 | Complete |
+| SHORT-01 | Phase 1 | Complete |
+| SHORT-02 | Phase 1 | Complete |
+| SHORT-03 | Phase 1 | Complete |
+| SHORT-04 | Phase 1 | Complete |
+| SHORT-05 | Phase 1 | Complete |
+| SHORT-06 | Phase 1 | Complete |
+| SHORT-07 | Phase 1 | Complete |
+| SHORT-08 | Phase 1 | Complete |
+| SHORT-09 | Phase 1 | Complete |
+| SHORT-10 | Phase 1 | Complete |
+| SHORT-11 | Phase 1 | Complete |
 | AGENT-01 | Phase 1 | Pending |
 | AGENT-02 | Phase 1 | Pending |
 | AGENT-03 | Phase 1 | Pending |
 | AGENT-04 | Phase 1 | Pending |
 | AGENT-05 | Phase 1 | Pending |
 | AGENT-06 | Phase 1 | Pending |
-| UX-01 | Phase 1 | Pending |
-| UX-02 | Phase 1 | Pending |
-| UX-03 | Phase 1 | Pending |
+| UX-01 | Phase 1 | Complete |
+| UX-02 | Phase 1 | Complete |
+| UX-03 | Phase 1 | Complete |
 | EDIT-01 | Phase 2 | Pending |
 | EDIT-02 | Phase 2 | Pending |
 | EDIT-03 | Phase 2 | Pending |

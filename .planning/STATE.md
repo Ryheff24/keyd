@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 1 of 3 (Transport and Core Keyboard)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-02-27 — Roadmap created
+Plan: 3 of 5 in current phase
+Status: In progress
+Last activity: 2026-02-28 — Completed plan 01-03 (iOS app: KeydApp)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████░░░░] 40% (2 of 5 phase plans with SUMMARY; plan 01-02 is complete but SUMMARY not yet created by this session)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 3
+- Average duration: ~5 min/plan
+- Total execution time: ~15 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01-transport-and-core-keyboard | 3/5 | ~15 min | ~5 min |
 
 **Recent Trend:**
-- Last 5 plans: -
-- Trend: -
+- Last 3 plans: 01-01 (SharedProtocol), 01-02 (macOS agent), 01-03 (iOS app)
+- Trend: Steady, fast execution
 
 *Updated after each plan completion*
 
@@ -47,10 +47,13 @@ Recent decisions affecting current work:
 - [Pre-Phase 1]: Foreground UIViewController (not UIInputViewController) — extensions cannot initiate network connections
 - [Pre-Phase 1]: Binary framing (4-byte length prefix) over JSON — required for sub-50ms latency
 - [Pre-Phase 1]: No App Sandbox on macOS helper — sandbox blocks CGEventPost and AX operations
+- [01-03]: xcodegen project.yml used for reproducible iOS Xcode project generation with local SPM packages
+- [01-03]: CheckedContinuation<Void, Error> explicit type annotation required in send() for NWConnection completion handlers
+- [01-03]: HotkeyPanel Liquid Glass applied to panel container, not individual key buttons
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
@@ -60,20 +63,14 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28
-Stopped at: Phase 1 scaffolding partially built (macOS agent compiles); plan-phase ran out of tokens before creating PLAN.md files
-Resume with: `/gsd:plan-phase 1`
+Last session: 2026-02-28T14:25:10Z
+Stopped at: Completed 01-03-PLAN.md (iOS app: KeydApp with keyboard UI, dual transport, hotkey panel)
 
 ### What's already built (do not rebuild)
-- `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder — builds + tests pass
-- `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers
-  - Build fixed: CGEventInjector (import + tap location), TransportManager (import), AXInjector (framework), USBListener (@Sendable)
-  - AWDLListener @Sendable fix may still be needed (interrupted before confirming)
-  - Build command: `xcodebuild -project macOS/KeydAgent.xcodeproj -scheme KeydAgent -destination "platform=macOS,arch=arm64" build`
+- `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder — builds + tests pass (plan 01-01)
+- `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers — builds clean (plan 01-02)
+- `KeydApp/` iOS Xcode project — USBTransport, AWDLTransport, TransportManager, KeyboardView, HotkeyPanel, ConnectionStatusBadge — builds clean (plan 01-03)
 
-### What's NOT done yet (plan-phase didn't complete)
-- No PLAN.md files in `.planning/phases/01-transport-and-core-keyboard/`
-- No iOS app Xcode project created yet
-- No pairing/QR code flow
-- No Dynamic Island integration
-- No hotkey panel UI
+### What's NOT done yet
+- Plan 01-04: Pairing + Dynamic Island Live Activity (Widget Extension via xcodegen)
+- Plan 01-05: Transport hardening + debug overlay (`autonomous: false` — requires human verify checkpoint)
