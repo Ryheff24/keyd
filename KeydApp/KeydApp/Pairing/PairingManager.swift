@@ -93,6 +93,7 @@ final class PairingManager: ObservableObject {
             saveToKeychain(macPublicKeyData, key: keychainMacAgentKey)
 
             isPaired = true
+            await transportManager.finalizePairingTransportState()
             isPairing = false
             print("[PairingManager] Pairing complete")
         } catch {

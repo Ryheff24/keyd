@@ -16,6 +16,7 @@ extension Notification.Name {
 
 @main
 struct KeydApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var transportManager = TransportManager()
     @StateObject private var pairingManager = PairingManager()
 
@@ -36,7 +37,7 @@ struct KeydApp: App {
                         .environmentObject(transportManager)
                         .onAppear {
                             // Start transport so we can send PairingRequest after QR scan
-                            transportManager.start(allowAWDL: false)
+                            transportManager.start(allowAWDL: true, suppressAWDLStatus: true)
                         }
                 }
             }
@@ -46,6 +47,21 @@ struct KeydApp: App {
                 guard url.scheme == "keyd", url.host == "reconnect" else { return }
                 print("[KeydApp] Reconnect triggered from Dynamic Island")
                 transportManager.reconnect()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                switch newPhase {
+                case .active:
+                    transportManager.resumeLiveActivity()
+                case .background:
+                    transportManager.suspendLiveActivity()
+                case .inactive:
+                    break
+                @unknown default:
+                    break
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                transportManager.suspendLiveActivity()
             }
         }
     }

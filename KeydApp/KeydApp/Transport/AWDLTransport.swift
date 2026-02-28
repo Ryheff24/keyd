@@ -129,6 +129,8 @@ actor AWDLTransport {
 
     var isConnected: Bool { connection != nil }
 
+    func hasConnection() -> Bool { connection != nil }
+
     func stop() {
         browser?.cancel()
         connection?.cancel()

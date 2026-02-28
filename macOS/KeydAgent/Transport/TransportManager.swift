@@ -10,6 +10,7 @@ import Carbon.HIToolbox
 enum AgentConnectionState {
     case disconnected
     case usbConnected(NWConnection)
+    case pairingAWDL(NWConnection)
     case awdlConnected(NWConnection)
 }
 
@@ -73,7 +74,7 @@ final class TransportManager {
         logEvent("\(transport) connection received")
 
         switch (connectionState, transport) {
-        case (.awdlConnected(let old), .usb):
+        case (.awdlConnected(let old), .usb), (.pairingAWDL(let old), .usb):
             // USB connects while AWDL was active — promote USB (re-plug case)
             old.cancel()
             connectionState = .usbConnected(connection)
@@ -83,15 +84,21 @@ final class TransportManager {
             connectionState = .usbConnected(connection)
             statusBar.update(state: .usb)
         case (.disconnected, .awdl):
-            connectionState = .awdlConnected(connection)
-            statusBar.update(state: .awdl)
+            if pairingManager.isPaired {
+                connectionState = .awdlConnected(connection)
+                statusBar.update(state: .awdl)
+                logEvent("AWDL connected")
+            } else {
+                connectionState = .pairingAWDL(connection)
+                logEvent("AWDL pairing channel ready")
+            }
         case (.usbConnected, .awdl):
             // AWDL comes up while USB is active — keep as pre-warmed standby
             // The TransportManager will promote AWDL on USB disconnect (handleDisconnect)
             logEvent("AWDL pre-warmed while USB active (standby)")
             startAWDLStandby(connection)
             return
-        case (.usbConnected, .usb), (.awdlConnected, .awdl):
+        case (.usbConnected, .usb), (.awdlConnected, .awdl), (.pairingAWDL, .awdl):
             logEvent("Ignoring duplicate \(transport) connection")
             connection.cancel()
             return
@@ -116,6 +123,9 @@ final class TransportManager {
         startReceiveLoop(on: connection, decoder: decoder, transport: transport)
 
         // Start secure input polling
+        if case .pairingAWDL = connectionState {
+            return
+        }
         startSecureInputPolling()
     }
 
@@ -193,6 +203,10 @@ final class TransportManager {
             statusBar.update(state: .disconnected)
             logEvent("AWDL dropped; disconnected")
 
+        case (.pairingAWDL, .awdl):
+            connectionState = .disconnected
+            logEvent("AWDL pairing channel dropped")
+
         default:
             break
         }
@@ -210,6 +224,12 @@ final class TransportManager {
                 accepted: accepted
             )
             send(.pairingResponse(response))
+            if accepted, case .pairingAWDL(let connection) = connectionState {
+                connectionState = .awdlConnected(connection)
+                statusBar.update(state: .awdl)
+                startSecureInputPolling()
+                logEvent("AWDL promoted after pairing")
+            }
             logEvent("Pairing \(accepted ? "accepted" : "rejected") for \(request.deviceID)")
 
         default:
@@ -240,6 +260,7 @@ final class TransportManager {
     private var activeConnection: NWConnection? {
         switch connectionState {
         case .usbConnected(let c): return c
+        case .pairingAWDL(let c): return c
         case .awdlConnected(let c): return c
         case .disconnected: return nil
         }

@@ -140,4 +140,8 @@ actor USBTransport {
         connection?.cancel()
         connection = nil
     }
+
+    var isConnected: Bool { connection != nil }
+
+    func hasConnection() -> Bool { connection != nil }
 }

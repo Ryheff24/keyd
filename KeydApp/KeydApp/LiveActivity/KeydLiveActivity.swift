@@ -8,8 +8,26 @@ import Combine
 @MainActor
 final class KeydLiveActivityManager: ObservableObject {
     private(set) var activity: Activity<KeydConnectionAttributes>?
+    private var endTask: Task<Void, Never>?
+
+    init() {
+        let lingeringIDs = Set(Activity<KeydConnectionAttributes>.activities.map(\.id))
+        guard !lingeringIDs.isEmpty else { return }
+
+        let finalState = KeydConnectionAttributes.ContentState(status: .disconnected, latencyMs: nil)
+        let content = ActivityContent(state: finalState, staleDate: nil)
+
+        Task {
+            for existing in Activity<KeydConnectionAttributes>.activities where lingeringIDs.contains(existing.id) {
+                await existing.end(content, dismissalPolicy: .immediate)
+            }
+        }
+    }
 
     func start(status: KeydConnectionAttributes.ContentState.Status) {
+        endTask?.cancel()
+        endTask = nil
+
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             print("[LiveActivity] Live Activities not enabled on this device")
             return
@@ -32,6 +50,9 @@ final class KeydLiveActivityManager: ObservableObject {
     }
 
     func update(status: KeydConnectionAttributes.ContentState.Status, latencyMs: Int? = nil) {
+        endTask?.cancel()
+        endTask = nil
+
         let newState = KeydConnectionAttributes.ContentState(status: status, latencyMs: latencyMs)
         Task {
             let content = ActivityContent(state: newState, staleDate: nil)
@@ -40,11 +61,15 @@ final class KeydLiveActivityManager: ObservableObject {
     }
 
     func end() {
+        endTask?.cancel()
+
         let finalState = KeydConnectionAttributes.ContentState(status: .disconnected, latencyMs: nil)
-        Task {
+        endTask = Task {
             let content = ActivityContent(state: finalState, staleDate: nil)
             await activity?.end(content, dismissalPolicy: .immediate)
             activity = nil
+            endTask = nil
+            print("[LiveActivity] Ended")
         }
     }
 }

@@ -51,6 +51,7 @@ final class TransportManager: ObservableObject {
     private var pairingResponseContinuation: CheckedContinuation<PairingResponse, Error>?
     private var pairingResponseTimeoutTask: Task<Void, Never>?
     private var awdlEnabledForCurrentSession = true
+    private var suppressAWDLStatusUntilPaired = false
 
     var onSecureInputChanged: ((Bool) -> Void)?
 
@@ -79,7 +80,9 @@ final class TransportManager: ObservableObject {
 
     // MARK: - Start
 
-    func start(allowAWDL: Bool = true) {
+    func start(allowAWDL: Bool = true, suppressAWDLStatus: Bool = false) {
+        suppressAWDLStatusUntilPaired = suppressAWDLStatus
+
         if allowAWDL, isConnected, !awdlEnabledForCurrentSession {
             awdlEnabledForCurrentSession = true
             logConnectionEvent("AWDL standby enabled")
@@ -115,8 +118,10 @@ final class TransportManager: ObservableObject {
     }
 
     func reconnect() {
+        let allowAWDL = awdlEnabledForCurrentSession
+        let suppressAWDLStatus = suppressAWDLStatusUntilPaired
         resetConnections()
-        start(allowAWDL: awdlEnabledForCurrentSession)
+        start(allowAWDL: allowAWDL, suppressAWDLStatus: suppressAWDLStatus)
     }
 
     func resetConnections() {
@@ -138,23 +143,34 @@ final class TransportManager: ObservableObject {
     private func startAWDLPrewarm() async {
         await awdlTransport.setOnDisconnect { [weak self] in
             Task { @MainActor in
-                if self?.connectionState == .awdlConnected {
-                    self?.connectionState = .disconnected
-                    self?.setIdleTimerState(false)
-                    self?.logConnectionEvent("AWDL disconnected")
-                    self?.scheduleReconnect()
+                guard let self else { return }
+                if self.suppressAWDLStatusUntilPaired {
+                    self.logConnectionEvent("AWDL pairing channel disconnected")
+                    return
+                }
+                if self.connectionState == .awdlConnected {
+                    self.connectionState = .disconnected
+                    self.setIdleTimerState(false)
+                    self.logConnectionEvent("AWDL disconnected")
+                    self.scheduleReconnect()
                 }
             }
         }
         await awdlTransport.setOnConnectionReady { [weak self] in
             Task { @MainActor in
+                guard let self else { return }
+                if self.suppressAWDLStatusUntilPaired {
+                    self.logConnectionEvent("AWDL ready for pairing")
+                    self.resolveConnectionReady()
+                    return
+                }
                 // AWDL is ready but only promote if USB is not active
-                if self?.connectionState == .disconnected || self?.connectionState == .connecting {
-                    self?.connectionState = .awdlConnected
-                    self?.setIdleTimerState(true)
-                    self?.logConnectionEvent("AWDL connected")
+                if self.connectionState == .disconnected || self.connectionState == .connecting {
+                    self.connectionState = .awdlConnected
+                    self.setIdleTimerState(true)
+                    self.logConnectionEvent("AWDL connected")
                 } else {
-                    self?.logConnectionEvent("AWDL pre-warmed and standing by")
+                    self.logConnectionEvent("AWDL pre-warmed and standing by")
                 }
             }
         }
@@ -174,7 +190,7 @@ final class TransportManager: ObservableObject {
                 print("[TransportManager] USB disconnected — checking AWDL pre-warm status")
                 self.logConnectionEvent("USB disconnected")
 
-                let awdlReady = await self.awdlTransport.isConnected
+                let awdlReady = await self.awdlTransport.hasConnection()
                 if awdlReady {
                     print("[TransportManager] AWDL pre-warmed and ready — switching to AWDL")
                     self.connectionState = .awdlConnected
@@ -230,18 +246,23 @@ final class TransportManager: ObservableObject {
     }
 
     func sendMessage(_ message: KeydMessage) async throws {
-        switch connectionState {
-        case .usbConnected:
+        if await usbTransport.hasConnection() {
             try await usbTransport.send(message)
-        case .awdlConnected:
-            try await awdlTransport.send(message)
-        case .disconnected, .connecting:
-            throw TransportError.notConnected
+            return
         }
+
+        if await awdlTransport.hasConnection() {
+            try await awdlTransport.send(message)
+            return
+        }
+
+        throw TransportError.notConnected
     }
 
     func waitForConnection(timeoutNanoseconds: UInt64 = 8_000_000_000) async throws {
-        if isConnected {
+        let usbConnected = await usbTransport.hasConnection()
+        let awdlConnected = await awdlTransport.hasConnection()
+        if isConnected || usbConnected || awdlConnected {
             return
         }
 
@@ -270,6 +291,39 @@ final class TransportManager: ObservableObject {
                 self.clearPendingPairingResponse(with: TransportError.pairingTimedOut)
             }
         }
+    }
+
+    func finalizePairingTransportState() async {
+        suppressAWDLStatusUntilPaired = false
+
+        if await usbTransport.hasConnection() {
+            if connectionState != .usbConnected {
+                connectionState = .usbConnected
+                setIdleTimerState(true)
+                logConnectionEvent("USB connected")
+            }
+            return
+        }
+
+        if await awdlTransport.hasConnection() {
+            if connectionState != .awdlConnected {
+                connectionState = .awdlConnected
+                setIdleTimerState(true)
+                logConnectionEvent("AWDL connected")
+            }
+            return
+        }
+
+        connectionState = .disconnected
+        setIdleTimerState(false)
+    }
+
+    func suspendLiveActivity() {
+        liveActivityManager.end()
+    }
+
+    func resumeLiveActivity() {
+        updateLiveActivity(for: connectionState)
     }
 
     // MARK: - Receive
@@ -322,7 +376,10 @@ final class TransportManager: ObservableObject {
     private func scheduleReconnect(after delay: TimeInterval = 1.0) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.isConnected, self.startTask == nil else { return }
-            self.start(allowAWDL: self.awdlEnabledForCurrentSession)
+            self.start(
+                allowAWDL: self.awdlEnabledForCurrentSession,
+                suppressAWDLStatus: self.suppressAWDLStatusUntilPaired
+            )
         }
     }
 
