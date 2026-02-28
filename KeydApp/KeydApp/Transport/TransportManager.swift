@@ -25,6 +25,18 @@ final class TransportManager: ObservableObject {
 
     var onSecureInputChanged: ((Bool) -> Void)?
 
+    // Connection event log for debug overlay
+    private var connectionEventLog: [String] = []
+
+    func logConnectionEvent(_ event: String) {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        connectionEventLog.append("[\(timestamp)] \(event)")
+        if connectionEventLog.count > 100 { connectionEventLog.removeFirst() }
+        print("[TransportManager] \(event)")
+    }
+
+    func getEventLog() -> [String] { connectionEventLog }
+
     // MARK: - Start
 
     func start() {
@@ -65,14 +77,26 @@ final class TransportManager: ObservableObject {
         setIdleTimerState(false)
 
         await usbTransport.setOnDisconnect { [weak self] in
-            Task { @MainActor in
-                print("[TransportManager] USB disconnected — falling back to AWDL")
-                let awdlReady = await self?.awdlTransport.isConnected ?? false
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                print("[TransportManager] USB disconnected — checking AWDL pre-warm status")
+                self.logConnectionEvent("USB disconnected")
+
+                let awdlReady = await self.awdlTransport.isConnected
                 if awdlReady {
-                    self?.connectionState = .awdlConnected
+                    print("[TransportManager] AWDL pre-warmed and ready — switching to AWDL")
+                    self.connectionState = .awdlConnected
+                    self.logConnectionEvent("AWDL promoted (was pre-warmed)")
                 } else {
-                    self?.connectionState = .disconnected
-                    self?.setIdleTimerState(false)
+                    print("[TransportManager] AWDL not ready — entering disconnected state")
+                    self.connectionState = .disconnected
+                    self.setIdleTimerState(false)
+                    self.logConnectionEvent("Disconnected — AWDL unavailable; restarting")
+                    // Restart connection attempt for both transports
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        self?.start()
+                    }
                 }
             }
         }
@@ -83,8 +107,13 @@ final class TransportManager: ObservableObject {
         }
 
         await usbTransport.connect()
+        // Promote USB; log if AWDL was previously active (USB re-plug case)
+        if case .awdlConnected = connectionState {
+            logConnectionEvent("USB reconnected; AWDL demoted to pre-warm")
+        }
         connectionState = .usbConnected
         setIdleTimerState(true)
+        logConnectionEvent("USB connected")
     }
 
     // MARK: - Send
