@@ -21,6 +21,8 @@ struct KeyboardView: View {
             onBackspace: {
                 onVirtualKeyTap(VirtualKey.delete)
             },
+            onBackspaceStart: onBackspaceStart,
+            onBackspaceEnd: onBackspaceEnd,
             onReturn: {
                 onVirtualKeyTap(VirtualKey.returnKey)
             }
@@ -33,10 +35,18 @@ struct KeyboardView: View {
 private struct SystemKeyboardHost: UIViewRepresentable {
     let onText: (String) -> Void
     let onBackspace: () -> Void
+    let onBackspaceStart: () -> Void
+    let onBackspaceEnd: () -> Void
     let onReturn: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onText: onText, onBackspace: onBackspace, onReturn: onReturn)
+        Coordinator(
+            onText: onText,
+            onBackspace: onBackspace,
+            onBackspaceStart: onBackspaceStart,
+            onBackspaceEnd: onBackspaceEnd,
+            onReturn: onReturn
+        )
     }
 
     func makeUIView(context: Context) -> KeyboardInputContainer {
@@ -48,6 +58,8 @@ private struct SystemKeyboardHost: UIViewRepresentable {
     func updateUIView(_ uiView: KeyboardInputContainer, context: Context) {
         context.coordinator.onText = onText
         context.coordinator.onBackspace = onBackspace
+        context.coordinator.onBackspaceStart = onBackspaceStart
+        context.coordinator.onBackspaceEnd = onBackspaceEnd
         context.coordinator.onReturn = onReturn
         uiView.configure(with: context.coordinator)
         uiView.activateKeyboard()
@@ -56,15 +68,21 @@ private struct SystemKeyboardHost: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var onText: (String) -> Void
         var onBackspace: () -> Void
+        var onBackspaceStart: () -> Void
+        var onBackspaceEnd: () -> Void
         var onReturn: () -> Void
 
         init(
             onText: @escaping (String) -> Void,
             onBackspace: @escaping () -> Void,
+            onBackspaceStart: @escaping () -> Void,
+            onBackspaceEnd: @escaping () -> Void,
             onReturn: @escaping () -> Void
         ) {
             self.onText = onText
             self.onBackspace = onBackspace
+            self.onBackspaceStart = onBackspaceStart
+            self.onBackspaceEnd = onBackspaceEnd
             self.onReturn = onReturn
         }
 
@@ -136,6 +154,8 @@ private final class KeyboardInputContainer: UIView {
     func configure(with coordinator: SystemKeyboardHost.Coordinator) {
         textField.delegate = coordinator
         textField.onBackspace = coordinator.onBackspace
+        textField.onBackspaceStart = coordinator.onBackspaceStart
+        textField.onBackspaceEnd = coordinator.onBackspaceEnd
     }
 
     func activateKeyboard() {
@@ -147,7 +167,19 @@ private final class KeyboardInputContainer: UIView {
 }
 
 private final class InterceptingTextField: UITextField {
+    private static let wordDeleteDelay: TimeInterval = 0.5
+    private static let fastRepeatThreshold: TimeInterval = 0.12
+    private static let holdContinuationTimeout: TimeInterval = 0.65
+
     var onBackspace: (() -> Void)?
+    var onBackspaceStart: (() -> Void)?
+    var onBackspaceEnd: (() -> Void)?
+
+    private var backspaceBurstStartedAt: TimeInterval?
+    private var lastBackspaceEventAt: TimeInterval?
+    private var hasSeenFastRepeat = false
+    private var didTriggerWordDelete = false
+    private var releaseWorkItem: DispatchWorkItem?
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -164,6 +196,65 @@ private final class InterceptingTextField: UITextField {
     }
 
     override func deleteBackward() {
-        onBackspace?()
+        let now = ProcessInfo.processInfo.systemUptime
+        let isContinuation: Bool
+        if let lastBackspaceEventAt {
+            let gap = now - lastBackspaceEventAt
+            isContinuation = gap <= Self.holdContinuationTimeout
+            if isContinuation, gap <= Self.fastRepeatThreshold {
+                hasSeenFastRepeat = true
+            }
+        } else {
+            isContinuation = false
+        }
+
+        if !isContinuation {
+            beginBackspaceBurst(at: now)
+            onBackspace?()
+        } else if !didTriggerWordDelete, hasSeenFastRepeat, let backspaceBurstStartedAt,
+                  now - backspaceBurstStartedAt >= Self.wordDeleteDelay {
+            didTriggerWordDelete = true
+            onBackspaceStart?()
+        } else if !didTriggerWordDelete {
+            onBackspace?()
+        }
+
+        lastBackspaceEventAt = now
+        scheduleBackspaceRelease()
+    }
+
+    private func beginBackspaceBurst(at now: TimeInterval) {
+        releaseWorkItem?.cancel()
+        releaseWorkItem = nil
+        backspaceBurstStartedAt = now
+        lastBackspaceEventAt = nil
+        hasSeenFastRepeat = false
+        didTriggerWordDelete = false
+    }
+
+    private func scheduleBackspaceRelease() {
+        releaseWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.finishBackspaceBurst()
+        }
+        releaseWorkItem = workItem
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.holdContinuationTimeout,
+            execute: workItem
+        )
+    }
+
+    private func finishBackspaceBurst() {
+        if didTriggerWordDelete {
+            onBackspaceEnd?()
+        }
+
+        backspaceBurstStartedAt = nil
+        lastBackspaceEventAt = nil
+        hasSeenFastRepeat = false
+        didTriggerWordDelete = false
+        releaseWorkItem = nil
     }
 }

@@ -100,9 +100,8 @@ struct RootView: View {
                     transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: keyCode, keyDown: false)))
                 },
                 onBackspaceStart: {
-                    // Long-press (0.5s) entered word-delete mode: send Cmd-Backspace
-                    transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: VirtualKey.delete, keyDown: true, modifiers: .command)))
-                    transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: VirtualKey.delete, keyDown: false, modifiers: .command)))
+                    // Long-press (0.5s) entered word-delete mode: send Option-Backspace
+                    sendHotkey(virtualKey: VirtualKey.delete, modifiers: .option)
                 },
                 onBackspaceEnd: {
                     // No-op: word-delete is sent as a single atomic event in onBackspaceStart
