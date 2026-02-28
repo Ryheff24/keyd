@@ -23,7 +23,7 @@ The stack explicitly excludes peertalk (unmaintained since 2015, Obj-C, adds no 
 
 **Core technologies:**
 - Swift 6 + SwiftUI (iOS): keyboard layout, hotkey panel, Liquid Glass UI — SwiftUI `.ultraThinMaterial` is the correct Liquid Glass foundation
-- UIKit UIInputViewController (iOS): NOT used — keyboard is a UIView embedded in a standard UIViewController, not a system keyboard extension
+- UIKit text-field host (iOS): stock iOS keyboard is kept active through a hidden text field embedded in the app; this is not a system keyboard extension
 - Network.framework (both): USB TCP connection to usbmuxd-forwarded port + AWDL NWListener/NWBrowser via Bonjour `_keyd._tcp`
 - CGEventCreateKeyboardEvent + CGEventPost (macOS): all keystroke and modifier injection — the only reliable path across Safari, Firefox, Messages
 - AXUIElement (macOS): read-only in Phase 2 — focused element, selected text range, value attribute for bidirectional state sync
@@ -41,7 +41,7 @@ All features flow from a single dependency chain: Transport must exist before an
 - AWDL fallback on USB unplug — without this the app is unusable in daily workflow
 - Character input to frontmost macOS field via CGEvent — core value demonstration
 - Backspace, Return, Tab, Escape — required to make the keyboard functional for real fields
-- Cmd-C/X/V, Cmd-Z/Y, Cmd-A, Cmd-Q, Cmd-Backspace, Cmd-Delete, Cmd-Shift-4 — all explicitly required shortcuts
+- Cmd-C/X/V, Cmd-Z/Shift-Z, Cmd-A, Cmd-Q, Option-Delete, Cmd-Delete, Cmd-Shift-4 — all explicitly required shortcuts
 - Connection state indicator (USB / AWDL / disconnected) with color coding — user needs confidence commands are arriving
 - Liquid Glass glassmorphism UI — stated design constraint, not optional
 
@@ -72,7 +72,7 @@ The build order within the architecture is bottom-up and strict: Protocol (messa
 1. TransportManager (iOS + macOS) — holds active transport reference (USB or AWDL); handles switchover; exposes single `send/receive` API to the Protocol layer; Protocol layer never knows which transport is active
 2. MessageEncoder/Decoder (iOS + macOS) — length-prefixed binary framing; message types must be identical on both sides; designed bidirectional from Phase 1 even if only one direction is used initially
 3. InjectionRouter + CGEventInjector + AXInjector (macOS) — routes decoded messages to correct injector; CGEvent for all raw keystrokes and modifier combos; AX for reading text state (Phase 2); AX for writing is explicitly NOT used in production (breaks on browsers)
-4. KeyboardVC + HotkeyPanel + TextPreviewBox (iOS) — UIView-based keyboard embedded in UIViewController; HotkeyPanel is Phase 1; TextPreviewBox is Phase 2
+4. SystemKeyboardHost + HotkeyPanel + TextPreviewBox (iOS) — stock keyboard hosted through a hidden text field; HotkeyPanel is Phase 1; TextPreviewBox is Phase 2
 5. AppAwarenessService (macOS, Phase 3) — NSWorkspace.frontmostApplication observer; pushes bundle ID back to iOS over the same transport channel
 
 See `./.planning/research/ARCHITECTURE.md` for full component diagram, data flow diagrams, and anti-patterns.
@@ -81,7 +81,7 @@ See `./.planning/research/ARCHITECTURE.md` for full component diagram, data flow
 
 1. **iOS keyboard extension vs. in-app keyboard** — Build the keyboard as a UIView embedded in a standard UIViewController. A UIInputViewController keyboard extension cannot initiate network connections, has a restricted sandbox, and is lifecycle-uncontrollable. This architecture choice must be correct from the first Xcode target setup. Recovery cost if wrong: HIGH.
 
-2. **Accessibility AND Input Monitoring permissions both required, both revoked on rebuild** — CGEventPost requires Input Monitoring (not just Accessibility) since macOS 10.15. Both permissions are tied to the binary hash and are silently revoked on every Xcode rebuild. The macOS helper must check both permissions at every launch using `AXIsProcessTrustedWithOptions` and `IOHIDRequestAccess`, display a persistent UI prompt when either is missing, and document the toggle-off/toggle-on recovery procedure as a required step after every rebuild.
+2. **Accessibility AND Input Monitoring permissions both required, both revoked on rebuild** — In this project, both permissions are treated as required and both are tied to the binary hash, so they can be silently revoked on every Xcode rebuild. The macOS helper must check both permissions at every launch using `AXIsProcessTrustedWithOptions` and `IOHIDRequestAccess`, surface a clear menu-driven recovery path when either is missing, and document the toggle-off/toggle-on recovery procedure as a required step after every rebuild.
 
 3. **AX text injection silently fails in Safari, Firefox, Messages** — `AXUIElementSetAttributeValue(kAXValueAttribute)` works in TextEdit and Notes but fails silently in browser web views and many real apps. The correct architecture is "AX read, CGEvent write" — use AX only to read focused element, selected text range, and value; use CGEvent for all actual text and keystroke injection. This architecture decision must be made in Phase 1, not discovered when testing browsers in Phase 2.
 
@@ -113,9 +113,9 @@ Based on research, the architecture's build-order constraint, and the feature de
 - AWDLListener (macOS): NWListener advertising `_keyd._tcp`
 - TransportManager (both sides): state machine for USB→AWDL switchover; pre-warms AWDL while USB is connected
 - InjectionRouter (macOS): routes messages to CGEventInjector (AXInjector stub for Phase 2)
-- iOS KeyboardVC: UIView-based keyboard embedded in UIViewController (NOT UIInputViewController)
-- iOS HotkeyPanel: static shortcut buttons (Cmd-C/V/Z, Return, Escape, etc.); Liquid Glass styling
-- macOS agent: SMAppService login item registration; NSStatusItem menu bar indicator; AX + Input Monitoring permission check at every launch with prompt; `AXIsProcessTrusted` check with `kAXTrustedCheckOptionPrompt`
+- iOS SystemKeyboardHost: stock keyboard kept active through a hidden text field inside the app (NOT UIInputViewController)
+- iOS HotkeyPanel: static shortcut buttons (Cmd-C/V/Z/Shift-Z, Return, Escape, Tab, delete actions, etc.); Liquid Glass styling
+- macOS agent: SMAppService login item registration; NSStatusItem menu bar indicator; AX + Input Monitoring permission check at every launch with menu-driven recovery actions
 - iOS idle timer disabled while connected
 - Secure input mode detection; "keyboard paused" indicator in iOS when active
 

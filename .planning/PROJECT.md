@@ -19,15 +19,15 @@ The iPhone becomes a full-featured keyboard that controls macOS text entry in re
 - [ ] USB transport via usbmuxd with real-time bidirectional communication
 - [ ] AWDL wireless transport as primary fallback when USB is unplugged
 - [ ] Automatic transport switchover on USB disconnect (USB → AWDL)
-- [ ] Standard keyboard on iOS that types into the currently focused macOS field
-- [ ] Common macOS hotkeys (Cmd-C/X/V/Z/Y/A/Q, Cmd-Backspace, Cmd-Delete, Cmd-Shift-4)
+- [ ] Stock iOS keyboard hosted in-app that types into the currently focused macOS field
+- [ ] Common macOS hotkeys (Cmd-C/X/V/Z/Shift-Z/A/Q, Option-Delete, Cmd-Delete, Cmd-Shift-4)
 - [ ] iOS-native cursor movement controls mirrored to macOS
 - [ ] iOS-native text selection mirrored to macOS
 - [ ] Delete selected text on macOS from iOS controls
 - [ ] Move cursor to arbitrary position and type/delete from iOS
 - [ ] iOS predictive text feeding into macOS focused field
 - [ ] iOS editing options (cut/copy/paste/select menu) reflected on macOS
-- [ ] Real-time reflection of edits on macOS (may use AX and/or IME)
+- [ ] Real-time reflection of edits on macOS (planned around AX-based read/sync; CGEvent remains the write path)
 - [ ] App-aware hotkey panel: detect frontmost macOS app, show relevant shortcuts
 - [ ] "Liquid Glass" (Glassmorphism) visual style throughout iOS app
 
@@ -43,11 +43,11 @@ The iPhone becomes a full-featured keyboard that controls macOS text entry in re
 ## Context
 
 - **Transport stack:** usbmuxd (USB) + AWDL; transport layer locked after Phase 1 and must not change
-- **macOS text control:** Will use Accessibility (AX) framework and/or Input Method Editor (IME) for text reflection
+- **macOS text control:** Uses CGEvent for text/shortcut writes; AX is reserved for secure-input detection and later read/sync work
 - **Target apps:** Safari, Firefox, Messages
 - **Self-signed lifecycle:** Refreshed weekly via Xcode or manual signing
 - **Design language:** Apple "Liquid Glass" / Glassmorphism
-- **Phase 1 UI:** Standard keyboard at bottom + macOS hotkey row above it
+- **Phase 1 UI:** Stock in-app iOS keyboard host at bottom + macOS hotkey row above it
 - **Phase 2 UI:** Adds predictive text bar above keyboard + text preview box above that
 
 ## Constraints
@@ -63,9 +63,9 @@ The iPhone becomes a full-featured keyboard that controls macOS text entry in re
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | USB primary, AWDL fallback | Lowest latency on USB; AWDL preserves connection on unplug | — Pending |
-| AX + IME for macOS text control | Standard APIs for programmatic text input | — Pending |
+| CGEvent write + AX read/sync | Reliable text injection now, bidirectional state sync later | Chosen |
 | Self-signed distribution | Personal use, avoids App Store review | — Pending |
 | Liquid Glass design | Matches modern Apple aesthetic | — Pending |
 
 ---
-*Last updated: 2026-02-27 after initialization*
+*Last updated: 2026-02-28 after Phase 1 doc reconciliation*

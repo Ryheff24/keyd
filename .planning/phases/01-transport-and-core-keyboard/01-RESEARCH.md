@@ -1,7 +1,7 @@
 # Phase 1: Transport and Core Keyboard - Research
 
 **Researched:** 2026-02-27
-**Domain:** iOS-to-macOS USB/AWDL transport layer + CGEvent keystroke injection + iOS SwiftUI keyboard + macOS menu-bar agent
+**Domain:** iOS-to-macOS USB/AWDL transport layer + CGEvent keystroke injection + in-app iOS keyboard host + macOS menu-bar agent
 **Confidence:** MEDIUM (core Apple APIs are HIGH confidence; AWDL entitlement requirements for self-signed personal-use builds are LOW confidence — must verify by testing on physical device)
 
 ---
@@ -12,53 +12,51 @@
 ### Locked Decisions
 
 #### iOS Keyboard & Hotkey Layout
-- Keyboard: Custom SwiftUI layout that closely mimics native iOS keyboard appearance (full control over layout, dark/light mode key highlight behavior, hotkey row integration)
+- Keyboard: Use the stock iOS keyboard by keeping a hidden UIKit text field first responder inside the app. The app forwards text and special-key events to macOS instead of drawing a full custom keyboard.
 - Hotkey panel: Grid layout, 2 columns × N rows, horizontally scrollable. Phase 1 fills 1–2 screens; grid scales for Phase 3 app-aware shortcuts without redesign
 - Hotkey button labels: Icons where the action is universally recognized (copy, paste, cut, undo); text labels for less-common shortcuts (screenshot, select all, quit)
 - Liquid Glass / glassmorphism: Applied to hotkey panel chrome and overall app chrome only — NOT to individual keyboard key caps, which use standard iOS key appearance
 
 #### Connection Status UI
-- Primary status surface: Dynamic Island (Live Activity) — compact shows color dot only (green=USB, yellow=AWDL, red=disconnected); expanded view shows latency and reconnect button. Fallback to top bar indicator on devices without Dynamic Island.
-- USB → AWDL handoff: Silent. Status flips directly from USB-green to AWDL-yellow only when AWDL connection is confirmed. No intermediate "Switching..." state.
-- Debug screen: Shake-to-reveal popup (available in all builds). Shows: scrollable connection event log, current transport state (USB/AWDL/disconnected), retry count, last error message.
+- Primary in-app status surface: Always-visible top status badge. Tapping it opens the debug sheet. Dynamic Island mirrors connection state on supported devices and still provides the reconnect deep link.
+- USB → AWDL handoff target: Silent. Status should flip directly from USB-green to AWDL-yellow only when AWDL connection is confirmed. 01-05 is still validating the timing and reliability of this behavior.
+- Debug screen: Top-status-badge debug sheet (available in all builds). Shows connection event log, current transport state, AWDL standby state, and actions for reconnect/reset pairing.
 
 #### Security — One-Time Pairing
 - First launch requires QR code pairing: macOS agent displays a QR code; iOS app uses camera to scan it. Encrypted key exchange happens after scan. After first-time pairing, subsequent connections authenticate automatically using stored keys.
-- This pairing must happen before any keyboard input is accepted. The keyboard screen stays in "Waiting to pair" state until pairing completes.
+- This pairing must happen before any keyboard input is accepted. Pairing can be reset from either side, and the reset flow invalidates the remote pairing before clearing local state.
 
 #### Keyboard Interaction Model
-- Key feedback: Haptic feedback + visual highlight matching native iOS keyboard behavior (key lightens on press in dark mode, darkens in light mode)
-- Backspace auto-repeat: First phase deletes single characters (standard key-repeat rate); after holding ~0.5s, switches to deleting entire words. Matches native iOS backspace behavior exactly.
+- Key feedback: The stock iOS keyboard provides native key visuals. The custom hotkey panel adds haptics for app-owned shortcut buttons.
+- Backspace auto-repeat: First phase deletes single characters, then ramps into word-delete on a sustained hold. The target behavior remains "native-feeling," but the exact timing is still being tuned during 01-05.
 - Hotkey buttons: Single tap sends the full shortcut as one atomic CGEvent sequence (no sticky modifier key needed in Phase 1)
 - Modifier safety: Cmd key-up events must always be sent, including in error paths and on disconnect (Swift `defer` blocks). Prevents stuck-Cmd bug if connection drops mid-shortcut.
 - Password field detection: When macOS reports a secure input field is focused, iOS keyboard shows a gray overlay with "Password field active" label. Key input is blocked until field changes.
 
 #### First Launch & Setup Flow
-- **iOS first launch:** No onboarding screen. App opens directly to the keyboard view in "Waiting to pair" state. QR code pairing screen appears automatically before keyboard becomes active.
-- **macOS first launch:** System alert dialog at launch listing both missing permissions (Accessibility + Input Monitoring) with direct "Open System Settings" button. Agent does not accept connections until both are granted. Same alert re-checks on every launch (both permissions are revoked on Xcode rebuild — this is expected).
-- **Connection wait state:** Full keyboard layout is visible but dimmed/non-interactive while connecting. Status indicator shows "Connecting…". Keyboard becomes interactive immediately when connection is established.
+- **iOS first launch:** No onboarding screen. App launches directly into the QR pairing view when unpaired. The keyboard view is shown only after pairing succeeds.
+- **macOS first launch:** The menu bar agent launches immediately, shows permission state in its menu, and provides direct actions to open the relevant System Settings panes. Once both permissions are granted, the agent starts transport automatically. The QR pairing window is opened from the menu and closes automatically after successful pairing.
+- **Connection wait state:** Once paired, the keyboard layout is visible but dimmed/non-interactive while connecting. The top status badge remains visible, and the app offers an explicit retry path while disconnected.
 
 #### Orientation & Device Support
 - Orientation: Portrait only. Landscape not supported in Phase 1 — keyboard height constraints make landscape impractical.
 - Device: iPhone and iPad both supported from Phase 1.
 
 #### iOS Interruptions & Background
-- Phone call interruption: Transport stays alive during the call. On return to app, keyboard is immediately active — no reconnect needed.
-- App backgrounding: Transport attempts to stay alive using iOS background task APIs. Researcher should investigate the correct background API for a persistent TCP connection. App reconnects immediately when foregrounded if background connection was suspended.
+- Phone call interruption: The app should resume cleanly when it becomes active again, but 01-05 still treats reconnect/resume behavior as validation work rather than a guaranteed solved case.
+- App backgrounding: Phase 1 no longer depends on a persistent background transport strategy. Live Activity can remain visible while backgrounded, but reconnect/resume behavior is handled when the app becomes active again.
 - iOS idle timer: Disabled (`UIApplication.shared.isIdleTimerDisabled = true`) while actively connected.
 
 #### macOS Agent
-- Menu bar icon: Static keyboard icon. Clicking opens menu showing: connection state, transport type (USB/AWDL), version, Quit.
-- Permission prompts: System alert dialog at every launch if either Accessibility or Input Monitoring is missing. Alert is blocking — agent does not proceed until both granted.
+- Menu bar icon: Static keyboard icon. Clicking opens a menu showing: connection state, transport type (USB/AWDL), Pair iPhone, Reset Pairing, version, Quit.
+- Permission prompts: Missing permissions are surfaced in the menu with direct actions to open the relevant System Settings panes plus a relaunch action. The agent starts transport after both permissions are granted.
 - Agent lifecycle: Registered via `SMAppService.mainApp` as Login Item. macOS auto-restarts agent if it crashes or is force-quit.
-- Agent UI: Menu bar icon + menu only. No settings window in Phase 1.
+- Agent UI: Menu bar icon + menu, plus a temporary QR pairing window in Phase 1 when pairing is needed.
 
 ### Claude's Discretion
 - Exact port number for usbmuxd TCP tunnel (hardcoded for personal use)
-- Specific CGEvent tap target (kCGAnnotatedSessionEventTap vs kCGHIDEventTap — research should verify which works for non-sandboxed self-signed helper)
-- iOS background task API selection (VoIP mode, BGProcessingTask, or UIApplication background task — researcher to investigate)
-- Dynamic Island Live Activity implementation details (ActivityKit vs NotificationCenter-based)
 - Exact retry-with-backoff timing for USB reconnect on plug-in
+- Remaining 01-05 tuning for USB readiness detection vs AWDL standby promotion on real hardware
 
 ### Deferred Ideas (OUT OF SCOPE)
 - None — all discussion stayed within Phase 1 scope.
@@ -79,29 +77,29 @@
 | TRANS-06 | Wire protocol uses length-prefixed binary framing (4-byte big-endian length + payload) | Custom binary framing in MessageEncoder/Decoder; ensures reliable message boundaries over TCP byte stream |
 | TRANS-07 | USB connection retries with backoff on failure (device takes 2–5s to become available after plug-in) | Exponential backoff in USBTransport.connect(); device enumeration takes 2–5s after plug-in |
 | KEY-01 | User can type characters into the currently focused macOS text field from the iOS keyboard | CGEventCreateKeyboardEvent + CGEventPost(kCGAnnotatedSessionEventTap) for character injection; works across Safari, Firefox, Messages |
-| KEY-02 | User can press Backspace, Return, Tab, and Escape from iOS keyboard | Standard virtual key codes: kVK_Delete (51), kVK_Return (36), kVK_Tab (48), kVK_Escape (53); same CGEvent injection path |
-| KEY-03 | iOS keyboard displays as standard full-width keyboard layout at bottom of screen | Custom SwiftUI keyboard layout in UIViewController; portrait-only; uses safeAreaInsets and keyboardLayoutGuide for layout |
-| KEY-04 | iOS app is a foreground UIViewController-based app (NOT a UIInputViewController keyboard extension) | Standard UIViewController with custom SwiftUI keyboard view; NOT a system keyboard extension (extensions cannot initiate network connections) |
+| KEY-02 | User can send Backspace, Return, Escape, and Tab from iOS | Backspace/Return come from the stock iOS keyboard host; Tab remains available via the hotkey panel when the system keyboard does not expose it |
+| KEY-03 | iOS keyboard displays as standard full-width keyboard layout at bottom of screen | Stock iOS keyboard hosted by a hidden UITextField inside the app; hotkey panel remains custom and portrait-oriented |
+| KEY-04 | iOS app is a foreground UIViewController-based app (NOT a UIInputViewController keyboard extension) | Standard UIViewController with a hidden UIKit text-field keyboard host plus SwiftUI chrome; NOT a system keyboard extension (extensions cannot initiate network connections) |
 | KEY-05 | iOS screen does not auto-lock while keyboard is connected | `UIApplication.shared.isIdleTimerDisabled = true` while transport is in connected state |
 | SHORT-01 | User can send Command-C (copy) | CGEventCreateKeyboardEvent(nil, kVK_ANSI_C, keyDown) with CGEventSetFlags(kCGEventFlagMaskCommand); followed by key-up; defer block for modifier release |
 | SHORT-02 | User can send Command-X (cut) | Same pattern as SHORT-01 with kVK_ANSI_X |
 | SHORT-03 | User can send Command-V (paste) | Same pattern as SHORT-01 with kVK_ANSI_V |
 | SHORT-04 | User can send Command-Z (undo) | Same pattern as SHORT-01 with kVK_ANSI_Z |
-| SHORT-05 | User can send Command-Y (redo) | Same pattern as SHORT-01 with kVK_ANSI_Y |
+| SHORT-05 | User can send Command-Shift-Z (redo) | Same pattern as SHORT-01 with kVK_ANSI_Z plus Shift modifier |
 | SHORT-06 | User can send Command-A (select all) | Same pattern as SHORT-01 with kVK_ANSI_A |
 | SHORT-07 | User can send Command-Q (quit) | Same pattern; add confirmation prompt before sending (destructive action) |
-| SHORT-08 | User can send Command-Backspace (delete word left) | CGEvent with kVK_Delete + kCGEventFlagMaskCommand |
-| SHORT-09 | User can send Command-Delete (delete entire line) | CGEvent with kVK_ForwardDelete + kCGEventFlagMaskCommand |
+| SHORT-08 | User can send Option-Delete (delete word left) | CGEvent with kVK_Delete + kCGEventFlagMaskAlternate |
+| SHORT-09 | User can send Command-Delete (line-delete / line-clear behavior, app-dependent) | CGEvent with kVK_Delete + kCGEventFlagMaskCommand |
 | SHORT-10 | User can send Command-Shift-4 (screenshot) | CGEvent with kVK_ANSI_4 + kCGEventFlagMaskCommand + kCGEventFlagMaskShift |
 | SHORT-11 | Modifier key-up events are always sent, even if connection drops mid-sequence | Swift `defer` blocks around all modifier-sending code; TransportManager sends modifier-release sequence on disconnect |
 | AGENT-01 | macOS helper registers as a Login Item (SMAppService) and starts at login | `SMAppService.mainApp.register()` on first launch; requires app to be code-signed |
 | AGENT-02 | macOS helper displays connection status in the menu bar | NSStatusItem with NSStatusBar.system; menu shows USB/AWDL/disconnected state |
-| AGENT-03 | macOS helper checks for Accessibility permission at every launch and displays persistent prompt if missing | `AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt: true])` on every launch; block connection acceptance until granted |
-| AGENT-04 | macOS helper checks for Input Monitoring permission at every launch and displays persistent prompt if missing | `IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)` check on every launch; both Accessibility AND Input Monitoring required since macOS 10.15 |
+| AGENT-03 | macOS helper checks for Accessibility permission at every launch and surfaces a menu-driven recovery path if missing | Permission state is shown in the status menu; the user can open the relevant System Settings pane from the menu and relaunch if needed |
+| AGENT-04 | macOS helper checks for Input Monitoring permission at every launch and surfaces a menu-driven recovery path if missing | Permission state is shown in the status menu; the user can open the relevant System Settings pane from the menu and relaunch if needed |
 | AGENT-05 | macOS helper is built WITHOUT App Sandbox | Set `com.apple.security.app-sandbox` to `false` in entitlements; required for CGEventPost and AX operations |
 | AGENT-06 | macOS helper detects secure input mode and sends "keyboard paused" indicator to iOS | `IsSecureEventInputEnabled()` from IOKit; poll or observe; send SecureInputChanged message over transport to iOS |
 | UX-01 | iOS app uses Liquid Glass (Glassmorphism) visual style using SwiftUI `.ultraThinMaterial` | SwiftUI `.ultraThinMaterial` ViewModifier for panel chrome; NOT applied to individual key caps |
-| UX-02 | iOS app displays connection status indicator (USB / AWDL / disconnected) with color coding, always visible | Dynamic Island Live Activity (ActivityKit) on supported devices; fallback to top status bar overlay on older devices |
+| UX-02 | iOS app displays connection status indicator (USB / AWDL / disconnected) with color coding, always visible | Top status badge is always visible in-app; Dynamic Island Live Activity mirrors state on supported devices |
 | UX-03 | iOS keyboard layout: standard keyboard on bottom, macOS hotkey row above it (Phase 1) | SwiftUI VStack: HotkeyPanel above, KeyboardView below; fixed layout within UIViewController |
 </phase_requirements>
 

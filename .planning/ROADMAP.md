@@ -2,7 +2,7 @@
 
 ## Overview
 
-Three phases that build on a frozen transport layer: Phase 1 establishes the binary transport stack (USB + AWDL) and delivers a working keyboard that types into macOS in real time. Phase 2 adds bidirectional text sync, giving the iPhone cursor control, text selection, predictive text, and a live preview of the macOS field. Phase 3 makes the hotkey panel app-aware, so shortcut sets update automatically when the frontmost macOS application changes.
+Three phases that build toward a frozen transport layer: Phase 1 establishes the binary transport stack (USB + AWDL) and delivers a working keyboard that types into macOS in real time. Phase 2 adds bidirectional text sync, giving the iPhone cursor control, text selection, predictive text, and a live preview of the macOS field. Phase 3 makes the hotkey panel app-aware, so shortcut sets update automatically when the frontmost macOS application changes.
 
 ## Phases
 
@@ -12,14 +12,14 @@ Three phases that build on a frozen transport layer: Phase 1 establishes the bin
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Transport and Core Keyboard** - USB + AWDL transport frozen, keyboard types into macOS, hotkey panel operational
+- [ ] **Phase 1: Transport and Core Keyboard** - USB + AWDL transport implemented and under device validation, stock keyboard host types into macOS, hotkey panel operational
 - [ ] **Phase 2: Bidirectional Text Sync and Advanced Editing** - Cursor control, text selection, predictive text, and live macOS field mirror on iOS
 - [ ] **Phase 3: App-Aware Hotkey Panel** - Hotkey panel shows app-specific shortcuts based on frontmost macOS application
 
 ## Phase Details
 
 ### Phase 1: Transport and Core Keyboard
-**Goal**: User can type characters, shortcuts, and control keys into the frontmost macOS field from the iPhone over USB, with automatic AWDL fallback when unplugged, and the macOS agent starts at login
+**Goal**: User can type characters, shortcuts, and control keys into the frontmost macOS field from the iPhone over USB using the in-app stock keyboard host, with automatic AWDL fallback when unplugged, and the macOS agent starts at login
 **Depends on**: Nothing (first phase)
 **Requirements**: TRANS-01, TRANS-02, TRANS-03, TRANS-04, TRANS-05, TRANS-06, TRANS-07, KEY-01, KEY-02, KEY-03, KEY-04, KEY-05, SHORT-01, SHORT-02, SHORT-03, SHORT-04, SHORT-05, SHORT-06, SHORT-07, SHORT-08, SHORT-09, SHORT-10, SHORT-11, AGENT-01, AGENT-02, AGENT-03, AGENT-04, AGENT-05, AGENT-06, UX-01, UX-02, UX-03
 **Success Criteria** (what must be TRUE):
@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User taps any shortcut button (Cmd-C, Cmd-V, Cmd-Z, etc.) on the iPhone hotkey panel and the corresponding macOS shortcut executes in the frontmost app
   4. macOS agent menu bar icon shows the current connection state (USB / AWDL / disconnected) and prompts for Accessibility and Input Monitoring permissions if missing
   5. iPhone does not auto-lock while connected; hotkey panel pauses with a visible indicator when macOS has a password field focused
-**Plans**: TBD
+**Plans**: 01-01, 01-02, 01-03, 01-04, 01-05 (device validation and bug-fixing still in progress)
 
 ### Phase 2: Bidirectional Text Sync and Advanced Editing
 **Goal**: iOS editing gestures and cursor controls operate on the macOS field, predictive text suggestions reflect the macOS field content, and the iOS app shows a live text mirror of what is in the macOS field
@@ -60,6 +60,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Transport and Core Keyboard | 4/5 | In Progress|  |
+| 1. Transport and Core Keyboard | 5/5 | In Progress (01-05 open) |  |
 | 2. Bidirectional Text Sync and Advanced Editing | 0/TBD | Not started | - |
 | 3. App-Aware Hotkey Panel | 0/TBD | Not started | - |

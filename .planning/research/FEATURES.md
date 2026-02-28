@@ -118,8 +118,8 @@ Minimum viable product — validates the transport and basic keyboard concept.
 - [ ] AWDL fallback on USB unplug — makes the app usable in daily workflow
 - [ ] Character input: type into frontmost macOS field — core value demonstration
 - [ ] Backspace, Return, Tab, Escape — makes the keyboard usable for real fields
-- [ ] Cmd-C / Cmd-X / Cmd-V / Cmd-Z / Cmd-Y / Cmd-A / Cmd-Q — power user hotkeys needed immediately
-- [ ] Cmd-Backspace / Cmd-Delete / Cmd-Shift-4 — the listed required shortcuts
+- [ ] Cmd-C / Cmd-X / Cmd-V / Cmd-Z / Cmd-Shift-Z / Cmd-A / Cmd-Q — power user hotkeys needed immediately
+- [ ] Option-Delete / Cmd-Delete / Cmd-Shift-4 — the listed required shortcuts
 - [ ] Connection state indicator on iOS — user needs confidence that commands are arriving
 - [ ] Liquid Glass visual styling — stated design constraint, not optional
 
@@ -223,9 +223,9 @@ No direct competitors exist for USB/AWDL iOS→macOS text input specifically. Th
 Priority order based on daily-use frequency:
 
 1. Cmd-C, Cmd-X, Cmd-V — copy/cut/paste (highest daily usage)
-2. Cmd-Z, Cmd-Y — undo/redo
+2. Cmd-Z, Cmd-Shift-Z — undo/redo
 3. Cmd-A — select all
-4. Cmd-Backspace — delete word left (text fields)
+4. Option-Delete — delete word left (text fields)
 5. Cmd-Q — quit app
 6. Return / Enter — submit
 7. Escape — dismiss

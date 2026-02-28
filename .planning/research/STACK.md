@@ -23,7 +23,7 @@ current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code
 |------------|---------|---------|-----------------|
 | Swift | 6.0 (Xcode 16) | Primary language for iOS app | Swift Concurrency (async/await, actors) is the right model for the event-driven transport + UI work; SwiftUI is the right framework for the Liquid Glass UI; Obj-C would require bridging for no gain |
 | SwiftUI | iOS 17+ | Keyboard layout, hotkey panel, Liquid Glass UI | The `.glassEffect()` / `.ultraThinMaterial` approach to Liquid Glass is native in SwiftUI; UIKit would require manual CALayer work for the same effect |
-| UIKit (targeted use) | iOS 17+ | Custom keyboard layout rendering when SwiftUI can't do it | `UIInputViewController` (custom keyboard extension) is UIKit-only; the keyboard *host* view must be UIKit; wrap in `UIViewRepresentable` for SwiftUI interop |
+| UIKit (targeted use) | iOS 17+ | Host the stock iOS keyboard inside the app via a hidden text field | Keep a UIKit text field as first responder so the system keyboard stays active, then wrap that host in `UIViewRepresentable` for SwiftUI interop |
 | Network.framework | iOS 12+ | AWDL transport (Bonjour service discovery + NWConnection) | Apple's unified transport API; supports AWDL via `NWParameters` with `.peerToPeer` interface; replaces raw BSD sockets for AWDL |
 | Foundation (URLSession / Stream) | iOS 16+ | usbmuxd TCP socket communication | usbmuxd exposes a local TCP port (62078) on macOS; on iOS the connection is inbound via a reverse tunnel; use BSD sockets (POSIX) or `NWConnection` over TCP loopback |
 
@@ -33,8 +33,8 @@ current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code
 |------------|---------|---------|-----------------|
 | Swift | 6.0 (Xcode 16) | Primary language for macOS daemon/agent | Same reasoning as iOS; Swift Concurrency suits the event loop needed to receive packets and dispatch AX calls |
 | AppKit | macOS 14+ | NSApplication lifecycle for Login Item / LaunchAgent | macOS agent needs an app bundle or LaunchAgent plist; `NSApplicationActivationPolicy.accessory` hides it from the Dock |
-| Accessibility (AX) framework | macOS 14+ | Read focused element, inject text, move cursor | `AXUIElementCreateSystemWide()` + `AXUIElementCopyAttributeValue(kAXFocusedUIElement)` + `AXUIElementSetAttributeValue(kAXValueAttribute)` is the standard approach for text field injection into Safari/Firefox/Messages |
-| CoreGraphics (CGEvent) | macOS 14+ | Inject keystrokes and modifier+key combos (Cmd-C/V/Z etc.) | `CGEventCreateKeyboardEvent` + `CGEventPost(kCGAnnotatedSessionEventTap, ...)` is the standard path for hotkey injection; works across all apps including those that ignore AX text writes |
+| Accessibility (AX) framework | macOS 14+ | Read focused element, detect secure input, and support later cursor/selection sync | `AXUIElementCreateSystemWide()` + `AXUIElementCopyAttributeValue(kAXFocusedUIElement)` is used for state reads; AX value writes are not treated as the production text-entry path |
+| CoreGraphics (CGEvent) | macOS 14+ | Inject keystrokes and modifier+key combos (Cmd-C/V/Z etc.) | `CGEventCreateKeyboardEvent` + `CGEventPost(...)` is the production write path; current implementation uses annotated-session for Unicode text and HID tap for virtual-key shortcuts |
 | Network.framework | macOS 12+ | AWDL listener (NWListener) and usbmuxd TCP server | Same NWConnection/NWListener API on macOS; AWDL service advertisement via `NWListener` with Bonjour service name |
 | ServiceManagement | macOS 13+ | Register Login Item / privileged helper | `SMAppService.mainApp.register()` replaces the deprecated `SMLoginItemSetEnabled` in macOS 13+; required to auto-start the agent at login |
 
@@ -54,7 +54,7 @@ current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code
 |---------|-----------|-------|
 | AX permission | Accessibility TCC (macOS Privacy) | User must grant "Accessibility" permission in System Settings > Privacy & Security; the app bundle must be code-signed (self-signed works for personal use); without this, AXUIElement calls silently fail |
 | CGEvent permission | Same Accessibility TCC | CGEventPost with `kCGAnnotatedSessionEventTap` requires Accessibility permission for the calling process |
-| Input Monitoring | Input Monitoring TCC | Only needed if the macOS agent needs to *read* keyboard events (monitor); not needed for injection-only |
+| Input Monitoring | Input Monitoring TCC | Treat as required for this project; the agent checks it at launch and provides a relaunch path after granting |
 | Agent auto-start | SMAppService (macOS 13+) | `SMAppService.mainApp` registers the main app as a Login Item without needing a helper bundle; simpler than SMJobBless for this use case |
 | No privileged helper needed | — | For AX + CGEvent injection only, a standard user-space agent with Accessibility TCC is sufficient; `SMJobBless` / PrivilegedHelperTool is only needed for kernel-level operations (not required here) |
 
@@ -90,7 +90,7 @@ current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code
 | USB transport library | Raw BSD sockets over usbmuxd | peertalk (rsms/peertalk) | peertalk is Obj-C, last commit 2015, requires bridging header, adds no value over raw sockets; the usbmuxd protocol it wraps is just a TCP forward |
 | USB transport library | Raw BSD sockets over usbmuxd | libimobiledevice | C library, requires SPM wrapping or manual xcframework, adds hundreds of KB, designed for device management not realtime communication; overkill |
 | AWDL transport | Network.framework NWListener/NWBrowser | Raw AWDL sockets (BSD + SO_RECV_ANYIF) | Raw AWDL requires entitlements Apple doesn't grant to App Store apps; for self-signed personal use it might work but is undocumented and fragile; Network.framework is the supported path |
-| macOS text injection | AXUIElement (kAXValueAttribute set) | IME (Input Method Kit) | IME via InputMethodKit requires a full Input Method bundle registered with the system; massive complexity for personal use; use AXUIElement for text field writes and CGEvent for everything else |
+| macOS text injection | CGEventCreateKeyboardEvent | IME (Input Method Kit) | IME via InputMethodKit requires a full Input Method bundle registered with the system; massive complexity for personal use; use CGEvent for text entry and reserve AX for state reads/sync |
 | macOS text injection | CGEventCreateKeyboardEvent | IOKit HID virtual device | HID virtual device requires a kernel extension (DriverKit in modern macOS) for full compatibility; far more complexity than CGEvent; CGEvent + AX covers all target apps (Safari, Firefox, Messages) |
 | Language | Swift (both sides) | Objective-C (both sides) | Obj-C has no advantage here; AX and CGEvent APIs have Swift overlays; Network.framework is Swift-first; Obj-C only makes sense if bridging to existing Obj-C code |
 | Language | Swift (both sides) | Mixed Swift + Obj-C | The peertalk dependency would force mixed; since we're not using peertalk, stay pure Swift |
@@ -106,7 +106,7 @@ current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code
 | peertalk (rsms/peertalk) | Unmaintained since ~2015; Obj-C only; forces bridging header; wraps usbmuxd TCP in a way that's easily replicated with 50 lines of Swift using BSD sockets or NWConnection | Raw BSD sockets (`bind`/`accept` on macOS, `connect` on iOS) to the usbmuxd-forwarded port |
 | libimobiledevice | C library designed for device management (file transfer, backup, media sync); not designed for real-time bidirectional communication; heavy dependency; complex to build as xcframework | Raw usbmuxd TCP tunnel (no library needed) |
 | Multipeer Connectivity | Cannot enforce AWDL-only transport; may use Bluetooth fallback without your knowledge; opaque session model; no control over message framing; discovered latency issues in real-world use | Network.framework NWBrowser/NWListener with `.peerToPeer` parameters over Bonjour |
-| InputMethodKit (IME) | Requires registering a system Input Method that replaces the user's keyboard system-wide; requires separate bundle, plist registration, and user consent; excessive complexity for injection into 3 target apps | AXUIElementSetAttributeValue(kAXValueAttribute) for text fields; CGEventCreateKeyboardEvent for keystrokes |
+| InputMethodKit (IME) | Requires registering a system Input Method that replaces the user's keyboard system-wide; requires separate bundle, plist registration, and user consent; excessive complexity for injection into 3 target apps | CGEventCreateKeyboardEvent for text entry; AXUIElement for read/sync only |
 | SMJobBless / PrivilegedHelperTool | Requires XPC service, separate signed helper binary, and admin authentication; needed for root-level operations; AX + CGEvent work at user-space level and only need Accessibility TCC | SMAppService.mainApp for Login Item; standard process for AX/CGEvent |
 | Bluetooth transport | Explicitly out of scope per project constraints | usbmuxd (USB) + Network.framework AWDL |
 | JSON framing over the socket | Parsing overhead adds latency; keyboard events are small fixed-size messages; JSON adds 3-10x payload size for no benefit in this context | 4-byte length-prefixed binary frames with a compact message protocol (e.g., struct with event type + key code + modifiers) |
@@ -128,10 +128,10 @@ current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code
 - AWDL requires the `com.apple.developer.networking.wifi-info` entitlement on iOS for some operations but NWBrowser/NWListener over Bonjour may work without it for personal-use self-signed apps (LOW confidence — verify)
 
 **For AX text injection on macOS:**
-- Happy path: `AXUIElementSetAttributeValue(focusedElement, kAXValueAttribute as CFString, newText as CFTypeRef)` — replaces entire field value; works in most NSTextField/UITextField-backed fields
-- Better path for cursor-position-aware editing: use `kAXSelectedTextRangeAttribute` to move cursor, then `kAXSelectedTextAttribute` to insert/replace
-- CGEvent path for keystrokes: `CGEventCreateKeyboardEvent(nil, keyCode, keyDown)` → set flags → `CGEventPost(kCGAnnotatedSessionEventTap, event)` — works for Cmd-C/V/Z and any key combo
-- For Safari/Firefox web text fields: AX value set may not work (web content process isolation); use CGEvent keystroke injection as the reliable fallback
+- Preferred path: use AX to inspect the focused element, secure-input state, selected range, and later text state for sync
+- For cursor-position-aware editing in later phases: use `kAXSelectedTextRangeAttribute` and related read APIs; do not rely on AX value writes as the primary text-entry path
+- CGEvent path for keystrokes: `CGEventCreateKeyboardEvent(nil, keyCode, keyDown)` → set flags → `CGEventPost(...)` — current implementation uses annotated-session posting for Unicode text and HID posting for virtual-key shortcuts
+- For Safari/Firefox web text fields: treat CGEvent keystroke injection as the reliable write path
 
 **For the macOS agent lifecycle:**
 - Use `NSApplicationActivationPolicy.accessory` so agent has no Dock icon

@@ -15,10 +15,12 @@
 - [ ] **TRANS-06**: Wire protocol uses length-prefixed binary framing (4-byte big-endian length + payload)
 - [x] **TRANS-07**: USB connection retries with backoff on failure (device takes 2–5s to become available after plug-in)
 
+Phase 1 transport is implemented, but 01-05 device validation is still open for AWDL fallback timing and reconnect reliability on hardware.
+
 ### Keyboard
 
 - [x] **KEY-01**: User can type characters into the currently focused macOS text field from the iOS keyboard
-- [x] **KEY-02**: User can press Backspace, Return, Tab, and Escape from iOS keyboard
+- [x] **KEY-02**: User can send Backspace, Return, Escape, and Tab from iOS (Tab may come from the hotkey panel when the stock keyboard does not expose it)
 - [x] **KEY-03**: iOS keyboard displays as standard full-width keyboard layout at bottom of screen
 - [x] **KEY-04**: iOS app is a foreground UIViewController-based app (NOT a UIInputViewController keyboard extension)
 - [x] **KEY-05**: iOS screen does not auto-lock while keyboard is connected
@@ -29,11 +31,11 @@
 - [x] **SHORT-02**: User can send Command-X (cut) from iOS hotkey panel
 - [x] **SHORT-03**: User can send Command-V (paste) from iOS hotkey panel
 - [x] **SHORT-04**: User can send Command-Z (undo) from iOS hotkey panel
-- [x] **SHORT-05**: User can send Command-Y (redo) from iOS hotkey panel
+- [x] **SHORT-05**: User can send Command-Shift-Z (redo) from iOS hotkey panel
 - [x] **SHORT-06**: User can send Command-A (select all) from iOS hotkey panel
 - [x] **SHORT-07**: User can send Command-Q (quit) from iOS hotkey panel
-- [x] **SHORT-08**: User can send Command-Backspace (delete word left) from iOS hotkey panel
-- [x] **SHORT-09**: User can send Command-Delete (delete entire line) from iOS hotkey panel
+- [x] **SHORT-08**: User can send Option-Delete (delete word left) from iOS hotkey panel
+- [x] **SHORT-09**: User can send Command-Delete (line-delete / line-clear behavior, app-dependent) from iOS hotkey panel
 - [x] **SHORT-10**: User can send Command-Shift-4 (screenshot) from iOS hotkey panel
 - [x] **SHORT-11**: Modifier key-up events are always sent, even if connection drops mid-sequence (prevents stuck Cmd key)
 
@@ -60,8 +62,8 @@
 
 - [x] **AGENT-01**: macOS helper registers as a Login Item (SMAppService) and starts at login
 - [x] **AGENT-02**: macOS helper displays connection status (USB / AWDL / disconnected) in the menu bar
-- [x] **AGENT-03**: macOS helper checks for Accessibility permission at every launch and displays a persistent prompt if missing
-- [x] **AGENT-04**: macOS helper checks for Input Monitoring permission at every launch and displays a persistent prompt if missing
+- [x] **AGENT-03**: macOS helper checks for Accessibility permission at every launch and surfaces a menu-driven recovery path if missing
+- [x] **AGENT-04**: macOS helper checks for Input Monitoring permission at every launch and surfaces a menu-driven recovery path if missing
 - [x] **AGENT-05**: macOS helper is built WITHOUT App Sandbox (required for CGEventPost and AX operations)
 - [x] **AGENT-06**: macOS helper detects secure input mode (password fields) and sends "keyboard paused" indicator to iOS
 
@@ -111,9 +113,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | TRANS-01 | Phase 1 | Complete |
-| TRANS-02 | Phase 1 | Complete |
-| TRANS-03 | Phase 1 | Complete |
-| TRANS-04 | Phase 1 | Complete |
+| TRANS-02 | Phase 1 | In Progress |
+| TRANS-03 | Phase 1 | In Progress |
+| TRANS-04 | Phase 1 | In Progress |
 | TRANS-05 | Phase 1 | Pending |
 | TRANS-06 | Phase 1 | Pending |
 | TRANS-07 | Phase 1 | Complete |
@@ -164,4 +166,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-02-27*
-*Last updated: 2026-02-27 after roadmap creation*
+*Last updated: 2026-02-28 after Phase 1 doc reconciliation*

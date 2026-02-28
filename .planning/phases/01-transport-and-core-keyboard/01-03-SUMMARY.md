@@ -95,6 +95,10 @@ completed: 2026-02-28
 
 **SwiftUI iOS app with QWERTY keyboard, 12-shortcut Liquid Glass hotkey panel, USB/AWDL dual transport, and automatic fallback switchover on USB unplug**
 
+## Later Corrections (2026-02-28)
+
+This summary reflects the original 01-03 implementation. Phase 1 later switched from the custom SwiftUI keyboard to an in-app stock iOS keyboard host, updated shortcut mappings (Redo = Cmd-Shift-Z, Delete Word = Option-Delete, Delete Line = Cmd-Delete), and moved debug access to the top status badge during 01-05. Treat this file as historical context, not the current source of truth for shipped behavior.
+
 ## Performance
 
 - **Duration:** 5 min
