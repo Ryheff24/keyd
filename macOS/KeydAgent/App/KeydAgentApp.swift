@@ -21,6 +21,8 @@ struct KeydAgentApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var transportManager: TransportManager?
+    private var permissionPollTimer: Timer?
+    private let checker = PermissionChecker()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide from Dock — KeydAgent is an accessory app (menu bar only)
@@ -35,28 +37,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[AppDelegate] SMAppService.mainApp.register(): \(error.localizedDescription)")
         }
 
-        // Initialize status bar BEFORE permission check so icon appears immediately
+        // Initialize status bar immediately so the icon appears and the user
+        // can see what's happening before anything else runs.
         statusBarController = StatusBarController()
 
-        // Check BOTH Accessibility and Input Monitoring permissions at every launch.
-        // CRITICAL: both are revoked on every Xcode rebuild.
-        let checker = PermissionChecker()
+        // Silent permission check — no popups. Menu bar shows what's missing.
         let perms = checker.checkPermissions()
+        statusBarController?.update(permissions: perms)
 
-        if !perms.accessibility || !perms.inputMonitoring {
-            // Show blocking alert — app stays running but does not accept connections
-            // until the user relaunches after granting permissions in System Settings.
-            checker.showPermissionAlert(
-                accessibility: perms.accessibility,
-                inputMonitoring: perms.inputMonitoring
-            )
-            // Do NOT start transport without both permissions
-            print("[AppDelegate] Missing permissions — transport not started")
-            return
+        if perms.allGranted {
+            startTransport()
+        } else {
+            print("[AppDelegate] Missing permissions — waiting. Menu bar shows status.")
+            // Poll every 3 seconds so the app auto-starts when the user grants permissions
+            // in System Settings without needing a manual relaunch.
+            permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    self?.pollPermissions()
+                }
+            }
         }
+    }
 
-        // Permissions granted — start USB and AWDL transport
-        startTransport()
+    @MainActor
+    private func pollPermissions() {
+        let perms = checker.checkPermissions()
+        statusBarController?.update(permissions: perms)
+        if perms.allGranted {
+            print("[AppDelegate] All permissions granted — starting transport")
+            permissionPollTimer?.invalidate()
+            permissionPollTimer = nil
+            startTransport()
+        }
     }
 
     @MainActor
@@ -74,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Release all modifier keys on quit — prevents stuck modifiers if app is force-quit
         // during a key sequence.
+        permissionPollTimer?.invalidate()
         print("[AppDelegate] Application terminating — releasing all modifiers")
     }
 }
