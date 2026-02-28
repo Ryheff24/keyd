@@ -1,0 +1,5 @@
+- Remove the grant missing permissions button 
+- remove the open system setting button 
+- Instead make the buttons under permission required clickable to their respective system Settings page.
+- The buttons under permission required, remove the “- not granted” text. Switch to some red Xs instead as indicators. when the permissions are granted hide the entire perms section. They’re buttons now so they shouldn’t be grayed out either.
+- There should be a re-launch button instead of growing out after granting a relaunch if you see from the screenshot that icon is invisible in the menu bar you see from the second screenshot perms were granted, but they’re not reflecting in the menu

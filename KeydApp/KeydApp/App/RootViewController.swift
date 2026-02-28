@@ -20,15 +20,13 @@ struct RootView: View {
                 // Status indicator at top (fallback for non-Dynamic Island devices)
                 HStack {
                     Spacer()
-                    ConnectionStatusBadge(state: transportManager.connectionState)
-                    Spacer()
-                }
-                .overlay(alignment: .trailing) {
-                    Button("Reset Pairing") {
-                        resetPairing()
+                    Button {
+                        showDebug = true
+                    } label: {
+                        ConnectionStatusBadge(state: transportManager.connectionState)
                     }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
+                    Spacer()
                 }
                 .padding(.top, 8)
 
@@ -71,11 +69,11 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showDebug) {
-            DebugOverlayView(isPresented: $showDebug)
+            DebugOverlayView(
+                isPresented: $showDebug,
+                onResetPairing: resetPairing
+            )
                 .environmentObject(transportManager)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
-            showDebug = true
         }
     }
 
@@ -142,13 +140,17 @@ struct RootView: View {
     }
 
     private func sendHotkey(virtualKey: UInt16, modifiers: ModifierFlags) {
-        // Send key-down with modifiers; the macOS side uses defer for key-up
         transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: virtualKey, keyDown: true, modifiers: modifiers)))
-        transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: virtualKey, keyDown: false, modifiers: modifiers)))
+        if modifiers.isEmpty {
+            transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: virtualKey, keyDown: false, modifiers: modifiers)))
+        }
     }
 
     private func resetPairing() {
-        transportManager.resetConnections()
-        pairingManager.resetPairing()
+        Task {
+            await transportManager.invalidateRemotePairing()
+            await transportManager.resetConnections()
+            await pairingManager.resetPairing()
+        }
     }
 }

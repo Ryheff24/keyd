@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -52,7 +52,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KeydLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KeydLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1ECA586A8B9C450961B058F6 /* RootViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewController.swift; sourceTree = "<group>"; };
 		404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWDLTransport.swift; sourceTree = "<group>"; };
 		57B4A426776FEFBCC865C4A8 /* KeydLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivity.swift; sourceTree = "<group>"; };
@@ -60,7 +60,7 @@
 		887EF92EF2C71ED65EA70EEB /* KeydLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivityWidget.swift; sourceTree = "<group>"; };
 		92BE1567A4D81EFF26220647 /* DebugOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOverlayView.swift; sourceTree = "<group>"; };
 		95A1596C3CE0CA948A697EB7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardView.swift; sourceTree = "<group>"; };
 		A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydConnectionAttributes.swift; sourceTree = "<group>"; };
 		ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBTransport.swift; sourceTree = "<group>"; };
@@ -247,11 +247,9 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					0C59C2EEA6EABDE415B179E4 = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 					D099F5C92BD18A7A5ED7EB26 = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -269,7 +267,6 @@
 			packageReferences = (
 				567B821E5D00F50680945422 /* XCLocalSwiftPackageReference "../SharedProtocol" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -384,14 +381,14 @@
 				CODE_SIGN_ENTITLEMENTS = KeydApp/KeydApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
 				INFOPLIST_FILE = KeydApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd;
 				PRODUCT_NAME = KeydApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -469,14 +466,14 @@
 				CODE_SIGN_ENTITLEMENTS = KeydApp/KeydApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
 				INFOPLIST_FILE = KeydApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd;
 				PRODUCT_NAME = KeydApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -488,7 +485,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
 				INFOPLIST_FILE = KeydLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -496,7 +493,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.keyd.app.live-activity";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.live-activity";
 				PRODUCT_NAME = KeydLiveActivity;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -508,7 +505,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
 				INFOPLIST_FILE = KeydLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -516,7 +513,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.keyd.app.live-activity";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.live-activity";
 				PRODUCT_NAME = KeydLiveActivity;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;

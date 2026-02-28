@@ -43,15 +43,15 @@ struct HotkeyPanel: View {
     private let hotkeys: [Hotkey] = [
         Hotkey("Copy",       symbol: "doc.on.doc",            style: .iconOnly,    key: VirtualKey.c, mods: .command),
         Hotkey("Paste",      symbol: "doc.on.clipboard",      style: .iconOnly,    key: VirtualKey.v, mods: .command),
-        Hotkey("Cut",        symbol: "scissors",              style: .iconOnly,    key: VirtualKey.x, mods: .command),
         Hotkey("Undo",       symbol: "arrow.uturn.backward",  style: .iconOnly,    key: VirtualKey.z, mods: .command),
-        Hotkey("Redo",       symbol: "arrow.uturn.forward",   style: .iconAndText, key: VirtualKey.y, mods: .command),
-        Hotkey("Tab",        symbol: "arrow.right.to.line",   style: .iconAndText, key: VirtualKey.tab),
+        Hotkey("Redo",       symbol: "arrow.uturn.forward",   style: .iconOnly,    key: VirtualKey.z, mods: [.command, .shift]),
+        Hotkey("Cut",        symbol: "scissors",              style: .iconOnly,    key: VirtualKey.x, mods: .command),
+        Hotkey("Tab",        symbol: "arrow.right.to.line",   style: .iconOnly,    key: VirtualKey.tab),
         Hotkey("Escape",     symbol: "escape",                style: .iconAndText, key: VirtualKey.escape),
         Hotkey("Select All",                                                key: VirtualKey.a, mods: .command),
-        Hotkey("Delete Word",                                              key: VirtualKey.delete, mods: .command),
-        Hotkey("Delete Line",                                              key: VirtualKey.forwardDelete, mods: .command),
-        Hotkey("Screenshot",                                              key: VirtualKey.four, mods: [.command, .shift]),
+        Hotkey("Delete Word",                                              key: VirtualKey.delete, mods: .option),
+        Hotkey("Delete Line",                                              key: VirtualKey.delete, mods: .command),
+        Hotkey("Screenshot",                                              key: VirtualKey.three, mods: [.command, .shift]),
         Hotkey("Quit",                                                   key: VirtualKey.q, mods: .command, destructive: true),
     ]
 

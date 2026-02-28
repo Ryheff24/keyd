@@ -255,9 +255,13 @@ final class TransportManager {
                 send(.pairingInvalidated)
                 logEvent("Rejected input from unpaired device")
                 return
-            case .pairingResponse, .pairingInvalidated, .secureInputChanged, .reflectState, .appStateChanged:
+            case .pairingResponse, .secureInputChanged, .reflectState, .appStateChanged:
                 send(.pairingInvalidated)
                 logEvent("Rejected stale session from unpaired device")
+                return
+            case .pairingInvalidated:
+                logEvent("Received pairing invalidation while already unpaired")
+                resetActiveSession()
                 return
             }
         }
@@ -278,6 +282,8 @@ final class TransportManager {
                 statusBar.update(state: .awdl)
                 startSecureInputPolling()
                 logEvent("AWDL promoted after pairing")
+            }
+            if accepted {
                 onPairingCompleted?()
             }
             logEvent("Pairing \(accepted ? "accepted" : "rejected") for \(request.deviceID)")
@@ -289,6 +295,11 @@ final class TransportManager {
                 send(.pairingInvalidated)
                 logEvent("Rejected session resume from unpaired device")
             }
+
+        case .pairingInvalidated:
+            logEvent("Pairing invalidated by iPhone")
+            pairingManager.resetPairing()
+            resetActiveSession()
 
         default:
             injectionRouter.route(message)

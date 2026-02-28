@@ -47,17 +47,17 @@ final class CGEventInjector {
             // Send the key event with modifier flags
             let keyDownEvent = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(virtualKeyCode), keyDown: true)
             keyDownEvent?.flags = cgFlags
-            keyDownEvent?.post(tap: .cgAnnotatedSessionEventTap)
+            keyDownEvent?.post(tap: .cghidEventTap)
 
             let keyUpEvent = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(virtualKeyCode), keyDown: false)
             keyUpEvent?.flags = cgFlags
-            keyUpEvent?.post(tap: .cgAnnotatedSessionEventTap)
+            keyUpEvent?.post(tap: .cghidEventTap)
             // defer fires sendModifiersUp here
         } else {
             // Non-modifier key (Return, Tab, Escape, Backspace, etc.)
             let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(virtualKeyCode), keyDown: keyDown)
             event?.flags = cgFlags
-            event?.post(tap: .cgAnnotatedSessionEventTap)
+            event?.post(tap: .cghidEventTap)
         }
     }
 
@@ -76,7 +76,7 @@ final class CGEventInjector {
         for (keyCode, name) in modifierKeyCodes {
             let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
             event?.flags = []
-            event?.post(tap: .cgAnnotatedSessionEventTap)
+            event?.post(tap: .cghidEventTap)
             print("[CGEventInjector] Released \(name) key")
         }
     }
@@ -99,7 +99,8 @@ final class CGEventInjector {
 
     private func postKey(_ keyCode: CGKeyCode, down: Bool) {
         let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: down)
-        event?.post(tap: .cgAnnotatedSessionEventTap)
+        // HID posting is required for system shortcuts like screenshots.
+        event?.post(tap: .cghidEventTap)
     }
 
     private func cgEventFlags(from modifiers: ModifierFlags) -> CGEventFlags? {

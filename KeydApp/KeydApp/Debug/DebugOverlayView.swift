@@ -1,14 +1,27 @@
 import SwiftUI
 
-/// Shake-to-reveal debug overlay. Available in all builds.
+/// Debug overlay opened from the top status badge. Available in all builds.
 /// Shows: connection event log, current transport state, retry count, last error.
 struct DebugOverlayView: View {
     @EnvironmentObject var transportManager: TransportManager
     @Binding var isPresented: Bool
+    let onResetPairing: () -> Void
 
     var body: some View {
         NavigationStack {
             List {
+                Section("Actions") {
+                    Button("Reconnect") {
+                        transportManager.reconnect()
+                        isPresented = false
+                    }
+
+                    Button("Reset Pairing", role: .destructive) {
+                        isPresented = false
+                        onResetPairing()
+                    }
+                }
+
                 Section("Current State") {
                     HStack {
                         Text("Transport")
@@ -16,6 +29,13 @@ struct DebugOverlayView: View {
                         Text(stateLabel)
                             .foregroundColor(stateColor)
                             .fontWeight(.semibold)
+                    }
+
+                    HStack {
+                        Text("AWDL Standby")
+                        Spacer()
+                        Text(transportManager.allowsAWDL ? "Enabled" : "Disabled")
+                            .foregroundColor(.secondary)
                     }
                 }
 

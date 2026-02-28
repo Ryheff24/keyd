@@ -197,5 +197,6 @@ public enum VirtualKey {
     public static let z: UInt16 = 0x06
 
     // Number keys (for shortcuts like Cmd-Shift-4)
+    public static let three: UInt16 = 0x14
     public static let four: UInt16 = 0x15
 }

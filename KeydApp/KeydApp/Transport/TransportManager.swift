@@ -143,6 +143,15 @@ final class TransportManager: ObservableObject {
         }
     }
 
+    func invalidateRemotePairing() async {
+        do {
+            try await sendMessage(.pairingInvalidated)
+            logConnectionEvent("Sent pairing invalidation")
+        } catch {
+            logConnectionEvent("Pairing invalidation skipped: \(error.localizedDescription)")
+        }
+    }
+
     private func startAWDLPrewarm() async {
         await awdlTransport.setOnDisconnect { [weak self] in
             Task { @MainActor in
