@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-02-28T14:29:29.383Z"
+status: in_progress
+last_updated: "2026-02-28T15:00:00.000Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -23,31 +23,32 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 1 of 3 (Transport and Core Keyboard)
-Plan: 3 of 5 in current phase
+Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-02-28 — Completed plan 01-03 (iOS app: KeydApp)
+Last activity: 2026-02-28 — Completed plan 01-04 (QR pairing + Dynamic Island Live Activity)
 
-Progress: [██████░░░░] 40% (2 of 5 phase plans with SUMMARY; plan 01-02 is complete but SUMMARY not yet created by this session)
+Progress: [████████░░] 80% (4 of 5 phase plans with SUMMARY)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
+- Total plans completed: 4
 - Average duration: ~5 min/plan
-- Total execution time: ~15 min
+- Total execution time: ~20 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-transport-and-core-keyboard | 3/5 | ~15 min | ~5 min |
+| 01-transport-and-core-keyboard | 4/5 | ~20 min | ~5 min |
 
 **Recent Trend:**
-- Last 3 plans: 01-01 (SharedProtocol), 01-02 (macOS agent), 01-03 (iOS app)
+- Last 4 plans: 01-01 (SharedProtocol), 01-02 (macOS agent), 01-03 (iOS app), 01-04 (pairing + Dynamic Island)
 - Trend: Steady, fast execution
 
 *Updated after each plan completion*
 | Phase 01 P02 | 3 | 4 tasks | 13 files |
+| Phase 01 P04 | 270 | 4 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Phase 01]: App Sandbox disabled in entitlements (required for CGEventPost and AX operations)
 - [Phase 01]: kAXTrustedCheckOptionPrompt used as string literal to avoid Swift 6 shared mutable state warning
 - [Phase 01]: AWDL standby connection kept live while USB is active for sub-second handoff on USB disconnect
+- [01-04]: Widget Extension is required architecture for Dynamic Island — main app alone cannot render in Dynamic Island
+- [01-04]: KeydConnectionAttributes.swift shared between KeydApp and KeydLiveActivity targets via project.yml sources array
+- [01-04]: TransportManager.State made Equatable to support didSet-based Live Activity lifecycle wiring
 
 ### Pending Todos
 
@@ -80,14 +84,17 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-02-28T14:29:00Z
-Stopped at: Completed 01-02-PLAN.md (macOS KeydAgent: CGEvent injection pipeline, USB/AWDL transport, permission gating, menu bar)
+Last session: 2026-02-28T15:00:00Z
+Stopped at: Completed 01-04-PLAN.md (QR pairing + Dynamic Island Live Activity)
 
 ### What's already built (do not rebuild)
 - `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder — builds + tests pass (plan 01-01)
 - `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers — builds clean (plan 01-02)
 - `KeydApp/` iOS Xcode project — USBTransport, AWDLTransport, TransportManager, KeyboardView, HotkeyPanel, ConnectionStatusBadge — builds clean (plan 01-03)
+- `KeydApp/KeydApp/Pairing/` — Curve25519 ECDH pairing with Keychain storage (plan 01-04)
+- `KeydApp/KeydApp/LiveActivity/` — ActivityKit attributes + manager (plan 01-04)
+- `KeydApp/KeydLiveActivity/` — Widget Extension for Dynamic Island rendering (plan 01-04)
+- `macOS/KeydAgent/Pairing/` + `macOS/KeydAgent/UI/` — macOS pairing + QR display (plan 01-04)
 
 ### What's NOT done yet
-- Plan 01-04: Pairing + Dynamic Island Live Activity (Widget Extension via xcodegen)
 - Plan 01-05: Transport hardening + debug overlay (`autonomous: false` — requires human verify checkpoint)
