@@ -58,12 +58,12 @@
 
 ### macOS Agent
 
-- [ ] **AGENT-01**: macOS helper registers as a Login Item (SMAppService) and starts at login
-- [ ] **AGENT-02**: macOS helper displays connection status (USB / AWDL / disconnected) in the menu bar
-- [ ] **AGENT-03**: macOS helper checks for Accessibility permission at every launch and displays a persistent prompt if missing
-- [ ] **AGENT-04**: macOS helper checks for Input Monitoring permission at every launch and displays a persistent prompt if missing
-- [ ] **AGENT-05**: macOS helper is built WITHOUT App Sandbox (required for CGEventPost and AX operations)
-- [ ] **AGENT-06**: macOS helper detects secure input mode (password fields) and sends "keyboard paused" indicator to iOS
+- [x] **AGENT-01**: macOS helper registers as a Login Item (SMAppService) and starts at login
+- [x] **AGENT-02**: macOS helper displays connection status (USB / AWDL / disconnected) in the menu bar
+- [x] **AGENT-03**: macOS helper checks for Accessibility permission at every launch and displays a persistent prompt if missing
+- [x] **AGENT-04**: macOS helper checks for Input Monitoring permission at every launch and displays a persistent prompt if missing
+- [x] **AGENT-05**: macOS helper is built WITHOUT App Sandbox (required for CGEventPost and AX operations)
+- [x] **AGENT-06**: macOS helper detects secure input mode (password fields) and sends "keyboard paused" indicator to iOS
 
 ### UX / Design
 
@@ -133,12 +133,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SHORT-09 | Phase 1 | Complete |
 | SHORT-10 | Phase 1 | Complete |
 | SHORT-11 | Phase 1 | Complete |
-| AGENT-01 | Phase 1 | Pending |
-| AGENT-02 | Phase 1 | Pending |
-| AGENT-03 | Phase 1 | Pending |
-| AGENT-04 | Phase 1 | Pending |
-| AGENT-05 | Phase 1 | Pending |
-| AGENT-06 | Phase 1 | Pending |
+| AGENT-01 | Phase 1 | Complete |
+| AGENT-02 | Phase 1 | Complete |
+| AGENT-03 | Phase 1 | Complete |
+| AGENT-04 | Phase 1 | Complete |
+| AGENT-05 | Phase 1 | Complete |
+| AGENT-06 | Phase 1 | Complete |
 | UX-01 | Phase 1 | Complete |
 | UX-02 | Phase 1 | Complete |
 | UX-03 | Phase 1 | Complete |

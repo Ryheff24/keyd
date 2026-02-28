@@ -1,3 +1,16 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-02-28T14:29:29.383Z"
+progress:
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 5
+  completed_plans: 3
+---
+
 # Project State
 
 ## Project Reference
@@ -34,6 +47,7 @@ Progress: [██████░░░░] 40% (2 of 5 phase plans with SUMMARY;
 - Trend: Steady, fast execution
 
 *Updated after each plan completion*
+| Phase 01 P02 | 3 | 4 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -50,6 +64,9 @@ Recent decisions affecting current work:
 - [01-03]: xcodegen project.yml used for reproducible iOS Xcode project generation with local SPM packages
 - [01-03]: CheckedContinuation<Void, Error> explicit type annotation required in send() for NWConnection completion handlers
 - [01-03]: HotkeyPanel Liquid Glass applied to panel container, not individual key buttons
+- [Phase 01]: App Sandbox disabled in entitlements (required for CGEventPost and AX operations)
+- [Phase 01]: kAXTrustedCheckOptionPrompt used as string literal to avoid Swift 6 shared mutable state warning
+- [Phase 01]: AWDL standby connection kept live while USB is active for sub-second handoff on USB disconnect
 
 ### Pending Todos
 
@@ -63,8 +80,8 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-02-28T14:25:10Z
-Stopped at: Completed 01-03-PLAN.md (iOS app: KeydApp with keyboard UI, dual transport, hotkey panel)
+Last session: 2026-02-28T14:29:00Z
+Stopped at: Completed 01-02-PLAN.md (macOS KeydAgent: CGEvent injection pipeline, USB/AWDL transport, permission gating, menu bar)
 
 ### What's already built (do not rebuild)
 - `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder — builds + tests pass (plan 01-01)
