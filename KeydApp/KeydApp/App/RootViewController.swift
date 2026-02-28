@@ -5,6 +5,7 @@ import SharedProtocol
 /// Full-screen keyboard layout, portrait only.
 struct RootView: View {
     @EnvironmentObject var transportManager: TransportManager
+    @EnvironmentObject var pairingManager: PairingManager
     @State private var isSecureInputActive = false
     @State private var showQuitConfirmation = false
     @State private var pendingDestructiveHotkey: (UInt16, ModifierFlags)? = nil
@@ -24,21 +25,25 @@ struct RootView: View {
                 }
                 .padding(.top, 8)
 
-                Spacer()
+                if !transportManager.isConnected {
+                    recoveryControls
+                        .padding(.top, 12)
+                }
 
                 // Secure input overlay
                 if isSecureInputActive {
                     secureInputOverlay
+                        .frame(maxHeight: .infinity, alignment: .center)
                 } else {
                     keyboardStack
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .opacity(transportManager.isConnected ? 1 : 0.68)
+                        .allowsHitTesting(transportManager.isConnected)
                 }
             }
             .padding(.bottom, 8)
         }
         .ignoresSafeArea(.keyboard)
-        .onReceive(transportManager.$connectionState) { state in
-            // Update idle timer when connection state changes
-        }
         .alert("Send Quit Command?", isPresented: $showQuitConfirmation) {
             Button("Send Cmd-Q", role: .destructive) {
                 if let (key, mods) = pendingDestructiveHotkey {
@@ -69,7 +74,7 @@ struct RootView: View {
     }
 
     private var keyboardStack: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 12) {
             // Hotkey panel above keyboard (UX-03)
             HotkeyPanel(
                 onHotkey: { key, mods in sendHotkey(virtualKey: key, modifiers: mods) },
@@ -78,6 +83,7 @@ struct RootView: View {
                     showQuitConfirmation = true
                 }
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Main keyboard (UX-03)
             KeyboardView(
@@ -100,6 +106,21 @@ struct RootView: View {
                 }
             )
         }
+        .padding(.top, 12)
+    }
+
+    private var recoveryControls: some View {
+        HStack(spacing: 12) {
+            Button("Retry") {
+                transportManager.reconnect()
+            }
+
+            Button("Reset Pairing") {
+                transportManager.resetConnections()
+                pairingManager.resetPairing()
+            }
+        }
+        .buttonStyle(.borderedProminent)
     }
 
     private var secureInputOverlay: some View {

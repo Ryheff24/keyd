@@ -21,30 +21,68 @@ struct KeyboardView: View {
         ["z","x","c","v","b","n","m"]
     ]
 
+    private var keyboardShelfColor: Color {
+        Color(
+            uiColor: UIColor { traits in
+                if traits.userInterfaceStyle == .dark {
+                    return UIColor(red: 0.16, green: 0.17, blue: 0.20, alpha: 1.0)
+                }
+                return UIColor(red: 0.82, green: 0.84, blue: 0.88, alpha: 1.0)
+            }
+        )
+    }
+
+    private var regularKeyColor: Color {
+        Color(
+            uiColor: UIColor { traits in
+                if traits.userInterfaceStyle == .dark {
+                    return UIColor(red: 0.28, green: 0.29, blue: 0.34, alpha: 1.0)
+                }
+                return .white
+            }
+        )
+    }
+
+    private var specialKeyColor: Color {
+        Color(
+            uiColor: UIColor { traits in
+                if traits.userInterfaceStyle == .dark {
+                    return UIColor(red: 0.41, green: 0.43, blue: 0.49, alpha: 1.0)
+                }
+                return UIColor(red: 0.70, green: 0.73, blue: 0.79, alpha: 1.0)
+            }
+        )
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             // Row 1
             keyRow(rows[0])
             // Row 2 (indented)
             keyRow(rows[1], indent: true)
             // Row 3 (with shift + backspace)
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 shiftKey
-                keyRow(rows[2], spacing: 6)
+                keyRow(rows[2], spacing: 7)
                 backspaceKey
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
             // Bottom row: 123 | space | return
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 numberModeKey
                 spaceKey
                 returnKey
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
         }
-        .padding(.horizontal, 3)
-        .padding(.vertical, 8)
-        .background(Color(UIColor.systemBackground).opacity(0.001)) // Transparent for Glass layer above
+        .padding(.horizontal, 8)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(keyboardShelfColor)
+        )
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Key rows
@@ -57,7 +95,7 @@ struct KeyboardView: View {
             }
             if indent { Spacer().frame(width: 20) }
         }
-        .padding(.horizontal, 3)
+        .padding(.horizontal, 2)
     }
 
     private func characterKey(_ key: String) -> some View {
@@ -71,16 +109,13 @@ struct KeyboardView: View {
         }) {
             Text(displayChar)
                 .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity)
-                .frame(height: 42)
+                .frame(height: 48)
                 .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color(UIColor.systemBackground))
-                        .shadow(color: .black.opacity(0.3), radius: 0, x: 0, y: 1)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(regularKeyColor)
+                        .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -96,8 +131,12 @@ struct KeyboardView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Image(systemName: isCapsLocked ? "capslock.fill" : (isShifted ? "shift.fill" : "shift"))
-                .frame(width: 42, height: 42)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(UIColor.systemBackground)))
+                .font(.system(size: 19, weight: .semibold))
+                .frame(width: 50, height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(specialKeyColor)
+                )
         }
         .buttonStyle(.plain)
     }
@@ -110,8 +149,12 @@ struct KeyboardView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Image(systemName: "delete.left")
-                .frame(width: 42, height: 42)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(UIColor.systemBackground)))
+                .font(.system(size: 19, weight: .semibold))
+                .frame(width: 50, height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(specialKeyColor)
+                )
         }
         .buttonStyle(.plain)
         .onLongPressGesture(minimumDuration: 0.5, perform: {
@@ -135,8 +178,11 @@ struct KeyboardView: View {
                 .font(.system(size: 15))
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity)
-                .frame(height: 42)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(UIColor.systemBackground)))
+                .frame(height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(regularKeyColor)
+                )
         }
         .buttonStyle(.plain)
     }
@@ -147,9 +193,12 @@ struct KeyboardView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Text("return")
-                .font(.system(size: 15))
-                .frame(width: 88, height: 42)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(UIColor.systemBackground)))
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 92, height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(specialKeyColor)
+                )
         }
         .buttonStyle(.plain)
     }
@@ -158,9 +207,12 @@ struct KeyboardView: View {
         // Phase 1: placeholder for number/symbol mode toggle
         Button(action: {}) {
             Text("123")
-                .font(.system(size: 15))
-                .frame(width: 42, height: 42)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(UIColor.secondarySystemBackground)))
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 50, height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(specialKeyColor)
+                )
         }
         .buttonStyle(.plain)
     }
