@@ -109,11 +109,15 @@ struct PairingView: View {
         case .usbConnected:
             return "USB is ready. Scan the QR code shown by KeydAgent."
         case .awdlConnected:
-            return "AWDL is ready. Scan now and the app will finish pairing over the active link."
+            return "AWDL is active, but first-time pairing should be done over USB."
         case .connecting:
-            return "Scan now if you want. The app will wait briefly for the Mac connection before sending the pairing request."
+            return transportManager.allowsAWDL
+                ? "Preparing the Mac connection."
+                : "Checking for the USB connection. Keep the iPhone plugged into your Mac while pairing."
         case .disconnected:
-            return "You can still scan, but pairing will wait for the Mac connection. Keep KeydAgent open and the devices nearby."
+            return transportManager.allowsAWDL
+                ? "Keep KeydAgent open and the devices nearby."
+                : "First-time pairing uses USB. Connect the iPhone to your Mac, keep KeydAgent open, then scan the QR code."
         }
     }
 

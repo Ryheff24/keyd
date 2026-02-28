@@ -74,6 +74,14 @@ final class PairingManager {
         }
     }
 
+    func resetPairing() {
+        clearFromKeychain(key: keychainSharedSecretKey)
+        privateKey = nil
+        isPaired = false
+        pairedDeviceID = nil
+        print("[PairingManager] Cleared stored pairing state")
+    }
+
     // MARK: - Keychain
 
     private func saveSharedSecretToKeychain(_ secret: Data) {
@@ -98,5 +106,14 @@ final class PairingManager {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         return status == errSecSuccess ? (result as? Data) : nil
+    }
+
+    private func clearFromKeychain(key: String) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: key
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }

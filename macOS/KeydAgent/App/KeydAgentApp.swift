@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // can see what's happening before anything else runs.
         let statusBar = StatusBarController()
         statusBar.onShowPairing = { [weak self] in self?.showPairingWindow() }
+        statusBar.onResetPairing = { [weak self] in self?.resetPairing() }
         statusBarController = statusBar
 
         // Silent permission check — no popups. Menu bar shows what's missing.
@@ -109,6 +110,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await manager.start()
         }
         print("[AppDelegate] Transport started")
+    }
+
+    @MainActor
+    private func resetPairing() {
+        pairingManager.resetPairing()
+        transportManager?.resetActiveSession()
+        pairingWindow?.close()
+        pairingWindow = nil
+        print("[AppDelegate] Pairing reset")
     }
 
     func applicationWillTerminate(_ notification: Notification) {

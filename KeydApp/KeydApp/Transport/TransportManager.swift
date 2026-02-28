@@ -50,6 +50,7 @@ final class TransportManager: ObservableObject {
     private var connectionReadyTimeoutTask: Task<Void, Never>?
     private var pairingResponseContinuation: CheckedContinuation<PairingResponse, Error>?
     private var pairingResponseTimeoutTask: Task<Void, Never>?
+    private var awdlEnabledForCurrentSession = true
 
     var onSecureInputChanged: ((Bool) -> Void)?
 
@@ -74,9 +75,19 @@ final class TransportManager: ObservableObject {
         }
     }
 
+    var allowsAWDL: Bool { awdlEnabledForCurrentSession }
+
     // MARK: - Start
 
-    func start() {
+    func start(allowAWDL: Bool = true) {
+        if allowAWDL, isConnected, !awdlEnabledForCurrentSession {
+            awdlEnabledForCurrentSession = true
+            logConnectionEvent("AWDL standby enabled")
+            Task { [weak self] in
+                await self?.startAWDLPrewarm()
+            }
+        }
+
         guard startTask == nil else {
             logConnectionEvent("Start ignored — connection attempt already in progress")
             return
@@ -86,21 +97,26 @@ final class TransportManager: ObservableObject {
             return
         }
 
+        awdlEnabledForCurrentSession = allowAWDL
         connectionState = .connecting
         setIdleTimerState(false)
-        logConnectionEvent("Starting transport")
+        logConnectionEvent(allowAWDL ? "Starting transport" : "Starting transport (USB only)")
 
         startTask = Task { [weak self] in
             guard let self else { return }
             defer { self.startTask = nil }
-            await self.startAWDLPrewarm()
+            if allowAWDL {
+                await self.startAWDLPrewarm()
+            } else {
+                await self.awdlTransport.stop()
+            }
             await self.startUSBConnection()
         }
     }
 
     func reconnect() {
         resetConnections()
-        start()
+        start(allowAWDL: awdlEnabledForCurrentSession)
     }
 
     func resetConnections() {
@@ -183,7 +199,11 @@ final class TransportManager: ObservableObject {
             if connectionState == .connecting {
                 connectionState = .disconnected
                 setIdleTimerState(false)
-                logConnectionEvent("USB unavailable — waiting for AWDL or retry")
+                logConnectionEvent(
+                    awdlEnabledForCurrentSession
+                        ? "USB unavailable — waiting for AWDL or retry"
+                        : "USB unavailable — waiting for cable or manual retry"
+                )
             }
             return
         }
@@ -302,7 +322,7 @@ final class TransportManager: ObservableObject {
     private func scheduleReconnect(after delay: TimeInterval = 1.0) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.isConnected, self.startTask == nil else { return }
-            self.start()
+            self.start(allowAWDL: self.awdlEnabledForCurrentSession)
         }
     }
 

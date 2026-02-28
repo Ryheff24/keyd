@@ -1,219 +1,164 @@
 import SwiftUI
+import UIKit
 import SharedProtocol
 
-/// Full-width SwiftUI keyboard mimicking native iOS keyboard appearance.
-/// Renders character keys, space bar, and control keys (Backspace, Return).
-/// Uses a regular in-app SwiftUI view, not a keyboard extension controller.
+/// Keeps the stock iOS keyboard active and forwards its input to the Mac.
+/// The visible keyboard is provided by UIKit; this view only hosts a hidden
+/// first responder so we can intercept key events without drawing custom keys.
 struct KeyboardView: View {
-    let onKeyTap: (UInt32) -> Void           // Unicode scalar
-    let onVirtualKeyTap: (UInt16) -> Void    // Virtual key code (VirtualKey constants)
+    let onKeyTap: (UInt32) -> Void
+    let onVirtualKeyTap: (UInt16) -> Void
     let onBackspaceStart: () -> Void
     let onBackspaceEnd: () -> Void
 
-    @State private var pressedKey: String? = nil
-    @State private var isShifted = false
-    @State private var isCapsLocked = false
-
-    // Standard QWERTY layout rows
-    private let rows: [[String]] = [
-        ["q","w","e","r","t","y","u","i","o","p"],
-        ["a","s","d","f","g","h","j","k","l"],
-        ["z","x","c","v","b","n","m"]
-    ]
-
-    private var keyboardShelfColor: Color {
-        Color(
-            uiColor: UIColor { traits in
-                if traits.userInterfaceStyle == .dark {
-                    return UIColor(red: 0.16, green: 0.17, blue: 0.20, alpha: 1.0)
-                }
-                return UIColor(red: 0.82, green: 0.84, blue: 0.88, alpha: 1.0)
-            }
-        )
-    }
-
-    private var regularKeyColor: Color {
-        Color(
-            uiColor: UIColor { traits in
-                if traits.userInterfaceStyle == .dark {
-                    return UIColor(red: 0.28, green: 0.29, blue: 0.34, alpha: 1.0)
-                }
-                return .white
-            }
-        )
-    }
-
-    private var specialKeyColor: Color {
-        Color(
-            uiColor: UIColor { traits in
-                if traits.userInterfaceStyle == .dark {
-                    return UIColor(red: 0.41, green: 0.43, blue: 0.49, alpha: 1.0)
-                }
-                return UIColor(red: 0.70, green: 0.73, blue: 0.79, alpha: 1.0)
-            }
-        )
-    }
-
     var body: some View {
-        VStack(spacing: 10) {
-            // Row 1
-            keyRow(rows[0])
-            // Row 2 (indented)
-            keyRow(rows[1], indent: true)
-            // Row 3 (with shift + backspace)
-            HStack(spacing: 7) {
-                shiftKey
-                keyRow(rows[2], spacing: 7)
-                backspaceKey
+        SystemKeyboardHost(
+            onText: { text in
+                for scalar in text.unicodeScalars {
+                    onKeyTap(scalar.value)
+                }
+            },
+            onBackspace: {
+                onVirtualKeyTap(VirtualKey.delete)
+            },
+            onReturn: {
+                onVirtualKeyTap(VirtualKey.returnKey)
             }
-            .padding(.horizontal, 6)
-            // Bottom row: 123 | space | return
-            HStack(spacing: 7) {
-                numberModeKey
-                spaceKey
-                returnKey
-            }
-            .padding(.horizontal, 6)
-        }
-        .padding(.horizontal, 8)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(keyboardShelfColor)
         )
-        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity)
+        .frame(height: 1)
+    }
+}
+
+private struct SystemKeyboardHost: UIViewRepresentable {
+    let onText: (String) -> Void
+    let onBackspace: () -> Void
+    let onReturn: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onText: onText, onBackspace: onBackspace, onReturn: onReturn)
     }
 
-    // MARK: - Key rows
+    func makeUIView(context: Context) -> KeyboardInputContainer {
+        let view = KeyboardInputContainer()
+        view.configure(with: context.coordinator)
+        return view
+    }
 
-    private func keyRow(_ keys: [String], indent: Bool = false, spacing: CGFloat = 6) -> some View {
-        HStack(spacing: spacing) {
-            if indent { Spacer().frame(width: 20) }
-            ForEach(keys, id: \.self) { key in
-                characterKey(key)
+    func updateUIView(_ uiView: KeyboardInputContainer, context: Context) {
+        context.coordinator.onText = onText
+        context.coordinator.onBackspace = onBackspace
+        context.coordinator.onReturn = onReturn
+        uiView.configure(with: context.coordinator)
+        uiView.activateKeyboard()
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var onText: (String) -> Void
+        var onBackspace: () -> Void
+        var onReturn: () -> Void
+
+        init(
+            onText: @escaping (String) -> Void,
+            onBackspace: @escaping () -> Void,
+            onReturn: @escaping () -> Void
+        ) {
+            self.onText = onText
+            self.onBackspace = onBackspace
+            self.onReturn = onReturn
+        }
+
+        func textField(
+            _ textField: UITextField,
+            shouldChangeCharactersIn range: NSRange,
+            replacementString string: String
+        ) -> Bool {
+            guard !string.isEmpty else { return false }
+
+            if string == "\n" {
+                onReturn()
+            } else {
+                onText(string)
             }
-            if indent { Spacer().frame(width: 20) }
+
+            textField.text = ""
+            return false
         }
-        .padding(.horizontal, 2)
+    }
+}
+
+private final class KeyboardInputContainer: UIView {
+    private let textField = InterceptingTextField(frame: .zero)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        backgroundColor = .clear
+        isOpaque = false
+        alpha = 0.015
+
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.backgroundColor = .clear
+        textField.textColor = .clear
+        textField.tintColor = .clear
+        textField.autocorrectionType = .no
+        textField.spellCheckingType = .no
+        textField.smartQuotesType = .no
+        textField.smartDashesType = .no
+        textField.smartInsertDeleteType = .no
+        textField.keyboardType = .default
+        textField.returnKeyType = .default
+        textField.enablesReturnKeyAutomatically = false
+        textField.text = ""
+
+        addSubview(textField)
+        NSLayoutConstraint.activate([
+            textField.leadingAnchor.constraint(equalTo: leadingAnchor),
+            textField.trailingAnchor.constraint(equalTo: trailingAnchor),
+            textField.topAnchor.constraint(equalTo: topAnchor),
+            textField.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
     }
 
-    private func characterKey(_ key: String) -> some View {
-        let displayChar = (isShifted || isCapsLocked) ? key.uppercased() : key
-        return Button(action: {
-            let scalar = (displayChar.unicodeScalars.first?.value) ?? 0
-            onKeyTap(scalar)
-            // Auto-unshift after one key (unless caps lock)
-            if isShifted && !isCapsLocked { isShifted = false }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        }) {
-            Text(displayChar)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(regularKeyColor)
-                        .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 1)
-                )
-        }
-        .buttonStyle(.plain)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - Special keys
-
-    private var shiftKey: some View {
-        Button(action: {
-            if isCapsLocked { isCapsLocked = false; isShifted = false }
-            else if isShifted { isCapsLocked = true }
-            else { isShifted = true }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        }) {
-            Image(systemName: isCapsLocked ? "capslock.fill" : (isShifted ? "shift.fill" : "shift"))
-                .font(.system(size: 19, weight: .semibold))
-                .frame(width: 50, height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(specialKeyColor)
-                )
-        }
-        .buttonStyle(.plain)
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: 1)
     }
 
-    private var backspaceKey: some View {
-        // CONTEXT.md locked decision: tap -> single char delete; hold 0.5s -> word delete (Cmd-Backspace)
-        // Phase 1 implements both: single char on tap, word delete (HotkeyEvent with .command modifier) on long press
-        Button(action: {
-            onVirtualKeyTap(VirtualKey.delete)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        }) {
-            Image(systemName: "delete.left")
-                .font(.system(size: 19, weight: .semibold))
-                .frame(width: 50, height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(specialKeyColor)
-                )
-        }
-        .buttonStyle(.plain)
-        .onLongPressGesture(minimumDuration: 0.5, perform: {
-            // After holding 0.5s: switch to word delete via Cmd-Backspace (Option-Delete on macOS)
-            // HotkeyEvent with .command modifier sends Cmd-Backspace = delete word to left of cursor
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            onBackspaceStart()  // Signal continuous word-delete mode begins
-        })
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onEnded { _ in onBackspaceEnd() }
-        )
+    func configure(with coordinator: SystemKeyboardHost.Coordinator) {
+        textField.delegate = coordinator
+        textField.onBackspace = coordinator.onBackspace
     }
 
-    private var spaceKey: some View {
-        Button(action: {
-            onKeyTap(32)  // Space
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        }) {
-            Text("space")
-                .font(.system(size: 15))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(regularKeyColor)
-                )
+    func activateKeyboard() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.textField.becomeFirstResponder()
         }
-        .buttonStyle(.plain)
+    }
+}
+
+private final class InterceptingTextField: UITextField {
+    var onBackspace: (() -> Void)?
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.becomeFirstResponder()
+        }
     }
 
-    private var returnKey: some View {
-        Button(action: {
-            onVirtualKeyTap(VirtualKey.returnKey)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        }) {
-            Text("return")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 92, height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(specialKeyColor)
-                )
-        }
-        .buttonStyle(.plain)
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        false
     }
 
-    private var numberModeKey: some View {
-        // Phase 1: placeholder for number/symbol mode toggle
-        Button(action: {}) {
-            Text("123")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 50, height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(specialKeyColor)
-                )
-        }
-        .buttonStyle(.plain)
+    override func deleteBackward() {
+        onBackspace?()
     }
 }

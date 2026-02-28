@@ -224,6 +224,19 @@ final class TransportManager {
         connection.send(content: frame, completion: .idempotent)
     }
 
+    func resetActiveSession() {
+        activeConnection?.cancel()
+        standbyAWDLConnection?.cancel()
+        standbyAWDLConnection = nil
+        activeDecoder = nil
+        activeEncoder = nil
+        connectionState = .disconnected
+        statusBar.update(state: .disconnected)
+        stopSecureInputPolling()
+        injectionRouter.releaseModifiers()
+        logEvent("Active transport session reset")
+    }
+
     private var activeConnection: NWConnection? {
         switch connectionState {
         case .usbConnected(let c): return c

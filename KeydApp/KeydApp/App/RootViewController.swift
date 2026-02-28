@@ -23,6 +23,13 @@ struct RootView: View {
                     ConnectionStatusBadge(state: transportManager.connectionState)
                     Spacer()
                 }
+                .overlay(alignment: .trailing) {
+                    Button("Reset Pairing") {
+                        resetPairing()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                }
                 .padding(.top, 8)
 
                 if !transportManager.isConnected {
@@ -43,7 +50,6 @@ struct RootView: View {
             }
             .padding(.bottom, 8)
         }
-        .ignoresSafeArea(.keyboard)
         .alert("Send Quit Command?", isPresented: $showQuitConfirmation) {
             Button("Send Cmd-Q", role: .destructive) {
                 if let (key, mods) = pendingDestructiveHotkey {
@@ -110,15 +116,8 @@ struct RootView: View {
     }
 
     private var recoveryControls: some View {
-        HStack(spacing: 12) {
-            Button("Retry") {
-                transportManager.reconnect()
-            }
-
-            Button("Reset Pairing") {
-                transportManager.resetConnections()
-                pairingManager.resetPairing()
-            }
+        Button("Retry") {
+            transportManager.reconnect()
         }
         .buttonStyle(.borderedProminent)
     }
@@ -146,5 +145,10 @@ struct RootView: View {
         // Send key-down with modifiers; the macOS side uses defer for key-up
         transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: virtualKey, keyDown: true, modifiers: modifiers)))
         transportManager.send(.hotkeyEvent(HotkeyEvent(virtualKeyCode: virtualKey, keyDown: false, modifiers: modifiers)))
+    }
+
+    private func resetPairing() {
+        transportManager.resetConnections()
+        pairingManager.resetPairing()
     }
 }

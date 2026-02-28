@@ -27,13 +27,16 @@ struct KeydApp: App {
                     RootView()
                         .environmentObject(transportManager)
                         .environmentObject(pairingManager)
+                        .onAppear {
+                            transportManager.start(allowAWDL: true)
+                        }
                 } else {
                     // First launch — show QR pairing screen
                     PairingView(pairingManager: pairingManager)
                         .environmentObject(transportManager)
                         .onAppear {
                             // Start transport so we can send PairingRequest after QR scan
-                            transportManager.start()
+                            transportManager.start(allowAWDL: false)
                         }
                 }
             }

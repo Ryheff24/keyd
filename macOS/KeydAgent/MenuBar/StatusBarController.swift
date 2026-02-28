@@ -36,6 +36,7 @@ final class StatusBarController {
 
     /// Called when the user clicks "Pair iPhone…" in the menu.
     var onShowPairing: (() -> Void)?
+    var onResetPairing: (() -> Void)?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -86,7 +87,12 @@ final class StatusBarController {
 
     private func buildMenu() {
         let menu = NSMenu()
-        let target = MenuTarget(checker: checker, permissions: permissions, onShowPairing: onShowPairing)
+        let target = MenuTarget(
+            checker: checker,
+            permissions: permissions,
+            onShowPairing: onShowPairing,
+            onResetPairing: onResetPairing
+        )
         self.menuTarget = target  // retain
 
         if !permissions.allGranted {
@@ -148,6 +154,14 @@ final class StatusBarController {
         pairItem.target = target
         menu.addItem(pairItem)
 
+        let resetPairingItem = NSMenuItem(
+            title: "Reset Pairing",
+            action: #selector(MenuTarget.resetPairing),
+            keyEquivalent: ""
+        )
+        resetPairingItem.target = target
+        menu.addItem(resetPairingItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // App info
@@ -174,11 +188,18 @@ private final class MenuTarget: NSObject {
     private let checker: PermissionChecker
     private let permissions: PermissionResult
     var onShowPairing: (() -> Void)?
+    var onResetPairing: (() -> Void)?
 
-    init(checker: PermissionChecker, permissions: PermissionResult, onShowPairing: (() -> Void)?) {
+    init(
+        checker: PermissionChecker,
+        permissions: PermissionResult,
+        onShowPairing: (() -> Void)?,
+        onResetPairing: (() -> Void)?
+    ) {
         self.checker = checker
         self.permissions = permissions
         self.onShowPairing = onShowPairing
+        self.onResetPairing = onResetPairing
     }
 
     @objc func openAccessibilitySettings() {
@@ -196,6 +217,10 @@ private final class MenuTarget: NSObject {
 
     @objc func pairIphone() {
         onShowPairing?()
+    }
+
+    @objc func resetPairing() {
+        onResetPairing?()
     }
 
     @objc func relaunch() {
