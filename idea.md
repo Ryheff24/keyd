@@ -12,7 +12,6 @@
   - Wireless via **AWDL**.
 - **Target apps:** Safari, Firefox, Messages.
 - **Non-goals:** Not intended for coding/terminal workflows.
-- **macOS visual fidelity:** What the Mac visibly shows (caret/selection/field state) is **app-dependent**.
 
 ## Phase 1 — Proof of Concept (Transport completed)
 - **Purpose:** Establish end-to-end real-time connectivity and reliability, *and* prove basic keyboard control works.
@@ -37,7 +36,6 @@
     - Delete entire line(hidden): Command-Delete
     - Screenshot: Command-Shift-4
 
-
 ## Phase 2 — iOS-native Editing Behaviors
 - **Purpose:** The iOS app must provide iOS-native text editing behaviors while editing the currently focused text field on macOS.
 - **Required iOS-native behaviors:**
@@ -47,9 +45,14 @@
   - Moving the cursor to an arbitrary position and typing/deleting there.
   - predictive text
   - [editing options](https://support.apple.com/guide/iphone/select-and-edit-text-iph1a9cae52c/ios)
-- **Real-time reflection:** Edits performed on iOS must be reflected on the macOS focused field in real time.
+- **Real-time reflection:** Edits performed on iOS must be reflected on the macOS focused field in real time. This may be app dependent.
 - **macOS support note:** Implementation may involve **AX** and/or **IME**.
 
 ## Phase 3 - app based keyboard, shortcut hot keys
 - **Purpose:** detect the current app and based on that app shows a different set of hot keys
 <!-- Option-Command-Esc force quit  -->
+
+## UI/UX & Design Constraints
+- **Visual Style**`: "Liquid Glass" (Glassmorphism). Apple's modern design. 
+- **Phase 1 Layout Guidelines:**: Standard keyboard on the bottom. Apple's built-in iOS keyboard and on top macos hot keys.
+- **Phase 2 Layout Guidelines:**: Introduces predictive text (above keyboard, apple's built-in implementation) and a text-box/preview (above predictive text) 
