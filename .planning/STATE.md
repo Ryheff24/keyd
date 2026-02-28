@@ -60,6 +60,20 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-27
-Stopped at: Roadmap created; ready to plan Phase 1
-Resume file: None
+Last session: 2026-02-28
+Stopped at: Phase 1 scaffolding partially built (macOS agent compiles); plan-phase ran out of tokens before creating PLAN.md files
+Resume with: `/gsd:plan-phase 1`
+
+### What's already built (do not rebuild)
+- `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder — builds + tests pass
+- `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers
+  - Build fixed: CGEventInjector (import + tap location), TransportManager (import), AXInjector (framework), USBListener (@Sendable)
+  - AWDLListener @Sendable fix may still be needed (interrupted before confirming)
+  - Build command: `xcodebuild -project macOS/KeydAgent.xcodeproj -scheme KeydAgent -destination "platform=macOS,arch=arm64" build`
+
+### What's NOT done yet (plan-phase didn't complete)
+- No PLAN.md files in `.planning/phases/01-transport-and-core-keyboard/`
+- No iOS app Xcode project created yet
+- No pairing/QR code flow
+- No Dynamic Island integration
+- No hotkey panel UI
