@@ -1,5 +1,7 @@
 import Network
 import Foundation
+import CoreGraphics
+import Carbon.HIToolbox
 
 // SharedProtocol added as local package dependency in Xcode project
 import SharedProtocol
@@ -245,12 +247,12 @@ final class TransportManager {
 
 // MARK: - Actor callback setters
 extension USBListener {
-    func setOnConnection(_ handler: @escaping (NWConnection) -> Void) async {
+    func setOnConnection(_ handler: @escaping @Sendable (NWConnection) -> Void) async {
         onConnection = handler
     }
 }
 extension AWDLListener {
-    func setOnConnection(_ handler: @escaping (NWConnection) -> Void) async {
+    func setOnConnection(_ handler: @escaping @Sendable (NWConnection) -> Void) async {
         onConnection = handler
     }
 }

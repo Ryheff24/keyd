@@ -99,7 +99,7 @@ final class CGEventInjector {
 
     private func postKey(_ keyCode: CGKeyCode, down: Bool) {
         let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: down)
-        event?.post(tap: .annotatedSession)
+        event?.post(tap: .cgAnnotatedSessionEventTap)
     }
 
     private func cgEventFlags(from modifiers: ModifierFlags) -> CGEventFlags? {
