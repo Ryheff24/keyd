@@ -202,7 +202,7 @@ final class TransportManager: ObservableObject {
                 print("[TransportManager] USB disconnected — checking AWDL pre-warm status")
                 self.logConnectionEvent("USB disconnected")
 
-                let awdlReady = await self.awdlTransport.hasConnection()
+                let awdlReady = await self.hasStableAWDLConnection()
                 if awdlReady {
                     print("[TransportManager] AWDL pre-warmed and ready — switching to AWDL")
                     self.connectionState = .awdlConnected
@@ -430,6 +430,15 @@ final class TransportManager: ObservableObject {
         case .disconnected:
             liveActivityManager.end()
         }
+    }
+
+    private func hasStableAWDLConnection() async -> Bool {
+        guard await awdlTransport.hasConnection() else { return false }
+
+        // Give Network.framework a brief moment to publish path-loss transitions
+        // before surfacing AWDL after the USB transport drops.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        return await awdlTransport.hasConnection()
     }
 
     private func scheduleReconnect(after delay: TimeInterval = 1.0) {
