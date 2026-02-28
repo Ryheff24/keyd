@@ -1,0 +1,432 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0272DE4343096FED836B764D /* USBListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = D75F4FF6DE00E12CEE30C474 /* USBListener.swift */; };
+		2139AEDDC3968EADF0051BEB /* CGEventInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B297DD4CD63C3FE643A837 /* CGEventInjector.swift */; };
+		2E330DF86DACEB355126C7F8 /* TransportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8FC2D3B269DD9CADDAE6CA6 /* TransportManager.swift */; };
+		324D22BA20A73D6F259A102F /* InjectionRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C498CAE3BF36F21CDAC5AFE /* InjectionRouter.swift */; };
+		3618767807A2EA53B8606242 /* KeydAgentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A97EE7A738B40D4BA92D80 /* KeydAgentApp.swift */; };
+		403AB254026945B665DD4F2C /* SharedProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = AB6119F436E323C940AE3A73 /* SharedProtocol */; };
+		4C71638AC6328A68358EA540 /* PermissionChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44EBBE994C89D57999A4B0CC /* PermissionChecker.swift */; };
+		5A937CE77B4327DD78DE4144 /* AWDLListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B986EC54D8AB0FA9D6B8116 /* AWDLListener.swift */; };
+		B21A0B74CD8A85BA814BEC80 /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED8D8CDC8A69400A2C0F4BA /* StatusBarController.swift */; };
+		C7336BA3F13081BC11A5BD54 /* AXInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = D783610198EB23C835C1CAFA /* AXInjector.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		15A97EE7A738B40D4BA92D80 /* KeydAgentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydAgentApp.swift; sourceTree = "<group>"; };
+		44EBBE994C89D57999A4B0CC /* PermissionChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionChecker.swift; sourceTree = "<group>"; };
+		4C498CAE3BF36F21CDAC5AFE /* InjectionRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InjectionRouter.swift; sourceTree = "<group>"; };
+		53632BA023BE1CF01F013574 /* KeydAgent.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KeydAgent.entitlements; sourceTree = "<group>"; };
+		57B297DD4CD63C3FE643A837 /* CGEventInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGEventInjector.swift; sourceTree = "<group>"; };
+		6B986EC54D8AB0FA9D6B8116 /* AWDLListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWDLListener.swift; sourceTree = "<group>"; };
+		C8FC2D3B269DD9CADDAE6CA6 /* TransportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportManager.swift; sourceTree = "<group>"; };
+		D09B4A390950481E8205D22E /* KeydAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeydAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D447D04B019308EE362FDA8A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D75F4FF6DE00E12CEE30C474 /* USBListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBListener.swift; sourceTree = "<group>"; };
+		D783610198EB23C835C1CAFA /* AXInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXInjector.swift; sourceTree = "<group>"; };
+		DE806B9D2FA7477BD2EFAD40 /* SharedProtocol */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SharedProtocol; path = ../SharedProtocol; sourceTree = SOURCE_ROOT; };
+		EED8D8CDC8A69400A2C0F4BA /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		59F9F6DF62F82A281EAD02A4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				403AB254026945B665DD4F2C /* SharedProtocol in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0455AF7B3FD922E5EF3007E6 /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				6B986EC54D8AB0FA9D6B8116 /* AWDLListener.swift */,
+				C8FC2D3B269DD9CADDAE6CA6 /* TransportManager.swift */,
+				D75F4FF6DE00E12CEE30C474 /* USBListener.swift */,
+			);
+			path = Transport;
+			sourceTree = "<group>";
+		};
+		157EA184F6189ADD6B365538 /* KeydAgent */ = {
+			isa = PBXGroup;
+			children = (
+				D447D04B019308EE362FDA8A /* Info.plist */,
+				53632BA023BE1CF01F013574 /* KeydAgent.entitlements */,
+				5915A467BCCACCF5B8F5FFDF /* App */,
+				67C2D2ABCDE76EEC1BF466B8 /* Injection */,
+				62B464BFFDCF9E5364120EFF /* MenuBar */,
+				D5309CE678AAAF0ACC33C5F8 /* Pairing */,
+				9B009D162614A77AE5B2330D /* Protocol */,
+				0455AF7B3FD922E5EF3007E6 /* Transport */,
+				FE9F7FEB0CBB3F8880B5D3E2 /* UI */,
+			);
+			path = KeydAgent;
+			sourceTree = "<group>";
+		};
+		16EDA3240F090133D22253A6 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				DE806B9D2FA7477BD2EFAD40 /* SharedProtocol */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		2BD132C5D3AFC045F180CBDA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D09B4A390950481E8205D22E /* KeydAgent.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		2DB260DAA17D72DCFCB20241 = {
+			isa = PBXGroup;
+			children = (
+				157EA184F6189ADD6B365538 /* KeydAgent */,
+				16EDA3240F090133D22253A6 /* Packages */,
+				2BD132C5D3AFC045F180CBDA /* Products */,
+			);
+			indentWidth = 4;
+			sourceTree = "<group>";
+			tabWidth = 4;
+		};
+		5915A467BCCACCF5B8F5FFDF /* App */ = {
+			isa = PBXGroup;
+			children = (
+				15A97EE7A738B40D4BA92D80 /* KeydAgentApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		62B464BFFDCF9E5364120EFF /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				44EBBE994C89D57999A4B0CC /* PermissionChecker.swift */,
+				EED8D8CDC8A69400A2C0F4BA /* StatusBarController.swift */,
+			);
+			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		67C2D2ABCDE76EEC1BF466B8 /* Injection */ = {
+			isa = PBXGroup;
+			children = (
+				D783610198EB23C835C1CAFA /* AXInjector.swift */,
+				57B297DD4CD63C3FE643A837 /* CGEventInjector.swift */,
+				4C498CAE3BF36F21CDAC5AFE /* InjectionRouter.swift */,
+			);
+			path = Injection;
+			sourceTree = "<group>";
+		};
+		9B009D162614A77AE5B2330D /* Protocol */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Protocol;
+			sourceTree = "<group>";
+		};
+		D5309CE678AAAF0ACC33C5F8 /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		FE9F7FEB0CBB3F8880B5D3E2 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA9522483D0312135CDEAEB1 /* KeydAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0FDC05DF593A8C7EAD953A9A /* Build configuration list for PBXNativeTarget "KeydAgent" */;
+			buildPhases = (
+				F693B6D5E175C97CB28FE088 /* Sources */,
+				59F9F6DF62F82A281EAD02A4 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KeydAgent;
+			packageProductDependencies = (
+				AB6119F436E323C940AE3A73 /* SharedProtocol */,
+			);
+			productName = KeydAgent;
+			productReference = D09B4A390950481E8205D22E /* KeydAgent.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		32E7339B34AE378D9233A175 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					AA9522483D0312135CDEAEB1 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 9FDDDFB6B778BA80DA09D978 /* Build configuration list for PBXProject "KeydAgent" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2DB260DAA17D72DCFCB20241;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				D885F544FA1873825ACF58D6 /* XCLocalSwiftPackageReference "../SharedProtocol" */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA9522483D0312135CDEAEB1 /* KeydAgent */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F693B6D5E175C97CB28FE088 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A937CE77B4327DD78DE4144 /* AWDLListener.swift in Sources */,
+				C7336BA3F13081BC11A5BD54 /* AXInjector.swift in Sources */,
+				2139AEDDC3968EADF0051BEB /* CGEventInjector.swift in Sources */,
+				324D22BA20A73D6F259A102F /* InjectionRouter.swift in Sources */,
+				3618767807A2EA53B8606242 /* KeydAgentApp.swift in Sources */,
+				4C71638AC6328A68358EA540 /* PermissionChecker.swift in Sources */,
+				B21A0B74CD8A85BA814BEC80 /* StatusBarController.swift in Sources */,
+				2E330DF86DACEB355126C7F8 /* TransportManager.swift in Sources */,
+				0272DE4343096FED836B764D /* USBListener.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0A512BB06D429814AAA1E3BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		263B53928FD31825983AA066 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = KeydAgent/KeydAgent.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = KeydAgent/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.agent;
+				PRODUCT_NAME = KeydAgent;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		35CCC8C2961526B512DB54DA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A9471A9E3F3DA0BA3E58888E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = KeydAgent/KeydAgent.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = KeydAgent/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.agent;
+				PRODUCT_NAME = KeydAgent;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0FDC05DF593A8C7EAD953A9A /* Build configuration list for PBXNativeTarget "KeydAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9471A9E3F3DA0BA3E58888E /* Debug */,
+				263B53928FD31825983AA066 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9FDDDFB6B778BA80DA09D978 /* Build configuration list for PBXProject "KeydAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				35CCC8C2961526B512DB54DA /* Debug */,
+				0A512BB06D429814AAA1E3BD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		D885F544FA1873825ACF58D6 /* XCLocalSwiftPackageReference "../SharedProtocol" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../SharedProtocol;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AB6119F436E323C940AE3A73 /* SharedProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SharedProtocol;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 32E7339B34AE378D9233A175 /* Project object */;
+}

@@ -1,0 +1,44 @@
+name: KeydAgent
+options:
+  bundleIdPrefix: com.keyd
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  indentWidth: 4
+  tabWidth: 4
+  generateEmptyDirectories: true
+
+packages:
+  SharedProtocol:
+    path: ../SharedProtocol
+
+targets:
+  KeydAgent:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: KeydAgent
+        createIntermediateGroups: true
+    info:
+      path: KeydAgent/Info.plist
+    entitlements:
+      path: KeydAgent/KeydAgent.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.agent
+        PRODUCT_NAME: KeydAgent
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        # App Sandbox is disabled via entitlements — required for CGEventPost and AX
+        ENABLE_APP_SANDBOX: NO
+        # Generate debug symbols
+        DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+    dependencies:
+      - package: SharedProtocol
+    scheme:
+      testTargets: []
+      commandLineArguments:
+        "-NSQuitWhenWindowsClose": "NO"
