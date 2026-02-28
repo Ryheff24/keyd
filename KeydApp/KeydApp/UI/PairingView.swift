@@ -33,35 +33,40 @@ struct PairingView: View {
                     .padding(.horizontal)
 
                 // Camera scanner view
-                ZStack {
-                    QRScannerRepresentable { qrString in
-                        Task { @MainActor in
-                            await pairingManager.completeQRPairing(
-                                qrString: qrString,
-                                transportManager: transportManager
-                            )
-                        }
-                    }
-                    .id(scannerSessionID)
-
-                    if !transportManager.isConnected {
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.black.opacity(0.65))
-                            .overlay {
-                                Text("Connect over USB or wait for AWDL before scanning.")
-                                    .font(.caption)
-                                    .multilineTextAlignment(.center)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 16)
-                            }
+                QRScannerRepresentable { qrString in
+                    Task { @MainActor in
+                        await pairingManager.completeQRPairing(
+                            qrString: qrString,
+                            transportManager: transportManager
+                        )
                     }
                 }
+                .id(scannerSessionID)
                 .frame(width: 260, height: 260)
                 .cornerRadius(16)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.white.opacity(0.5), lineWidth: 2)
                 )
+
+                if !recentEvents.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Transport Log")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.white.opacity(0.85))
+
+                        ForEach(recentEvents, id: \.self) { event in
+                            Text(event)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.72))
+                                .lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.ultraThinMaterial.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
 
                 if pairingManager.isPairing {
                     HStack(spacing: 8) {
@@ -104,12 +109,16 @@ struct PairingView: View {
         case .usbConnected:
             return "USB is ready. Scan the QR code shown by KeydAgent."
         case .awdlConnected:
-            return "AWDL is ready. You can scan now, but USB pairing is more reliable for first setup."
+            return "AWDL is ready. Scan now and the app will finish pairing over the active link."
         case .connecting:
-            return "Waiting for the Mac connection before pairing can complete."
+            return "Scan now if you want. The app will wait briefly for the Mac connection before sending the pairing request."
         case .disconnected:
-            return "Connect the iPhone to your Mac and keep KeydAgent running."
+            return "You can still scan, but pairing will wait for the Mac connection. Keep KeydAgent open and the devices nearby."
         }
+    }
+
+    private var recentEvents: [String] {
+        Array(transportManager.getEventLog().suffix(4))
     }
 
     private func resetScanner() {

@@ -10,7 +10,8 @@ actor AWDLListener {
 
     func start() throws {
         // applicationService parameters enable AWDL-capable peer connections via Bonjour
-        let params = NWParameters.applicationService
+        let params = NWParameters.tcp
+        params.includePeerToPeer = true
         let l = try NWListener(using: params)
         // Advertise _keyd._tcp Bonjour service — iOS NWBrowser discovers this
         l.service = NWListener.Service(type: "_keyd._tcp")

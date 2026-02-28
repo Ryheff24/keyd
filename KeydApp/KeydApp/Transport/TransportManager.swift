@@ -15,6 +15,7 @@ final class TransportManager: ObservableObject {
 
     enum TransportError: LocalizedError {
         case notConnected
+        case connectionTimedOut
         case pairingTimedOut
         case pairingCancelled
 
@@ -22,6 +23,8 @@ final class TransportManager: ObservableObject {
             switch self {
             case .notConnected:
                 return "Not connected to the Mac."
+            case .connectionTimedOut:
+                return "Timed out waiting for the Mac connection."
             case .pairingTimedOut:
                 return "Timed out waiting for the Mac to confirm pairing."
             case .pairingCancelled:
@@ -33,6 +36,9 @@ final class TransportManager: ObservableObject {
     @Published var connectionState: State = .disconnected {
         didSet {
             updateLiveActivity(for: connectionState)
+            if isConnected {
+                resolveConnectionReady()
+            }
         }
     }
 
@@ -40,6 +46,8 @@ final class TransportManager: ObservableObject {
     private var awdlTransport = AWDLTransport()
     private let liveActivityManager = KeydLiveActivityManager()
     private var startTask: Task<Void, Never>?
+    private var connectionReadyContinuation: CheckedContinuation<Void, Error>?
+    private var connectionReadyTimeoutTask: Task<Void, Never>?
     private var pairingResponseContinuation: CheckedContinuation<PairingResponse, Error>?
     private var pairingResponseTimeoutTask: Task<Void, Never>?
 
@@ -98,6 +106,7 @@ final class TransportManager: ObservableObject {
     func resetConnections() {
         startTask?.cancel()
         startTask = nil
+        clearPendingConnectionReady(with: TransportError.pairingCancelled)
         clearPendingPairingResponse(with: TransportError.pairingCancelled)
         connectionState = .disconnected
         setIdleTimerState(false)
@@ -211,6 +220,24 @@ final class TransportManager: ObservableObject {
         }
     }
 
+    func waitForConnection(timeoutNanoseconds: UInt64 = 8_000_000_000) async throws {
+        if isConnected {
+            return
+        }
+
+        clearPendingConnectionReady(with: TransportError.pairingCancelled)
+
+        try await withCheckedThrowingContinuation { continuation in
+            connectionReadyContinuation = continuation
+            connectionReadyTimeoutTask?.cancel()
+            connectionReadyTimeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                guard let self, self.connectionReadyContinuation != nil else { return }
+                self.clearPendingConnectionReady(with: TransportError.connectionTimedOut)
+            }
+        }
+    }
+
     func awaitPairingResponse(timeoutNanoseconds: UInt64 = 5_000_000_000) async throws -> PairingResponse {
         clearPendingPairingResponse(with: TransportError.pairingCancelled)
 
@@ -284,6 +311,20 @@ final class TransportManager: ObservableObject {
         pairingResponseTimeoutTask = nil
         pairingResponseContinuation?.resume(returning: response)
         pairingResponseContinuation = nil
+    }
+
+    private func resolveConnectionReady() {
+        connectionReadyTimeoutTask?.cancel()
+        connectionReadyTimeoutTask = nil
+        connectionReadyContinuation?.resume()
+        connectionReadyContinuation = nil
+    }
+
+    private func clearPendingConnectionReady(with error: Error) {
+        connectionReadyTimeoutTask?.cancel()
+        connectionReadyTimeoutTask = nil
+        connectionReadyContinuation?.resume(throwing: error)
+        connectionReadyContinuation = nil
     }
 
     private func clearPendingPairingResponse(with error: Error) {

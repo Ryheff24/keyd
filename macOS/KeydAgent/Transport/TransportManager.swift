@@ -69,6 +69,7 @@ final class TransportManager {
     }
 
     private func handleNewConnection(_ connection: NWConnection, transport: ConnectionKind) async {
+        connection.start(queue: .global(qos: .userInteractive))
         logEvent("\(transport) connection received")
 
         switch (connectionState, transport) {
@@ -90,8 +91,10 @@ final class TransportManager {
             logEvent("AWDL pre-warmed while USB active (standby)")
             startAWDLStandby(connection)
             return
-        default:
-            break
+        case (.usbConnected, .usb), (.awdlConnected, .awdl):
+            logEvent("Ignoring duplicate \(transport) connection")
+            connection.cancel()
+            return
         }
 
         // Set up decoder for this connection

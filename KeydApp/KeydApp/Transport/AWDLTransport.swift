@@ -7,6 +7,7 @@ import SharedProtocol
 actor AWDLTransport {
     private var browser: NWBrowser?
     private var connection: NWConnection?
+    private var isConnecting = false
     var onMessage: ((KeydMessage) -> Void)?
     var onDisconnect: (() -> Void)?
     var onConnectionReady: (() -> Void)?  // Called when AWDL is ready (pre-warm complete)
@@ -21,7 +22,8 @@ actor AWDLTransport {
             Task { await self?.onMessage?(msg) }
         }
 
-        let params = NWParameters.applicationService
+        let params = NWParameters.tcp
+        params.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: "_keyd._tcp", domain: nil), using: params)
 
         browser.browseResultsChangedHandler = { [weak self] results, changes in
@@ -51,9 +53,11 @@ actor AWDLTransport {
     }
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) async {
-        guard connection == nil else { return }  // Already connected
+        guard connection == nil, !isConnecting else { return }  // Already connected or attempting
+        isConnecting = true
 
-        let params = NWParameters.applicationService
+        let params = NWParameters.tcp
+        params.includePeerToPeer = true
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.enableKeepalive = true
         params.defaultProtocolStack.transportProtocol = tcpOptions
@@ -71,6 +75,8 @@ actor AWDLTransport {
             case .failed(let error):
                 print("[AWDLTransport] Connection failed: \(error)")
                 Task { await self?.setConnection(nil) }
+            case .cancelled:
+                Task { await self?.setConnection(nil) }
             default:
                 break
             }
@@ -80,6 +86,7 @@ actor AWDLTransport {
 
     private func setConnection(_ conn: NWConnection?) async {
         connection = conn
+        isConnecting = false
     }
 
     private func startReceiving(_ conn: NWConnection) async {
@@ -90,6 +97,7 @@ actor AWDLTransport {
             } catch {
                 print("[AWDLTransport] Receive error: \(error)")
                 connection = nil
+                isConnecting = false
                 onDisconnect?()
                 return
             }
@@ -126,5 +134,6 @@ actor AWDLTransport {
         connection?.cancel()
         browser = nil
         connection = nil
+        isConnecting = false
     }
 }
