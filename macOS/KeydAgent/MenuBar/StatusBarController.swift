@@ -169,6 +169,7 @@ final class StatusBarController {
 }
 
 /// Target object for menu item actions (must be NSObject for target-action).
+@MainActor
 private final class MenuTarget: NSObject {
     private let checker: PermissionChecker
     private let permissions: PermissionResult

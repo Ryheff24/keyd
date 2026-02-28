@@ -22,14 +22,20 @@
 	<array>
 		<string>_keyd._tcp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>KeydApp needs camera access to scan the QR code displayed by KeydAgent on your Mac for pairing.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>KeydApp needs local network access to connect to the macOS agent over AWDL/Bonjour.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -39,9 +45,5 @@
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>KeydApp needs camera access to scan the QR code displayed by KeydAgent on your Mac for pairing.</string>
 </dict>
 </plist>

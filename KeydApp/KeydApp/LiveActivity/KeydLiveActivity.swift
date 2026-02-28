@@ -17,11 +17,12 @@ final class KeydLiveActivityManager: ObservableObject {
 
         let initialState = KeydConnectionAttributes.ContentState(status: status, latencyMs: nil)
         let attributes = KeydConnectionAttributes()
+        let content = ActivityContent(state: initialState, staleDate: nil)
 
         do {
             activity = try Activity<KeydConnectionAttributes>.request(
                 attributes: attributes,
-                contentState: initialState,
+                content: content,
                 pushType: nil
             )
             print("[LiveActivity] Started: \(status.rawValue)")
@@ -33,14 +34,16 @@ final class KeydLiveActivityManager: ObservableObject {
     func update(status: KeydConnectionAttributes.ContentState.Status, latencyMs: Int? = nil) {
         let newState = KeydConnectionAttributes.ContentState(status: status, latencyMs: latencyMs)
         Task {
-            await activity?.update(using: newState)
+            let content = ActivityContent(state: newState, staleDate: nil)
+            await activity?.update(content)
         }
     }
 
     func end() {
         let finalState = KeydConnectionAttributes.ContentState(status: .disconnected, latencyMs: nil)
         Task {
-            await activity?.end(using: finalState, dismissalPolicy: .immediate)
+            let content = ActivityContent(state: finalState, staleDate: nil)
+            await activity?.end(content, dismissalPolicy: .immediate)
             activity = nil
         }
     }

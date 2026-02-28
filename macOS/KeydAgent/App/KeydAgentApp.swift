@@ -19,6 +19,7 @@ struct KeydAgentApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var transportManager: TransportManager?
@@ -57,14 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Poll every 3 seconds so the app auto-starts when the user grants permissions
             // in System Settings without needing a manual relaunch.
             permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.pollPermissions()
                 }
             }
         }
     }
 
-    @MainActor
     private func pollPermissions() {
         let perms = checker.checkPermissions()
         statusBarController?.update(permissions: perms)
@@ -96,7 +96,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pairingWindow = window
     }
 
-    @MainActor
     private func startTransport() {
         guard let statusBar = statusBarController else { return }
         let injector = InjectionRouter()

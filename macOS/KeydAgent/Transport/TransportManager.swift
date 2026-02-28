@@ -4,7 +4,7 @@ import CoreGraphics
 import Carbon.HIToolbox
 
 // SharedProtocol added as local package dependency in Xcode project
-import SharedProtocol
+@preconcurrency import SharedProtocol
 
 /// Connection state for the macOS agent.
 enum AgentConnectionState {
@@ -144,7 +144,9 @@ final class TransportManager {
                 return
             }
             // Continue receiving
-            self?.startReceiveLoop(on: connection, decoder: decoder, transport: transport)
+            Task { @MainActor [weak self] in
+                self?.startReceiveLoop(on: connection, decoder: decoder, transport: transport)
+            }
         }
     }
 
