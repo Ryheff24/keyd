@@ -133,19 +133,6 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SHORT-09 | Phase 1 | Pending |
 | SHORT-10 | Phase 1 | Pending |
 | SHORT-11 | Phase 1 | Pending |
-| EDIT-01 | Phase 2 | Pending |
-| EDIT-02 | Phase 2 | Pending |
-| EDIT-03 | Phase 2 | Pending |
-| EDIT-04 | Phase 2 | Pending |
-| EDIT-05 | Phase 2 | Pending |
-| EDIT-06 | Phase 2 | Pending |
-| EDIT-07 | Phase 2 | Pending |
-| APP-01 | Phase 3 | Pending |
-| APP-02 | Phase 3 | Pending |
-| APP-03 | Phase 3 | Pending |
-| APP-04 | Phase 3 | Pending |
-| APP-05 | Phase 3 | Pending |
-| APP-06 | Phase 3 | Pending |
 | AGENT-01 | Phase 1 | Pending |
 | AGENT-02 | Phase 1 | Pending |
 | AGENT-03 | Phase 1 | Pending |
@@ -155,7 +142,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UX-01 | Phase 1 | Pending |
 | UX-02 | Phase 1 | Pending |
 | UX-03 | Phase 1 | Pending |
+| EDIT-01 | Phase 2 | Pending |
+| EDIT-02 | Phase 2 | Pending |
+| EDIT-03 | Phase 2 | Pending |
+| EDIT-04 | Phase 2 | Pending |
+| EDIT-05 | Phase 2 | Pending |
+| EDIT-06 | Phase 2 | Pending |
+| EDIT-07 | Phase 2 | Pending |
 | UX-04 | Phase 2 | Pending |
+| APP-01 | Phase 3 | Pending |
+| APP-02 | Phase 3 | Pending |
+| APP-03 | Phase 3 | Pending |
+| APP-04 | Phase 3 | Pending |
+| APP-05 | Phase 3 | Pending |
+| APP-06 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 44 total
@@ -164,4 +164,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-02-27*
-*Last updated: 2026-02-27 after initial definition*
+*Last updated: 2026-02-27 after roadmap creation*
