@@ -92,13 +92,17 @@ final class TransportManager {
                 connectionState = .pairingAWDL(connection)
                 logEvent("AWDL pairing channel ready")
             }
+        case (.pairingAWDL(let old), .awdl):
+            old.cancel()
+            connectionState = .pairingAWDL(connection)
+            logEvent("Replaced stale AWDL pairing channel")
         case (.usbConnected, .awdl):
             // AWDL comes up while USB is active — keep as pre-warmed standby
             // The TransportManager will promote AWDL on USB disconnect (handleDisconnect)
             logEvent("AWDL pre-warmed while USB active (standby)")
             startAWDLStandby(connection)
             return
-        case (.usbConnected, .usb), (.awdlConnected, .awdl), (.pairingAWDL, .awdl):
+        case (.usbConnected, .usb), (.awdlConnected, .awdl):
             logEvent("Ignoring duplicate \(transport) connection")
             connection.cancel()
             return
@@ -154,7 +158,7 @@ final class TransportManager {
             if isComplete || error != nil {
                 print("[TransportManager] \(transport) connection closed: \(error?.localizedDescription ?? "EOF")")
                 Task { @MainActor in
-                    self?.handleDisconnect(transport: transport)
+                    self?.handleDisconnect(connection: connection, transport: transport)
                 }
                 return
             }
@@ -165,7 +169,12 @@ final class TransportManager {
         }
     }
 
-    private func handleDisconnect(transport: ConnectionKind) {
+    private func handleDisconnect(connection: NWConnection, transport: ConnectionKind) {
+        guard isCurrentConnection(connection, for: transport) else {
+            logEvent("Ignoring disconnect from superseded \(transport) connection")
+            return
+        }
+
         logEvent("\(transport) disconnected")
         stopSecureInputPolling()
 
@@ -263,6 +272,19 @@ final class TransportManager {
         case .pairingAWDL(let c): return c
         case .awdlConnected(let c): return c
         case .disconnected: return nil
+        }
+    }
+
+    private func isCurrentConnection(_ connection: NWConnection, for transport: ConnectionKind) -> Bool {
+        switch (connectionState, transport) {
+        case (.usbConnected(let current), .usb):
+            return current === connection
+        case (.pairingAWDL(let current), .awdl):
+            return current === connection
+        case (.awdlConnected(let current), .awdl):
+            return current === connection
+        default:
+            return false
         }
     }
 
