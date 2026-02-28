@@ -1,4 +1,18 @@
 import SwiftUI
+import UIKit
+
+// MARK: - Shake detection via UIWindow subclass
+extension UIWindow {
+    open override func motionBegan(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake {
+            NotificationCenter.default.post(name: .deviceDidShake, object: nil)
+        }
+    }
+}
+
+extension Notification.Name {
+    static let deviceDidShake = Notification.Name("deviceDidShake")
+}
 
 @main
 struct KeydApp: App {

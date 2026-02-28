@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var isSecureInputActive = false
     @State private var showQuitConfirmation = false
     @State private var pendingDestructiveHotkey: (UInt16, ModifierFlags)? = nil
+    @State private var showDebug = false
 
     var body: some View {
         ZStack {
@@ -57,6 +58,13 @@ struct RootView: View {
             transportManager.onSecureInputChanged = { active in
                 isSecureInputActive = active
             }
+        }
+        .sheet(isPresented: $showDebug) {
+            DebugOverlayView(isPresented: $showDebug)
+                .environmentObject(transportManager)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
+            showDebug = true
         }
     }
 
