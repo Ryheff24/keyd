@@ -25,6 +25,7 @@ enum ConnectionKind: CustomStringConvertible {
 final class TransportManager {
     private let injectionRouter: InjectionRouter
     private let statusBar: StatusBarController
+    private let pairingManager: PairingManager
     private var connectionState: AgentConnectionState = .disconnected
 
     private var usbListener = USBListener()
@@ -40,9 +41,10 @@ final class TransportManager {
     // Connection event log for debug overlay
     private var connectionEventLog: [String] = []
 
-    init(injectionRouter: InjectionRouter, statusBar: StatusBarController) {
+    init(injectionRouter: InjectionRouter, statusBar: StatusBarController, pairingManager: PairingManager) {
         self.injectionRouter = injectionRouter
         self.statusBar = statusBar
+        self.pairingManager = pairingManager
     }
 
     func start() async {
@@ -100,7 +102,7 @@ final class TransportManager {
 
         decoder.onMessage = { [weak self] message in
             Task { @MainActor in
-                self?.injectionRouter.route(message)
+                self?.handleIncomingMessage(message)
             }
         }
         decoder.onError = { error in
@@ -172,7 +174,7 @@ final class TransportManager {
                 self.activeEncoder = encoder
                 decoder.onMessage = { [weak self] message in
                     Task { @MainActor in
-                        self?.injectionRouter.route(message)
+                        self?.handleIncomingMessage(message)
                     }
                 }
                 startReceiveLoop(on: awdlConn, decoder: decoder, transport: .awdl)
@@ -190,6 +192,25 @@ final class TransportManager {
 
         default:
             break
+        }
+    }
+
+    private func handleIncomingMessage(_ message: KeydMessage) {
+        switch message {
+        case .pairingRequest(let request):
+            let accepted = pairingManager.completePairing(
+                iOSPublicKeyData: request.publicKeyData,
+                deviceID: request.deviceID
+            )
+            let response = PairingResponse(
+                publicKeyData: pairingManager.currentPublicKeyData ?? Data(),
+                accepted: accepted
+            )
+            send(.pairingResponse(response))
+            logEvent("Pairing \(accepted ? "accepted" : "rejected") for \(request.deviceID)")
+
+        default:
+            injectionRouter.route(message)
         }
     }
 

@@ -35,6 +35,10 @@ final class PairingManager: ObservableObject {
         pairingError = nil
 
         do {
+            guard transportManager.isConnected else {
+                throw PairingError.connectionNotReady
+            }
+
             // Decode QR payload
             guard let qrData = qrString.data(using: .utf8),
                   let payload = try? JSONDecoder().decode(QRPayload.self, from: qrData) else {
@@ -58,10 +62,25 @@ final class PairingManager: ObservableObject {
                 publicKeyData: iOSPublicKey.rawRepresentation,
                 deviceID: UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
             )
-            transportManager.send(.pairingRequest(request))
+            try await transportManager.sendMessage(.pairingRequest(request))
+
+            let response = try await transportManager.awaitPairingResponse()
+            guard response.accepted else {
+                throw PairingError.rejectedByMac
+            }
+
+            let confirmedMacPublicKeyData = response.publicKeyData.isEmpty
+                ? macPublicKeyData
+                : response.publicKeyData
+
+            guard confirmedMacPublicKeyData == macPublicKeyData else {
+                throw PairingError.agentKeyMismatch
+            }
 
             // Complete ECDH
-            let macPublicKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: macPublicKeyData)
+            let macPublicKey = try Curve25519.KeyAgreement.PublicKey(
+                rawRepresentation: confirmedMacPublicKeyData
+            )
             let sharedSecret = try iOSPrivateKey.sharedSecretFromKeyAgreement(with: macPublicKey)
             let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
                 using: SHA256.self,
@@ -85,6 +104,15 @@ final class PairingManager: ObservableObject {
         }
     }
 
+    func resetPairing() {
+        clearFromKeychain(key: keychainSharedSecretKey)
+        clearFromKeychain(key: keychainMacAgentKey)
+        isPaired = false
+        isPairing = false
+        pairingError = nil
+        print("[PairingManager] Cleared stored pairing state")
+    }
+
     // MARK: - Keychain
 
     private func saveSharedSecretToKeychain(_ data: Data) {
@@ -100,6 +128,15 @@ final class PairingManager: ObservableObject {
         ]
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)
+    }
+
+    private func clearFromKeychain(key: String) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: key
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 
     private func loadSharedSecretFromKeychain() -> Data? {
@@ -119,12 +156,16 @@ final class PairingManager: ObservableObject {
         case invalidQRCode
         case unsupportedVersion(Int)
         case connectionNotReady
+        case rejectedByMac
+        case agentKeyMismatch
 
         var errorDescription: String? {
             switch self {
             case .invalidQRCode: return "Invalid QR code. Please scan the code shown by the KeydAgent app on your Mac."
             case .unsupportedVersion(let v): return "Unsupported protocol version \(v)."
             case .connectionNotReady: return "Not connected to Mac. Ensure USB cable is connected and KeydAgent is running."
+            case .rejectedByMac: return "The Mac rejected this pairing request. Open a fresh QR code in KeydAgent and scan again."
+            case .agentKeyMismatch: return "The scanned QR code does not match the Mac's pairing response. Generate a new QR code and try again."
             }
         }
     }

@@ -27,6 +27,10 @@ final class PairingManager {
         }
     }
 
+    var currentPublicKeyData: Data? {
+        privateKey?.publicKey.rawRepresentation
+    }
+
     /// Generate a new keypair and return the QR code payload string.
     func generatePairingQRPayload() -> String {
         let key = Curve25519.KeyAgreement.PrivateKey()

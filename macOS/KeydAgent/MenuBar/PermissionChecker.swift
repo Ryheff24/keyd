@@ -12,8 +12,9 @@ struct PermissionResult {
 
 /// Checks macOS privacy permissions required by KeydAgent without triggering system prompts.
 /// Both Accessibility and Input Monitoring are required since macOS 10.15 Catalina.
-/// IMPORTANT: Both permissions are revoked on every Xcode rebuild — users must
-/// toggle off and on again in System Settings after each rebuild.
+/// With a stable bundle ID and Apple Development signature, TCC grants should
+/// persist across normal Xcode rebuilds. Re-approval is mainly expected when the
+/// signed app identity changes.
 final class PermissionChecker {
 
     /// Silent check — reads current permission state without showing any system prompts.

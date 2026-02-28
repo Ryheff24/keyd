@@ -37,18 +37,12 @@ struct KeydApp: App {
                         }
                 }
             }
-            .onReceive(pairingManager.$isPaired) { paired in
-                if paired {
-                    // Just paired — restart transport with authenticated connection
-                    transportManager.start()
-                }
-            }
             // Handle keyd://reconnect deep link from Dynamic Island reconnect button
             // CONTEXT.md locked decision: expanded Dynamic Island has reconnect button
             .onOpenURL { url in
                 guard url.scheme == "keyd", url.host == "reconnect" else { return }
                 print("[KeydApp] Reconnect triggered from Dynamic Island")
-                transportManager.start()
+                transportManager.reconnect()
             }
         }
     }

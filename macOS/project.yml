@@ -26,6 +26,7 @@ targets:
       path: KeydAgent/KeydAgent.entitlements
     settings:
       base:
+        DEVELOPMENT_TEAM: M2DUW2UUKH
         PRODUCT_BUNDLE_IDENTIFIER: com.keyd.agent
         PRODUCT_NAME: KeydAgent
         SWIFT_VERSION: "6.0"

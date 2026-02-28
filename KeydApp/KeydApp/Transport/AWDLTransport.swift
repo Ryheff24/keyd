@@ -15,6 +15,8 @@ actor AWDLTransport {
     private let encoder = MessageEncoder()
 
     func startBrowsing() {
+        guard browser == nil else { return }
+
         decoder.onMessage = { [weak self] msg in
             Task { await self?.onMessage?(msg) }
         }
@@ -34,12 +36,18 @@ actor AWDLTransport {
                 print("[AWDLTransport] Browser ready, searching for _keyd._tcp")
             case .failed(let error):
                 print("[AWDLTransport] Browser failed: \(error)")
+                Task { await self.resetBrowserState() }
             default:
                 break
             }
         }
         browser.start(queue: .global(qos: .userInteractive))
         self.browser = browser
+    }
+
+    private func resetBrowserState() {
+        browser = nil
+        connection = nil
     }
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) async {
@@ -103,7 +111,7 @@ actor AWDLTransport {
             throw URLError(.notConnectedToInternet)
         }
         let frame = try encoder.encode(message)
-        try await withCheckedThrowingContinuation { cont in
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             conn.send(content: frame, completion: .contentProcessed { error in
                 if let error = error { cont.resume(throwing: error) }
                 else { cont.resume() }

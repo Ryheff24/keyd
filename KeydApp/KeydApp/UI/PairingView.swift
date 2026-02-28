@@ -6,7 +6,7 @@ import AVFoundation
 struct PairingView: View {
     @ObservedObject var pairingManager: PairingManager
     @EnvironmentObject var transportManager: TransportManager
-    @State private var showCamera = true
+    @State private var scannerSessionID = UUID()
 
     var body: some View {
         ZStack {
@@ -24,13 +24,36 @@ struct PairingView: View {
                     .foregroundColor(.white.opacity(0.8))
                     .padding(.horizontal)
 
+                ConnectionStatusBadge(state: transportManager.connectionState)
+
+                Text(connectionHint)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.white.opacity(0.75))
+                    .padding(.horizontal)
+
                 // Camera scanner view
-                QRScannerRepresentable { qrString in
-                    Task { @MainActor in
-                        await pairingManager.completeQRPairing(
-                            qrString: qrString,
-                            transportManager: transportManager
-                        )
+                ZStack {
+                    QRScannerRepresentable { qrString in
+                        Task { @MainActor in
+                            await pairingManager.completeQRPairing(
+                                qrString: qrString,
+                                transportManager: transportManager
+                            )
+                        }
+                    }
+                    .id(scannerSessionID)
+
+                    if !transportManager.isConnected {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.black.opacity(0.65))
+                            .overlay {
+                                Text("Connect over USB or wait for AWDL before scanning.")
+                                    .font(.caption)
+                                    .multilineTextAlignment(.center)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                            }
                     }
                 }
                 .frame(width: 260, height: 260)
@@ -56,12 +79,42 @@ struct PairingView: View {
                         .foregroundColor(.red)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
+
+                    HStack(spacing: 12) {
+                        Button("Scan Again") {
+                            resetScanner()
+                        }
+
+                        Button("Retry Connection") {
+                            transportManager.reconnect()
+                            resetScanner()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
             .padding()
         }
         // Liquid Glass overlay on the scanner box
         .background(.ultraThinMaterial.opacity(0.3))
+    }
+
+    private var connectionHint: String {
+        switch transportManager.connectionState {
+        case .usbConnected:
+            return "USB is ready. Scan the QR code shown by KeydAgent."
+        case .awdlConnected:
+            return "AWDL is ready. You can scan now, but USB pairing is more reliable for first setup."
+        case .connecting:
+            return "Waiting for the Mac connection before pairing can complete."
+        case .disconnected:
+            return "Connect the iPhone to your Mac and keep KeydAgent running."
+        }
+    }
+
+    private func resetScanner() {
+        pairingManager.pairingError = nil
+        scannerSessionID = UUID()
     }
 }
 

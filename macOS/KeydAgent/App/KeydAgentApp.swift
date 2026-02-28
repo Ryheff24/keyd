@@ -99,7 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startTransport() {
         guard let statusBar = statusBarController else { return }
         let injector = InjectionRouter()
-        let manager = TransportManager(injectionRouter: injector, statusBar: statusBar)
+        let manager = TransportManager(
+            injectionRouter: injector,
+            statusBar: statusBar,
+            pairingManager: pairingManager
+        )
         self.transportManager = manager
         Task { @MainActor in
             await manager.start()

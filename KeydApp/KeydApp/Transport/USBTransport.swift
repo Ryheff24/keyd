@@ -14,7 +14,12 @@ actor USBTransport {
     private let encoder = MessageEncoder()
 
     /// Connect with exponential backoff retry.
-    func connect() async {
+    /// - Returns: `true` when a TCP connection is ready, `false` if all retries fail.
+    func connect() async -> Bool {
+        if connection != nil {
+            return true
+        }
+
         decoder.onMessage = { [weak self] msg in
             Task { await self?.onMessage?(msg) }
         }
@@ -28,16 +33,25 @@ actor USBTransport {
             do {
                 try await attemptConnect()
                 print("[USBTransport] Connected on attempt \(attempts + 1)")
-                return
+                return true
+            } catch is CancellationError {
+                connection = nil
+                return false
             } catch {
                 attempts += 1
                 print("[USBTransport] Connect attempt \(attempts) failed: \(error). Retrying in \(delay)s...")
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                if Task.isCancelled {
+                    connection = nil
+                    return false
+                }
                 delay = min(delay * 2, maxDelay)
             }
         }
+
+        connection = nil
         print("[USBTransport] Max retries reached. Connection failed.")
-        onDisconnect?()
+        return false
     }
 
     private func attemptConnect() async throws {
@@ -61,8 +75,10 @@ actor USBTransport {
                     cont.resume()
                     Task { await self?.startReceiving(conn) }
                 case .failed(let error):
+                    Task { await self?.setConnection(nil) }
                     cont.resume(throwing: error)
                 case .cancelled:
+                    Task { await self?.setConnection(nil) }
                     cont.resume(throwing: CancellationError())
                 default:
                     break
@@ -72,6 +88,10 @@ actor USBTransport {
         }
     }
 
+    private func setConnection(_ connection: NWConnection?) {
+        self.connection = connection
+    }
+
     private func startReceiving(_ connection: NWConnection) async {
         while true {
             do {
@@ -79,6 +99,7 @@ actor USBTransport {
                 decoder.receive(data)
             } catch {
                 print("[USBTransport] Receive error: \(error)")
+                self.connection = nil
                 onDisconnect?()
                 return
             }
@@ -104,7 +125,7 @@ actor USBTransport {
             throw URLError(.notConnectedToInternet)
         }
         let frame = try encoder.encode(message)
-        try await withCheckedThrowingContinuation { cont in
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             conn.send(content: frame, completion: .contentProcessed { error in
                 if let error = error {
                     cont.resume(throwing: error)
