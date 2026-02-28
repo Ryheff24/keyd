@@ -7,14 +7,30 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */; };
+		3F22B8E546825FF06EF8C1AE /* HotkeyPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */; };
+		515DC4048BC21113FB3EB418 /* AWDLTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */; };
 		5E1C31C54CEA46C0FA0F7D28 /* SharedProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 83DC1729EFA37F8173C7FB6D /* SharedProtocol */; };
+		671AB9D0327840EFAD96DD76 /* ConnectionStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */; };
+		68C1A56FA763E576003F8CD0 /* RootViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECA586A8B9C450961B058F6 /* RootViewController.swift */; };
+		8DB643D06B582FCF1EB10958 /* TransportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D017A0AA764712A04FBA4357 /* TransportManager.swift */; };
+		C10C102A0894AF1A1386E9BA /* KeydApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7AB307F0248664219D7E544 /* KeydApp.swift */; };
+		DB2E71D5B2057FC57322D0BD /* KeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1ECA586A8B9C450961B058F6 /* RootViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewController.swift; sourceTree = "<group>"; };
+		404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWDLTransport.swift; sourceTree = "<group>"; };
 		95A1596C3CE0CA948A697EB7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardView.swift; sourceTree = "<group>"; };
+		ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBTransport.swift; sourceTree = "<group>"; };
+		B7AB307F0248664219D7E544 /* KeydApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydApp.swift; sourceTree = "<group>"; };
+		BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusView.swift; sourceTree = "<group>"; };
+		D017A0AA764712A04FBA4357 /* TransportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportManager.swift; sourceTree = "<group>"; };
 		D07B99D8647E91B17B1EF11F /* KeydApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KeydApp.entitlements; sourceTree = "<group>"; };
 		DE5E2A371FE81E5D670BBCE7 /* SharedProtocol */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SharedProtocol; path = ../SharedProtocol; sourceTree = SOURCE_ROOT; };
+		E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyPanel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -29,6 +45,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		3DA6C1AFE3978434EF35F1C8 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B7AB307F0248664219D7E544 /* KeydApp.swift */,
+				1ECA586A8B9C450961B058F6 /* RootViewController.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
 		401FADA702722B10E09E858D = {
 			isa = PBXGroup;
 			children = (
@@ -43,8 +68,31 @@
 			children = (
 				95A1596C3CE0CA948A697EB7 /* Info.plist */,
 				D07B99D8647E91B17B1EF11F /* KeydApp.entitlements */,
+				3DA6C1AFE3978434EF35F1C8 /* App */,
+				6AE0F4E2F543E78EFE6EAA38 /* Transport */,
+				713FC0413E919180AA983A57 /* UI */,
 			);
 			path = KeydApp;
+			sourceTree = "<group>";
+		};
+		6AE0F4E2F543E78EFE6EAA38 /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */,
+				D017A0AA764712A04FBA4357 /* TransportManager.swift */,
+				ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */,
+			);
+			path = Transport;
+			sourceTree = "<group>";
+		};
+		713FC0413E919180AA983A57 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */,
+				E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */,
+				9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */,
+			);
+			path = UI;
 			sourceTree = "<group>";
 		};
 		78C03C4E56A200203015B2EF /* Packages */ = {
@@ -127,6 +175,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				515DC4048BC21113FB3EB418 /* AWDLTransport.swift in Sources */,
+				671AB9D0327840EFAD96DD76 /* ConnectionStatusView.swift in Sources */,
+				3F22B8E546825FF06EF8C1AE /* HotkeyPanel.swift in Sources */,
+				DB2E71D5B2057FC57322D0BD /* KeyboardView.swift in Sources */,
+				C10C102A0894AF1A1386E9BA /* KeydApp.swift in Sources */,
+				68C1A56FA763E576003F8CD0 /* RootViewController.swift in Sources */,
+				8DB643D06B582FCF1EB10958 /* TransportManager.swift in Sources */,
+				3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
