@@ -1,0 +1,46 @@
+name: KeydApp
+options:
+  bundleIdPrefix: com.keyd
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+
+packages:
+  SharedProtocol:
+    path: ../SharedProtocol
+
+targets:
+  KeydApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - KeydApp
+    info:
+      path: KeydApp/Info.plist
+      properties:
+        UIBackgroundModes:
+          - voip
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: "KeydApp needs local network access to connect to the macOS agent over AWDL/Bonjour."
+        NSBonjourServices:
+          - _keyd._tcp
+    entitlements:
+      path: KeydApp/KeydApp.entitlements
+      properties:
+        com.apple.security.network.client: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - package: SharedProtocol
