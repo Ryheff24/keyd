@@ -53,12 +53,13 @@ final class StatusBarController {
     func update(permissions: PermissionResult) {
         self.permissions = permissions
         if !permissions.allGranted {
-            // Show warning badge when permissions are missing
             if let button = statusItem.button {
-                button.image = NSImage(
-                    systemSymbolName: "keyboard.badge.exclamationmark",
-                    accessibilityDescription: "KeydAgent: permissions required"
-                )
+                // keyboard.badge.exclamationmark is macOS 14+ — fall back to keyboard
+                let image = NSImage(systemSymbolName: "keyboard.badge.exclamationmark",
+                                    accessibilityDescription: "KeydAgent: permissions required")
+                           ?? NSImage(systemSymbolName: "keyboard",
+                                    accessibilityDescription: "KeydAgent: permissions required")
+                button.image = image
             }
         } else {
             updateIcon(state: currentState)
@@ -81,46 +82,42 @@ final class StatusBarController {
         self.menuTarget = target  // retain
 
         if !permissions.allGranted {
-            // ── Permission section ──────────────────────────────────────
+            // ── Permission section (only shown while permissions are missing) ──
             let header = NSMenuItem(title: "Permissions Required", action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
 
-            let axLabel = permissions.accessibility ? "✓  Accessibility" : "✗  Accessibility — not granted"
-            let axItem = NSMenuItem(title: axLabel, action: nil, keyEquivalent: "")
-            axItem.isEnabled = false
-            menu.addItem(axItem)
+            // Only show items for missing permissions — each is a clickable button
+            // that opens its specific System Settings privacy page.
+            if !permissions.accessibility {
+                let axItem = NSMenuItem(
+                    title: "❌  Accessibility",
+                    action: #selector(MenuTarget.openAccessibilitySettings),
+                    keyEquivalent: ""
+                )
+                axItem.target = target
+                menu.addItem(axItem)
+            }
 
-            let imLabel = permissions.inputMonitoring ? "✓  Input Monitoring" : "✗  Input Monitoring — not granted"
-            let imItem = NSMenuItem(title: imLabel, action: nil, keyEquivalent: "")
-            imItem.isEnabled = false
-            menu.addItem(imItem)
+            if !permissions.inputMonitoring {
+                let imItem = NSMenuItem(
+                    title: "❌  Input Monitoring",
+                    action: #selector(MenuTarget.openInputMonitoringSettings),
+                    keyEquivalent: ""
+                )
+                imItem.target = target
+                menu.addItem(imItem)
+            }
 
             menu.addItem(NSMenuItem.separator())
 
-            let grantItem = NSMenuItem(
-                title: "Grant Missing Permissions…",
-                action: #selector(MenuTarget.grantPermissions),
-                keyEquivalent: ""
+            let relaunchItem = NSMenuItem(
+                title: "Relaunch KeydAgent",
+                action: #selector(MenuTarget.relaunch),
+                keyEquivalent: "r"
             )
-            grantItem.target = target
-            menu.addItem(grantItem)
-
-            let settingsItem = NSMenuItem(
-                title: "Open System Settings…",
-                action: #selector(MenuTarget.openSettings),
-                keyEquivalent: ","
-            )
-            settingsItem.target = target
-            menu.addItem(settingsItem)
-
-            let hint = NSMenuItem(
-                title: "After granting, relaunch KeydAgent",
-                action: nil,
-                keyEquivalent: ""
-            )
-            hint.isEnabled = false
-            menu.addItem(hint)
+            relaunchItem.target = target
+            menu.addItem(relaunchItem)
 
             menu.addItem(NSMenuItem.separator())
         } else {
@@ -140,12 +137,11 @@ final class StatusBarController {
         menu.addItem(NSMenuItem.separator())
 
         // Quit
-        let quitItem = NSMenuItem(
+        menu.addItem(NSMenuItem(
             title: "Quit KeydAgent",
             action: #selector(NSApp.terminate(_:)),
             keyEquivalent: "q"
-        )
-        menu.addItem(quitItem)
+        ))
 
         self.statusItem.menu = menu
     }
@@ -161,11 +157,25 @@ private final class MenuTarget: NSObject {
         self.permissions = permissions
     }
 
-    @objc func grantPermissions() {
-        checker.requestPermissions(result: permissions)
+    @objc func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
-    @objc func openSettings() {
-        checker.openSystemSettings()
+    @objc func openInputMonitoringSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func relaunch() {
+        // Launch a fresh copy then terminate this one — IOHIDCheckAccess only
+        // reflects new grants after a process restart.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = [Bundle.main.bundleURL.path]
+        try? task.run()
+        NSApp.terminate(nil)
     }
 }
