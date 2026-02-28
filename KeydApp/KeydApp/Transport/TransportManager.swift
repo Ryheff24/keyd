@@ -246,7 +246,7 @@ final class TransportManager: ObservableObject {
     }
 
     func sendMessage(_ message: KeydMessage) async throws {
-        if await usbTransport.hasConnection() {
+        if await usbTransport.hasReadyConnection() {
             try await usbTransport.send(message)
             return
         }
@@ -262,7 +262,7 @@ final class TransportManager: ObservableObject {
     func sendPairingRequest(_ request: PairingRequest) async throws {
         let message = KeydMessage.pairingRequest(request)
 
-        if await usbTransport.hasConnection() {
+        if connectionState == .usbConnected, await usbTransport.hasReadyConnection() {
             try await usbTransport.sendBestEffort(message)
             logConnectionEvent("Queued pairing request over USB")
             return
@@ -278,7 +278,7 @@ final class TransportManager: ObservableObject {
     }
 
     func waitForConnection(timeoutNanoseconds: UInt64 = 8_000_000_000) async throws {
-        let usbConnected = await usbTransport.hasConnection()
+        let usbConnected = await usbTransport.hasReadyConnection()
         let awdlConnected = await awdlTransport.hasConnection()
         if isConnected || usbConnected || awdlConnected {
             return
@@ -314,7 +314,7 @@ final class TransportManager: ObservableObject {
     func finalizePairingTransportState() async {
         suppressAWDLStatusUntilPaired = false
 
-        if await usbTransport.hasConnection() {
+        if await usbTransport.hasReadyConnection() {
             if connectionState != .usbConnected {
                 connectionState = .usbConnected
                 setIdleTimerState(true)

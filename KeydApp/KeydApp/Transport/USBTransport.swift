@@ -7,6 +7,7 @@ import SharedProtocol
 actor USBTransport {
     static let port: UInt16 = 12345
     private var connection: NWConnection?
+    private var isReady = false
     var onMessage: ((KeydMessage) -> Void)?
     var onDisconnect: (() -> Void)?
 
@@ -16,7 +17,7 @@ actor USBTransport {
     /// Connect with exponential backoff retry.
     /// - Returns: `true` when a TCP connection is ready, `false` if all retries fail.
     func connect() async -> Bool {
-        if connection != nil {
+        if isReady {
             return true
         }
 
@@ -67,18 +68,20 @@ actor USBTransport {
         )
         let conn = NWConnection(to: endpoint, using: params)
         self.connection = conn
+        self.isReady = false
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             conn.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
+                    Task { await self?.markReady(conn) }
                     cont.resume()
                     Task { await self?.startReceiving(conn) }
                 case .failed(let error):
-                    Task { await self?.setConnection(nil) }
+                    Task { await self?.clearConnection() }
                     cont.resume(throwing: error)
                 case .cancelled:
-                    Task { await self?.setConnection(nil) }
+                    Task { await self?.clearConnection() }
                     cont.resume(throwing: CancellationError())
                 default:
                     break
@@ -92,6 +95,16 @@ actor USBTransport {
         self.connection = connection
     }
 
+    private func markReady(_ connection: NWConnection) {
+        self.connection = connection
+        self.isReady = true
+    }
+
+    private func clearConnection() {
+        connection = nil
+        isReady = false
+    }
+
     private func startReceiving(_ connection: NWConnection) async {
         while true {
             do {
@@ -99,7 +112,7 @@ actor USBTransport {
                 decoder.receive(data)
             } catch {
                 print("[USBTransport] Receive error: \(error)")
-                self.connection = nil
+                clearConnection()
                 onDisconnect?()
                 return
             }
@@ -146,10 +159,12 @@ actor USBTransport {
 
     func disconnect() {
         connection?.cancel()
-        connection = nil
+        clearConnection()
     }
 
     var isConnected: Bool { connection != nil }
 
     func hasConnection() -> Bool { connection != nil }
+
+    func hasReadyConnection() -> Bool { connection != nil && isReady }
 }
