@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "16.0"
+  indentWidth: 4
+  tabWidth: 4
+  generateEmptyDirectories: true
 
 packages:
   SharedProtocol:
@@ -15,7 +18,8 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - KeydApp
+      - path: KeydApp
+        createIntermediateGroups: true
     info:
       path: KeydApp/Info.plist
       properties:
@@ -30,6 +34,8 @@ targets:
         NSLocalNetworkUsageDescription: "KeydApp needs local network access to connect to the macOS agent over AWDL/Bonjour."
         NSBonjourServices:
           - _keyd._tcp
+        NSSupportsLiveActivities: true
+        NSCameraUsageDescription: "KeydApp needs camera access to scan the QR code displayed by KeydAgent on your Mac for pairing."
     entitlements:
       path: KeydApp/KeydApp.entitlements
       properties:
@@ -37,10 +43,43 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app
+        PRODUCT_NAME: KeydApp
         SWIFT_VERSION: "5.9"
-        TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: ""
     dependencies:
       - package: SharedProtocol
+      - target: KeydLiveActivity
+        embed: true
+    scheme:
+      testTargets: []
+
+  KeydLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: KeydLiveActivity
+        createIntermediateGroups: true
+      # Share attributes definition with main app
+      - path: KeydApp/LiveActivity/KeydConnectionAttributes.swift
+        createIntermediateGroups: false
+    info:
+      path: KeydLiveActivity/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app.live-activity
+        PRODUCT_NAME: KeydLiveActivity
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: ""
+    dependencies: []
+    scheme:
+      testTargets: []

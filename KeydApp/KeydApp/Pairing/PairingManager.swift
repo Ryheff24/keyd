@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Security
 import UIKit
+import SharedProtocol
 
 /// Manages the iOS side of the one-time QR pairing handshake.
 /// Decodes QR payload; generates iOS Curve25519 key; completes ECDH;

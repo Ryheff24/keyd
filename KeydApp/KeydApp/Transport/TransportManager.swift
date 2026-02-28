@@ -6,17 +6,22 @@ import UIKit
 /// USB primary; AWDL pre-warmed and promoted on USB disconnect (TRANS-03, TRANS-04).
 @MainActor
 final class TransportManager: ObservableObject {
-    enum State {
+    enum State: Equatable {
         case disconnected
         case connecting
         case usbConnected
         case awdlConnected
     }
 
-    @Published var connectionState: State = .disconnected
+    @Published var connectionState: State = .disconnected {
+        didSet {
+            updateLiveActivity(for: connectionState)
+        }
+    }
 
     private var usbTransport = USBTransport()
     private var awdlTransport = AWDLTransport()
+    private let liveActivityManager = KeydLiveActivityManager()
 
     var onSecureInputChanged: ((Bool) -> Void)?
 
@@ -108,7 +113,7 @@ final class TransportManager: ObservableObject {
         case .secureInputChanged(let ev):
             onSecureInputChanged?(ev.isActive)
         case .pairingResponse, .reflectState, .appStateChanged:
-            // Handled by PairingManager (Plan 04) or future plans
+            // Handled by PairingManager or future plans
             break
         default:
             print("[TransportManager] Unexpected iOS-received message: \(message)")
@@ -119,6 +124,30 @@ final class TransportManager: ObservableObject {
 
     private func setIdleTimerState(_ active: Bool) {
         UIApplication.shared.isIdleTimerDisabled = active
+    }
+
+    // MARK: - Live Activity (Dynamic Island)
+
+    private func updateLiveActivity(for state: State) {
+        switch state {
+        case .usbConnected:
+            if liveActivityManager.activity == nil {
+                liveActivityManager.start(status: .usb)
+            } else {
+                liveActivityManager.update(status: .usb)
+            }
+        case .awdlConnected:
+            if liveActivityManager.activity == nil {
+                liveActivityManager.start(status: .awdl)
+            } else {
+                liveActivityManager.update(status: .awdl)
+            }
+        case .connecting:
+            // Don't start activity yet — wait until actually connected
+            break
+        case .disconnected:
+            liveActivityManager.end()
+        }
     }
 }
 

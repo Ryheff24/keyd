@@ -7,30 +7,70 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0C601B22620AFE78719029D2 /* KeydConnectionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */; };
+		1DA916D330695FEFF6B6981F /* KeydConnectionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */; };
 		3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */; };
 		3F22B8E546825FF06EF8C1AE /* HotkeyPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */; };
 		515DC4048BC21113FB3EB418 /* AWDLTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */; };
+		5812A2FBEBAB8FFE137F6206 /* KeydLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 887EF92EF2C71ED65EA70EEB /* KeydLiveActivityWidget.swift */; };
 		5E1C31C54CEA46C0FA0F7D28 /* SharedProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 83DC1729EFA37F8173C7FB6D /* SharedProtocol */; };
 		671AB9D0327840EFAD96DD76 /* ConnectionStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */; };
 		68C1A56FA763E576003F8CD0 /* RootViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECA586A8B9C450961B058F6 /* RootViewController.swift */; };
+		71482032814E33EBA4DF79A3 /* KeydLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		74233BE6AC9FE5AF32E07580 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D833089AB1E968AD01E78092 /* PairingView.swift */; };
+		88DF9E5BCE9886D5A74EC57A /* KeydLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02DFED143F4C58C48738CA2 /* KeydLiveActivityBundle.swift */; };
 		8DB643D06B582FCF1EB10958 /* TransportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D017A0AA764712A04FBA4357 /* TransportManager.swift */; };
+		B67BCAF0BFF0F766B793406C /* KeydLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B4A426776FEFBCC865C4A8 /* KeydLiveActivity.swift */; };
 		C10C102A0894AF1A1386E9BA /* KeydApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7AB307F0248664219D7E544 /* KeydApp.swift */; };
 		DB2E71D5B2057FC57322D0BD /* KeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */; };
+		EF9B890AD28B19D9F1227AF0 /* PairingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6681C3B02C4559B5F735BEA1 /* PairingManager.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		0DCAAA143ED2BA758B7D3DC8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D7D0459381DC2794B5260FE4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0C59C2EEA6EABDE415B179E4;
+			remoteInfo = KeydLiveActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B2DA4AD0C9CBE2490A1C66C2 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				71482032814E33EBA4DF79A3 /* KeydLiveActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KeydLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1ECA586A8B9C450961B058F6 /* RootViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewController.swift; sourceTree = "<group>"; };
 		404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWDLTransport.swift; sourceTree = "<group>"; };
+		57B4A426776FEFBCC865C4A8 /* KeydLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivity.swift; sourceTree = "<group>"; };
+		6681C3B02C4559B5F735BEA1 /* PairingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingManager.swift; sourceTree = "<group>"; };
+		887EF92EF2C71ED65EA70EEB /* KeydLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivityWidget.swift; sourceTree = "<group>"; };
 		95A1596C3CE0CA948A697EB7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardView.swift; sourceTree = "<group>"; };
+		A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydConnectionAttributes.swift; sourceTree = "<group>"; };
 		ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBTransport.swift; sourceTree = "<group>"; };
+		B02DFED143F4C58C48738CA2 /* KeydLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivityBundle.swift; sourceTree = "<group>"; };
 		B7AB307F0248664219D7E544 /* KeydApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydApp.swift; sourceTree = "<group>"; };
 		BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusView.swift; sourceTree = "<group>"; };
 		D017A0AA764712A04FBA4357 /* TransportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportManager.swift; sourceTree = "<group>"; };
 		D07B99D8647E91B17B1EF11F /* KeydApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KeydApp.entitlements; sourceTree = "<group>"; };
+		D833089AB1E968AD01E78092 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		DE5E2A371FE81E5D670BBCE7 /* SharedProtocol */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SharedProtocol; path = ../SharedProtocol; sourceTree = SOURCE_ROOT; };
 		E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyPanel.swift; sourceTree = "<group>"; };
+		EA910CBE777DDD096EDA5B67 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -45,6 +85,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		377396AE61DF65459D57722B /* KeydLiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				EA910CBE777DDD096EDA5B67 /* Info.plist */,
+				B02DFED143F4C58C48738CA2 /* KeydLiveActivityBundle.swift */,
+				887EF92EF2C71ED65EA70EEB /* KeydLiveActivityWidget.swift */,
+			);
+			path = KeydLiveActivity;
+			sourceTree = "<group>";
+		};
 		3DA6C1AFE3978434EF35F1C8 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -58,10 +108,13 @@
 			isa = PBXGroup;
 			children = (
 				662892C39BA873FAEAE1DE01 /* KeydApp */,
+				377396AE61DF65459D57722B /* KeydLiveActivity */,
 				78C03C4E56A200203015B2EF /* Packages */,
 				F753EE555E9C5CB85CAB1E10 /* Products */,
 			);
+			indentWidth = 4;
 			sourceTree = "<group>";
+			tabWidth = 4;
 		};
 		662892C39BA873FAEAE1DE01 /* KeydApp */ = {
 			isa = PBXGroup;
@@ -69,6 +122,8 @@
 				95A1596C3CE0CA948A697EB7 /* Info.plist */,
 				D07B99D8647E91B17B1EF11F /* KeydApp.entitlements */,
 				3DA6C1AFE3978434EF35F1C8 /* App */,
+				D798D028DA4DF7F4A72A810B /* LiveActivity */,
+				C89A52CEE94A53324B02003E /* Pairing */,
 				6AE0F4E2F543E78EFE6EAA38 /* Transport */,
 				713FC0413E919180AA983A57 /* UI */,
 			);
@@ -91,6 +146,7 @@
 				BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */,
 				E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */,
 				9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */,
+				D833089AB1E968AD01E78092 /* PairingView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -103,10 +159,28 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
+		C89A52CEE94A53324B02003E /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				6681C3B02C4559B5F735BEA1 /* PairingManager.swift */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		D798D028DA4DF7F4A72A810B /* LiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */,
+				57B4A426776FEFBCC865C4A8 /* KeydLiveActivity.swift */,
+			);
+			path = LiveActivity;
+			sourceTree = "<group>";
+		};
 		F753EE555E9C5CB85CAB1E10 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				979E6799DC7B2673A9727BD6 /* KeydApp.app */,
+				04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -114,16 +188,35 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0C59C2EEA6EABDE415B179E4 /* KeydLiveActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7401FC011E0C50C692443223 /* Build configuration list for PBXNativeTarget "KeydLiveActivity" */;
+			buildPhases = (
+				871FEDBA408994379262A34F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KeydLiveActivity;
+			packageProductDependencies = (
+			);
+			productName = KeydLiveActivity;
+			productReference = 04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		D099F5C92BD18A7A5ED7EB26 /* KeydApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 65A6049E15D3ADDF838F693A /* Build configuration list for PBXNativeTarget "KeydApp" */;
 			buildPhases = (
 				FD37A3DF6109AEF40C1377A2 /* Sources */,
 				71DE602C64FC890177134673 /* Frameworks */,
+				B2DA4AD0C9CBE2490A1C66C2 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				90C95E26261D73599E634183 /* PBXTargetDependency */,
 			);
 			name = KeydApp;
 			packageProductDependencies = (
@@ -142,6 +235,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
+					0C59C2EEA6EABDE415B179E4 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
 					D099F5C92BD18A7A5ED7EB26 = {
 						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
@@ -166,11 +263,22 @@
 			projectRoot = "";
 			targets = (
 				D099F5C92BD18A7A5ED7EB26 /* KeydApp */,
+				0C59C2EEA6EABDE415B179E4 /* KeydLiveActivity */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		871FEDBA408994379262A34F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C601B22620AFE78719029D2 /* KeydConnectionAttributes.swift in Sources */,
+				88DF9E5BCE9886D5A74EC57A /* KeydLiveActivityBundle.swift in Sources */,
+				5812A2FBEBAB8FFE137F6206 /* KeydLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD37A3DF6109AEF40C1377A2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -180,6 +288,10 @@
 				3F22B8E546825FF06EF8C1AE /* HotkeyPanel.swift in Sources */,
 				DB2E71D5B2057FC57322D0BD /* KeyboardView.swift in Sources */,
 				C10C102A0894AF1A1386E9BA /* KeydApp.swift in Sources */,
+				1DA916D330695FEFF6B6981F /* KeydConnectionAttributes.swift in Sources */,
+				B67BCAF0BFF0F766B793406C /* KeydLiveActivity.swift in Sources */,
+				EF9B890AD28B19D9F1227AF0 /* PairingManager.swift in Sources */,
+				74233BE6AC9FE5AF32E07580 /* PairingView.swift in Sources */,
 				68C1A56FA763E576003F8CD0 /* RootViewController.swift in Sources */,
 				8DB643D06B582FCF1EB10958 /* TransportManager.swift in Sources */,
 				3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */,
@@ -187,6 +299,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		90C95E26261D73599E634183 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0C59C2EEA6EABDE415B179E4 /* KeydLiveActivity */;
+			targetProxy = 0DCAAA143ED2BA758B7D3DC8 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		3EC56EE1D17AF32F54042426 /* Release */ = {
@@ -260,6 +380,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app;
+				PRODUCT_NAME = KeydApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -344,6 +465,47 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app;
+				PRODUCT_NAME = KeydApp;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9301219213B10EBD6442B402 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = KeydLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.keyd.app.live-activity";
+				PRODUCT_NAME = KeydLiveActivity;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EC1F0DC514F257BCC9337C53 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = KeydLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.keyd.app.live-activity";
+				PRODUCT_NAME = KeydLiveActivity;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -367,6 +529,15 @@
 			buildConfigurations = (
 				43F13AF78754908209F38F04 /* Debug */,
 				7D7F401606DE71C804D7CD4F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7401FC011E0C50C692443223 /* Build configuration list for PBXNativeTarget "KeydLiveActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9301219213B10EBD6442B402 /* Debug */,
+				EC1F0DC514F257BCC9337C53 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
