@@ -1,5 +1,6 @@
 import SwiftUI
 import ServiceManagement
+import AppKit
 
 /// Main entry point for KeydAgent — a menu bar accessory app with no Dock presence.
 /// Responsibilities:
@@ -23,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var transportManager: TransportManager?
     private var permissionPollTimer: Timer?
     private let checker = PermissionChecker()
+    private let pairingManager = PairingManager()
+    private var pairingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide from Dock — KeydAgent is an accessory app (menu bar only)
@@ -39,7 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Initialize status bar immediately so the icon appears and the user
         // can see what's happening before anything else runs.
-        statusBarController = StatusBarController()
+        let statusBar = StatusBarController()
+        statusBar.onShowPairing = { [weak self] in self?.showPairingWindow() }
+        statusBarController = statusBar
 
         // Silent permission check — no popups. Menu bar shows what's missing.
         let perms = checker.checkPermissions()
@@ -69,6 +74,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             permissionPollTimer = nil
             startTransport()
         }
+    }
+
+    @MainActor
+    private func showPairingWindow() {
+        // Bring existing window forward if already open
+        if let existing = pairingWindow, existing.isVisible {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let view = QRCodeWindowView(pairingManager: pairingManager)
+        let hosting = NSHostingController(rootView: view)
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Pair iPhone"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        pairingWindow = window
     }
 
     @MainActor

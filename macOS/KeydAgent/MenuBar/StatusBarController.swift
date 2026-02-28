@@ -32,9 +32,10 @@ final class StatusBarController {
     private var currentState: ConnectionState = .disconnected
     private var permissions: PermissionResult = PermissionResult(accessibility: true, inputMonitoring: true)
     private let checker = PermissionChecker()
-
-    // Target-action holder for menu callbacks
     private var menuTarget: MenuTarget?
+
+    /// Called when the user clicks "Pair iPhone…" in the menu.
+    var onShowPairing: (() -> Void)?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -85,7 +86,7 @@ final class StatusBarController {
 
     private func buildMenu() {
         let menu = NSMenu()
-        let target = MenuTarget(checker: checker, permissions: permissions)
+        let target = MenuTarget(checker: checker, permissions: permissions, onShowPairing: onShowPairing)
         self.menuTarget = target  // retain
 
         if !permissions.allGranted {
@@ -138,6 +139,17 @@ final class StatusBarController {
             menu.addItem(NSMenuItem.separator())
         }
 
+        // Pair iPhone
+        let pairItem = NSMenuItem(
+            title: "Pair iPhone…",
+            action: #selector(MenuTarget.pairIphone),
+            keyEquivalent: "p"
+        )
+        pairItem.target = target
+        menu.addItem(pairItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // App info
         let versionItem = NSMenuItem(title: "KeydAgent v1.0", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
@@ -160,10 +172,12 @@ final class StatusBarController {
 private final class MenuTarget: NSObject {
     private let checker: PermissionChecker
     private let permissions: PermissionResult
+    var onShowPairing: (() -> Void)?
 
-    init(checker: PermissionChecker, permissions: PermissionResult) {
+    init(checker: PermissionChecker, permissions: PermissionResult, onShowPairing: (() -> Void)?) {
         self.checker = checker
         self.permissions = permissions
+        self.onShowPairing = onShowPairing
     }
 
     @objc func openAccessibilitySettings() {
@@ -177,6 +191,10 @@ private final class MenuTarget: NSObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    @objc func pairIphone() {
+        onShowPairing?()
     }
 
     @objc func relaunch() {

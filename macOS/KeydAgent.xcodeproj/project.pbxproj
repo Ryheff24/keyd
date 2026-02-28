@@ -17,6 +17,8 @@
 		5A937CE77B4327DD78DE4144 /* AWDLListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B986EC54D8AB0FA9D6B8116 /* AWDLListener.swift */; };
 		B21A0B74CD8A85BA814BEC80 /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED8D8CDC8A69400A2C0F4BA /* StatusBarController.swift */; };
 		C7336BA3F13081BC11A5BD54 /* AXInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = D783610198EB23C835C1CAFA /* AXInjector.swift */; };
+		F1A2B3C4D5E600000000AAA1 /* PairingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E600000000BBB1 /* PairingManager.swift */; };
+		F1A2B3C4D5E600000000AAA2 /* QRCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E600000000BBB2 /* QRCodeView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +35,8 @@
 		D783610198EB23C835C1CAFA /* AXInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXInjector.swift; sourceTree = "<group>"; };
 		DE806B9D2FA7477BD2EFAD40 /* SharedProtocol */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SharedProtocol; path = ../SharedProtocol; sourceTree = SOURCE_ROOT; };
 		EED8D8CDC8A69400A2C0F4BA /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E600000000BBB1 /* PairingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingManager.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E600000000BBB2 /* QRCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -137,6 +141,7 @@
 		D5309CE678AAAF0ACC33C5F8 /* Pairing */ = {
 			isa = PBXGroup;
 			children = (
+				F1A2B3C4D5E600000000BBB1 /* PairingManager.swift */,
 			);
 			path = Pairing;
 			sourceTree = "<group>";
@@ -144,6 +149,7 @@
 		FE9F7FEB0CBB3F8880B5D3E2 /* UI */ = {
 			isa = PBXGroup;
 			children = (
+				F1A2B3C4D5E600000000BBB2 /* QRCodeView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -220,6 +226,8 @@
 				B21A0B74CD8A85BA814BEC80 /* StatusBarController.swift in Sources */,
 				2E330DF86DACEB355126C7F8 /* TransportManager.swift in Sources */,
 				0272DE4343096FED836B764D /* USBListener.swift in Sources */,
+				F1A2B3C4D5E600000000AAA1 /* PairingManager.swift in Sources */,
+				F1A2B3C4D5E600000000AAA2 /* QRCodeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
