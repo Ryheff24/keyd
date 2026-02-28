@@ -173,8 +173,9 @@ private final class KeyboardInputContainer: UIView {
 private final class InterceptingTextField: UITextField {
     private static let backingText = "\u{200B}"
     private static let repeatRecognitionFloor: TimeInterval = 0.22
+    private static let repeatRecognitionCeiling: TimeInterval = 0.8
+    private static let repeatContinuationThreshold: TimeInterval = 0.16
     private static let wordDeleteRampDelay: TimeInterval = 3.0
-    private static let holdContinuationTimeout: TimeInterval = 0.8
 
     var onBackspace: (() -> Void)?
     var onBackspaceStart: (() -> Void)?
@@ -213,19 +214,9 @@ private final class InterceptingTextField: UITextField {
         }
 
         let gap = now - lastBackspaceEventAt
-        guard gap <= Self.holdContinuationTimeout else {
-            beginBackspaceBurst()
-            onBackspace?()
-            self.lastBackspaceEventAt = now
-            scheduleBackspaceRelease()
-            restoreBackingText()
-            return
-        }
-
-        if repeatStartedAt == nil {
-            if gap >= Self.repeatRecognitionFloor {
-                repeatStartedAt = now
-            } else {
+        if let repeatStartedAt {
+            guard gap <= Self.repeatContinuationThreshold else {
+                finishBackspaceBurst()
                 beginBackspaceBurst()
                 onBackspace?()
                 self.lastBackspaceEventAt = now
@@ -233,12 +224,25 @@ private final class InterceptingTextField: UITextField {
                 restoreBackingText()
                 return
             }
-        }
 
-        if let repeatStartedAt, now - repeatStartedAt >= Self.wordDeleteRampDelay {
-            onBackspaceStart?()
+            if now - repeatStartedAt >= Self.wordDeleteRampDelay {
+                onBackspaceStart?()
+            } else {
+                onBackspace?()
+            }
         } else {
-            onBackspace?()
+            if gap >= Self.repeatRecognitionFloor, gap <= Self.repeatRecognitionCeiling {
+                repeatStartedAt = now
+                onBackspace?()
+            } else {
+                finishBackspaceBurst()
+                beginBackspaceBurst()
+                onBackspace?()
+                self.lastBackspaceEventAt = now
+                scheduleBackspaceRelease()
+                restoreBackingText()
+                return
+            }
         }
 
         self.lastBackspaceEventAt = now
@@ -261,8 +265,13 @@ private final class InterceptingTextField: UITextField {
         }
         releaseWorkItem = workItem
 
+        let idleTimeout =
+            repeatStartedAt == nil
+            ? Self.repeatRecognitionCeiling
+            : Self.repeatContinuationThreshold
+
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + Self.holdContinuationTimeout,
+            deadline: .now() + idleTimeout,
             execute: workItem
         )
     }
