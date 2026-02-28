@@ -3,7 +3,7 @@ import SharedProtocol
 
 /// Full-width SwiftUI keyboard mimicking native iOS keyboard appearance.
 /// Renders character keys, space bar, and control keys (Backspace, Return).
-/// Does NOT use UIInputViewController — this is embedded in a standard View.
+/// Uses a regular in-app SwiftUI view, not a keyboard extension controller.
 struct KeyboardView: View {
     let onKeyTap: (UInt32) -> Void           // Unicode scalar
     let onVirtualKeyTap: (UInt16) -> Void    // Virtual key code (VirtualKey constants)
