@@ -39,6 +39,9 @@ final class TransportManager: ObservableObject {
             if isConnected {
                 resolveConnectionReady()
             }
+            if isConnected, connectionState != oldValue, !suppressAWDLStatusUntilPaired {
+                sendSessionResume()
+            }
         }
     }
 
@@ -344,6 +347,25 @@ final class TransportManager: ObservableObject {
         updateLiveActivity(for: connectionState)
     }
 
+    private func sendSessionResume() {
+        let resume = SessionResume(
+            deviceID: UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        )
+
+        Task { [weak self] in
+            do {
+                try await self?.sendMessage(.sessionResume(resume))
+                await MainActor.run {
+                    self?.logConnectionEvent("Sent session resume")
+                }
+            } catch {
+                await MainActor.run {
+                    self?.logConnectionEvent("Session resume failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
     // MARK: - Receive
 
     private func handleIncomingMessage(_ message: KeydMessage) {
@@ -351,6 +373,9 @@ final class TransportManager: ObservableObject {
         case .pairingResponse(let response):
             logConnectionEvent(response.accepted ? "Pairing accepted by Mac" : "Pairing rejected by Mac")
             resolvePairingResponse(response)
+        case .pairingInvalidated:
+            logConnectionEvent("Pairing invalidated by Mac")
+            NotificationCenter.default.post(name: .pairingInvalidated, object: nil)
         case .secureInputChanged(let ev):
             onSecureInputChanged?(ev.isActive)
         case .reflectState, .appStateChanged:

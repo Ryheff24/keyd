@@ -12,6 +12,7 @@ extension UIWindow {
 
 extension Notification.Name {
     static let deviceDidShake = Notification.Name("deviceDidShake")
+    static let pairingInvalidated = Notification.Name("pairingInvalidated")
 }
 
 @main
@@ -62,6 +63,10 @@ struct KeydApp: App {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
                 transportManager.suspendLiveActivity()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .pairingInvalidated)) { _ in
+                transportManager.resetConnections()
+                pairingManager.resetPairing()
             }
         }
     }

@@ -102,13 +102,18 @@ private final class KeyboardInputContainer: UIView {
         textField.textColor = .clear
         textField.tintColor = .clear
         textField.autocorrectionType = .no
+        textField.autocapitalizationType = .none
         textField.spellCheckingType = .no
         textField.smartQuotesType = .no
         textField.smartDashesType = .no
         textField.smartInsertDeleteType = .no
+        textField.textContentType = .none
         textField.keyboardType = .default
         textField.returnKeyType = .default
         textField.enablesReturnKeyAutomatically = false
+        if #available(iOS 17.0, *) {
+            textField.inlinePredictionType = .no
+        }
         textField.text = ""
 
         addSubview(textField)

@@ -55,7 +55,7 @@ struct PairingView: View {
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.white.opacity(0.85))
 
-                        ForEach(recentEvents, id: \.self) { event in
+                        ForEach(Array(recentEvents.enumerated()), id: \.offset) { _, event in
                             Text(event)
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.72))

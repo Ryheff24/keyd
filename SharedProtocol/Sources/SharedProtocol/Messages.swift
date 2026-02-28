@@ -19,10 +19,16 @@ public enum KeydMessage: Codable, Sendable {
     /// First-time pairing: iOS sends its Curve25519 public key
     case pairingRequest(PairingRequest)
 
+    /// Existing paired device reconnecting; macOS validates pairing state
+    case sessionResume(SessionResume)
+
     // MARK: Mac → iOS messages (reserved in Phase 1; implemented in Phase 2+)
 
     /// Acknowledges pairing; macOS sends its Curve25519 public key back
     case pairingResponse(PairingResponse)
+
+    /// macOS invalidated the stored pairing; iOS must discard local pairing
+    case pairingInvalidated
 
     /// Notifies iOS that macOS entered or exited secure input mode (password field)
     case secureInputChanged(SecureInputChanged)
@@ -78,6 +84,16 @@ public struct PairingRequest: Codable, Sendable {
 
     public init(publicKeyData: Data, deviceID: String) {
         self.publicKeyData = publicKeyData
+        self.deviceID = deviceID
+    }
+}
+
+/// Existing paired device reconnect announcement.
+public struct SessionResume: Codable, Sendable {
+    /// Unique identifier for this iOS device (UUID string)
+    public let deviceID: String
+
+    public init(deviceID: String) {
         self.deviceID = deviceID
     }
 }

@@ -28,7 +28,10 @@ final class InjectionRouter {
             // Phase 1: Pairing handled in TransportManager/PairingManager (Plan 04)
             print("[InjectionRouter] Received pairing request from device: \(req.deviceID)")
 
-        case .pairingResponse, .reflectState, .appStateChanged:
+        case .sessionResume(let resume):
+            print("[InjectionRouter] Received session resume from device: \(resume.deviceID)")
+
+        case .pairingResponse, .pairingInvalidated, .reflectState, .appStateChanged:
             // Mac→iOS messages — should not arrive at macOS side
             print("[InjectionRouter] Unexpected Mac→iOS message received: \(message)")
 

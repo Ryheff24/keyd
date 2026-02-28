@@ -28,6 +28,7 @@ final class TransportManager {
     private let statusBar: StatusBarController
     private let pairingManager: PairingManager
     private var connectionState: AgentConnectionState = .disconnected
+    var onPairingCompleted: (() -> Void)?
 
     private var usbListener = USBListener()
     private var awdlListener = AWDLListener()
@@ -246,6 +247,21 @@ final class TransportManager {
     }
 
     private func handleIncomingMessage(_ message: KeydMessage) {
+        if !pairingManager.isPaired {
+            switch message {
+            case .pairingRequest, .sessionResume:
+                break
+            case .keyEvent, .hotkeyEvent:
+                send(.pairingInvalidated)
+                logEvent("Rejected input from unpaired device")
+                return
+            case .pairingResponse, .pairingInvalidated, .secureInputChanged, .reflectState, .appStateChanged:
+                send(.pairingInvalidated)
+                logEvent("Rejected stale session from unpaired device")
+                return
+            }
+        }
+
         switch message {
         case .pairingRequest(let request):
             let accepted = pairingManager.completePairing(
@@ -262,8 +278,17 @@ final class TransportManager {
                 statusBar.update(state: .awdl)
                 startSecureInputPolling()
                 logEvent("AWDL promoted after pairing")
+                onPairingCompleted?()
             }
             logEvent("Pairing \(accepted ? "accepted" : "rejected") for \(request.deviceID)")
+
+        case .sessionResume(let resume):
+            if pairingManager.isPaired {
+                logEvent("Session resumed for \(resume.deviceID)")
+            } else {
+                send(.pairingInvalidated)
+                logEvent("Rejected session resume from unpaired device")
+            }
 
         default:
             injectionRouter.route(message)
@@ -275,6 +300,15 @@ final class TransportManager {
         guard let frame = try? encoder.encode(message) else { return }
         guard let connection = activeConnection else { return }
         connection.send(content: frame, completion: .idempotent)
+    }
+
+    func invalidateRemotePairing() {
+        guard activeConnection != nil else {
+            logEvent("No active session to invalidate")
+            return
+        }
+        send(.pairingInvalidated)
+        logEvent("Sent pairing invalidation")
     }
 
     func resetActiveSession() {

@@ -105,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusBar: statusBar,
             pairingManager: pairingManager
         )
+        manager.onPairingCompleted = { [weak self] in
+            self?.closePairingWindow()
+        }
         self.transportManager = manager
         Task { @MainActor in
             await manager.start()
@@ -114,11 +117,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func resetPairing() {
+        transportManager?.invalidateRemotePairing()
         pairingManager.resetPairing()
-        transportManager?.resetActiveSession()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.transportManager?.resetActiveSession()
+        }
+        closePairingWindow()
+        print("[AppDelegate] Pairing reset")
+    }
+
+    @MainActor
+    private func closePairingWindow() {
         pairingWindow?.close()
         pairingWindow = nil
-        print("[AppDelegate] Pairing reset")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
