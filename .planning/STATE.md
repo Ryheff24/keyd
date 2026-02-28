@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-02-28T20:07:13Z"
+last_updated: "2026-02-28T20:32:42Z"
 progress:
   total_phases: 1
   completed_phases: 0
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 Phase: 1 of 3 (Transport and Core Keyboard)
 Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-02-28 - Completed quick task 2: Cmd-Shift-4 should crosshair, but it’s doing full-screen screenshots
+Last activity: 2026-02-28 - Completed quick task 3: Hold Backspace for 0.5s -> entire word deleted in TextEdit (word-delete) doesnt work
 
 Progress: [████████░░] 80% (4 of 5 phase plans with SUMMARY)
 
@@ -88,6 +88,7 @@ None.
 |---|-------------|------|--------|-----------|
 | 1 | swap the "select all" and "tab" shortcut positions | 2026-02-28 | c1b35cb | [1-swap-the-select-all-and-tab-shortcut-pos](./quick/1-swap-the-select-all-and-tab-shortcut-pos/) |
 | 2 | Cmd-Shift-4 should crosshair, but it’s doing full-screen screenshots | 2026-02-28 | 22c3978 | [2-cmd-shift-4-should-crosshair-but-it-s-do](./quick/2-cmd-shift-4-should-crosshair-but-it-s-do/) |
+| 3 | Hold Backspace for 0.5s -> entire word deleted in TextEdit (word-delete) doesnt work | 2026-02-28 | 261eebf | [3-hold-backspace-for-0-5s-entire-word-dele](./quick/3-hold-backspace-for-0-5s-entire-word-dele/) |
 
 ## Session Continuity
 
