@@ -1,40 +1,381 @@
-import Network
+import Darwin
 import Foundation
 
-/// Listens on localhost:12345 for iOS connections forwarded through usbmuxd.
-/// When the iOS device is connected via USB, usbmuxd forwards the device's TCP
-/// connection to this local port transparently. No usbmuxd protocol parsing needed —
-/// the forwarding is transparent at the TCP level.
+/// Opens a host-side usbmux tunnel to the iPhone app's listening TCP port.
+/// Unlike the original implementation, the Mac initiates the USB tunnel and
+/// keeps reconnecting while the device is attached.
 actor USBListener {
     static let port: UInt16 = 12345
-    private var listener: NWListener?
-    var onConnection: (@Sendable (NWConnection) -> Void)?
 
-    func start() throws {
-        let params = NWParameters.tcp
+    private static let socketPath = "/var/run/usbmuxd"
+    private static let headerLength = 16
+    private static let protocolVersion: UInt32 = 1
+    private static let plistMessageType: UInt32 = 8
 
-        let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!)
-        l.newConnectionHandler = { [weak self] connection in
-            Task {
-                await self?.onConnection?(connection)
-            }
+    private var socketFD: Int32 = -1
+    private var connectTask: Task<Void, Never>?
+    private var stopRequested = false
+    private var nextTag: UInt32 = 1
+
+    var onConnectionReady: (@Sendable () -> Void)?
+    var onData: (@Sendable (Data) -> Void)?
+    var onDisconnect: (@Sendable () -> Void)?
+
+    func start() {
+        guard connectTask == nil else { return }
+
+        stopRequested = false
+        connectTask = Task { [weak self] in
+            await self?.runConnectLoop()
         }
-        l.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                print("[USBListener] Listening on port \(Self.port)")
-            case .failed(let error):
-                print("[USBListener] Failed: \(error)")
-            default:
-                break
-            }
-        }
-        l.start(queue: .global(qos: .userInteractive))
-        self.listener = l
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
+        stopRequested = true
+        connectTask?.cancel()
+        connectTask = nil
+        shutdownCurrentSocket()
+    }
+
+    func disconnectCurrentConnection() {
+        shutdownCurrentSocket()
+    }
+
+    func send(_ data: Data) throws {
+        guard socketFD >= 0 else {
+            throw USBMuxError.notConnected
+        }
+
+        try Self.writeAll(fd: socketFD, data: data)
+    }
+
+    func hasConnection() -> Bool {
+        socketFD >= 0
+    }
+
+    private func runConnectLoop() async {
+        while !Task.isCancelled && !stopRequested {
+            do {
+                let tag = nextRequestTag()
+                let fd = try await Task.detached(priority: .userInitiated) {
+                    try Self.openTunnel(on: Self.port, tag: tag)
+                }.value
+
+                guard !Task.isCancelled && !stopRequested else {
+                    Self.closeSocket(fd)
+                    break
+                }
+
+                socketFD = fd
+                print("[USBListener] Connected to iPhone over usbmuxd on port \(Self.port)")
+                onConnectionReady?()
+
+                do {
+                    while !Task.isCancelled && !stopRequested {
+                        let chunk = try await Task.detached(priority: .userInitiated) {
+                            try Self.readChunk(fd: fd)
+                        }.value
+                        onData?(chunk)
+                    }
+                } catch {
+                    if !Task.isCancelled && !stopRequested {
+                        print("[USBListener] USB tunnel closed: \(error)")
+                    }
+                }
+
+                finishSocket(fd, notifyIfCurrent: true)
+            } catch is CancellationError {
+                break
+            } catch {
+                if !Task.isCancelled && !stopRequested {
+                    print("[USBListener] USB unavailable: \(error)")
+                }
+            }
+
+            if Task.isCancelled || stopRequested {
+                break
+            }
+
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+
+        connectTask = nil
+    }
+
+    private func nextRequestTag() -> UInt32 {
+        defer { nextTag &+= 1 }
+        return nextTag
+    }
+
+    private func shutdownCurrentSocket() {
+        guard socketFD >= 0 else { return }
+
+        let fd = socketFD
+        socketFD = -1
+        _ = Darwin.shutdown(fd, SHUT_RDWR)
+    }
+
+    private func finishSocket(_ fd: Int32, notifyIfCurrent: Bool) {
+        let shouldNotify = notifyIfCurrent && socketFD == fd
+        if socketFD == fd {
+            socketFD = -1
+        }
+        Self.closeSocket(fd)
+        if shouldNotify {
+            onDisconnect?()
+        }
+    }
+
+    private static func openTunnel(on port: UInt16, tag: UInt32) throws -> Int32 {
+        let deviceID = try firstAttachedDeviceID(tag: tag)
+        let fd = try connectToUSBMuxSocket()
+
+        do {
+            try sendPlist(
+                [
+                    "BundleID": "com.keyd.agent",
+                    "ClientVersionString": "keyd-1.0",
+                    "DeviceID": deviceID,
+                    "MessageType": "Connect",
+                    "PortNumber": Int(port.bigEndian),
+                    "ProgName": "KeydAgent",
+                    "kLibUSBMuxVersion": 3
+                ],
+                tag: tag &+ 1,
+                to: fd
+            )
+
+            let response = try readPlist(from: fd)
+            let resultNumber = (response["Number"] as? NSNumber)?.intValue ?? -1
+            guard resultNumber == 0 else {
+                throw USBMuxError.connectRejected(resultNumber)
+            }
+
+            return fd
+        } catch {
+            closeSocket(fd)
+            throw error
+        }
+    }
+
+    private static func firstAttachedDeviceID(tag: UInt32) throws -> Int {
+        let fd = try connectToUSBMuxSocket()
+
+        defer { closeSocket(fd) }
+
+        try sendPlist(
+            [
+                "BundleID": "com.keyd.agent",
+                "ClientVersionString": "keyd-1.0",
+                "MessageType": "ListDevices",
+                "ProgName": "KeydAgent",
+                "kLibUSBMuxVersion": 3
+            ],
+            tag: tag,
+            to: fd
+        )
+
+        let response = try readPlist(from: fd)
+        guard let devices = response["DeviceList"] as? [[String: Any]] else {
+            throw USBMuxError.invalidResponse
+        }
+
+        for device in devices {
+            let properties = device["Properties"] as? [String: Any]
+            let connectionType = (properties?["ConnectionType"] as? String)
+                ?? (device["ConnectionType"] as? String)
+
+            if let connectionType, connectionType != "USB" {
+                continue
+            }
+
+            if let id = (device["DeviceID"] as? NSNumber)?.intValue {
+                return id
+            }
+            if let id = (properties?["DeviceID"] as? NSNumber)?.intValue {
+                return id
+            }
+        }
+
+        throw USBMuxError.noDevice
+    }
+
+    private static func connectToUSBMuxSocket() throws -> Int32 {
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+
+        let pathBytes = Array(socketPath.utf8)
+        let maxPathLength = MemoryLayout.size(ofValue: address.sun_path)
+        guard pathBytes.count + 1 <= maxPathLength else {
+            closeSocket(fd)
+            throw USBMuxError.invalidSocketPath
+        }
+
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            buffer.initializeMemory(as: UInt8.self, repeating: 0)
+            buffer.copyBytes(from: pathBytes)
+        }
+
+        let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count + 1)
+        let connectResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+                Darwin.connect(fd, rebound, addressLength)
+            }
+        }
+
+        guard connectResult == 0 else {
+            let connectError = POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED)
+            closeSocket(fd)
+            throw connectError
+        }
+
+        return fd
+    }
+
+    private static func sendPlist(_ plist: [String: Any], tag: UInt32, to fd: Int32) throws {
+        let payload = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+
+        var frame = Data()
+        append(UInt32(payload.count + headerLength), to: &frame)
+        append(protocolVersion, to: &frame)
+        append(plistMessageType, to: &frame)
+        append(tag, to: &frame)
+        frame.append(payload)
+
+        try writeAll(fd: fd, data: frame)
+    }
+
+    private static func readPlist(from fd: Int32) throws -> [String: Any] {
+        let header = try readExact(fd: fd, count: headerLength)
+        let length = readUInt32(from: header, offset: 0)
+        let messageType = readUInt32(from: header, offset: 8)
+
+        guard length >= UInt32(headerLength), messageType == plistMessageType else {
+            throw USBMuxError.invalidResponse
+        }
+
+        let payload = try readExact(fd: fd, count: Int(length) - headerLength)
+        let plist = try PropertyListSerialization.propertyList(from: payload, options: [], format: nil)
+
+        guard let dictionary = plist as? [String: Any] else {
+            throw USBMuxError.invalidResponse
+        }
+
+        return dictionary
+    }
+
+    private static func readChunk(fd: Int32) throws -> Data {
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        let count = buffer.withUnsafeMutableBytes { rawBuffer in
+            Darwin.read(fd, rawBuffer.baseAddress, rawBuffer.count)
+        }
+
+        if count > 0 {
+            return Data(buffer.prefix(count))
+        }
+
+        if count == 0 {
+            throw USBMuxError.connectionClosed
+        }
+
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+
+    private static func readExact(fd: Int32, count: Int) throws -> Data {
+        var data = Data()
+        data.reserveCapacity(count)
+
+        while data.count < count {
+            let remaining = count - data.count
+            var buffer = [UInt8](repeating: 0, count: min(remaining, 4096))
+            let bytesRead = buffer.withUnsafeMutableBytes { rawBuffer in
+                Darwin.read(fd, rawBuffer.baseAddress, rawBuffer.count)
+            }
+
+            if bytesRead > 0 {
+                data.append(contentsOf: buffer.prefix(bytesRead))
+                continue
+            }
+
+            if bytesRead == 0 {
+                throw USBMuxError.connectionClosed
+            }
+
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        return data
+    }
+
+    private static func writeAll(fd: Int32, data: Data) throws {
+        var offset = 0
+        while offset < data.count {
+            let bytesWritten = try data.withUnsafeBytes { rawBuffer -> Int in
+                let base = rawBuffer.baseAddress?.advanced(by: offset)
+                let written = Darwin.write(fd, base, rawBuffer.count - offset)
+                if written < 0 {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                return written
+            }
+
+            offset += bytesWritten
+        }
+    }
+
+    private static func append(_ value: UInt32, to data: inout Data) {
+        var littleEndianValue = value.littleEndian
+        withUnsafeBytes(of: &littleEndianValue) { bytes in
+            data.append(contentsOf: bytes)
+        }
+    }
+
+    private static func readUInt32(from data: Data, offset: Int) -> UInt32 {
+        let b0 = UInt32(data[offset])
+        let b1 = UInt32(data[offset + 1]) << 8
+        let b2 = UInt32(data[offset + 2]) << 16
+        let b3 = UInt32(data[offset + 3]) << 24
+        return b0 | b1 | b2 | b3
+    }
+
+    private static func closeSocket(_ fd: Int32) {
+        if fd >= 0 {
+            _ = Darwin.close(fd)
+        }
+    }
+}
+
+private enum USBMuxError: LocalizedError {
+    case notConnected
+    case noDevice
+    case invalidResponse
+    case invalidSocketPath
+    case connectRejected(Int)
+    case connectionClosed
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected:
+            return "USB tunnel is not connected."
+        case .noDevice:
+            return "No USB-connected iPhone was found."
+        case .invalidResponse:
+            return "usbmuxd returned an unexpected response."
+        case .invalidSocketPath:
+            return "The usbmuxd socket path is invalid."
+        case .connectRejected(let code):
+            return "usbmuxd rejected the connection request (\(code))."
+        case .connectionClosed:
+            return "The USB tunnel closed."
+        }
     }
 }

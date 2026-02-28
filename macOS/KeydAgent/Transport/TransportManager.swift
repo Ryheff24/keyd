@@ -9,7 +9,7 @@ import Carbon.HIToolbox
 /// Connection state for the macOS agent.
 enum AgentConnectionState {
     case disconnected
-    case usbConnected(NWConnection)
+    case usbConnected
     case pairingAWDL(NWConnection)
     case awdlConnected(NWConnection)
 }
@@ -51,10 +51,21 @@ final class TransportManager {
 
     func start() async {
         do {
-            // Start both listeners concurrently — AWDL pre-warmed per TRANS-04
-            await usbListener.setOnConnection { [weak self] conn in
+            // Start both transports concurrently — AWDL stays pre-warmed and USB now
+            // reconnects through a host-initiated usbmux tunnel.
+            await usbListener.setOnConnectionReady { [weak self] in
                 Task { @MainActor in
-                    await self?.handleNewConnection(conn, transport: .usb)
+                    self?.handleUSBConnectionReady()
+                }
+            }
+            await usbListener.setOnData { [weak self] data in
+                Task { @MainActor in
+                    self?.handleUSBData(data)
+                }
+            }
+            await usbListener.setOnDisconnect { [weak self] in
+                Task { @MainActor in
+                    self?.handleUSBDisconnect()
                 }
             }
             await awdlListener.setOnConnection { [weak self] conn in
@@ -62,9 +73,9 @@ final class TransportManager {
                     await self?.handleNewConnection(conn, transport: .awdl)
                 }
             }
-            try await usbListener.start()
+            await usbListener.start()
             try await awdlListener.start()
-            logEvent("Both listeners started (USB port \(USBListener.port), AWDL _keyd._tcp)")
+            logEvent("USB connector and AWDL listener started (USB port \(USBListener.port), AWDL _keyd._tcp)")
         } catch {
             logEvent("Failed to start listeners: \(error)")
         }
@@ -94,15 +105,10 @@ final class TransportManager {
     private func activateConnection(_ connection: NWConnection, transport: ConnectionKind) async {
         logEvent("\(transport) connection ready")
         switch (connectionState, transport) {
-        case (.awdlConnected(let old), .usb), (.pairingAWDL(let old), .usb):
-            // USB connects while AWDL was active — promote USB (re-plug case)
-            old.cancel()
-            connectionState = .usbConnected(connection)
-            statusBar.update(state: .usb)
-            logEvent("USB promoted over AWDL (re-plug)")
-        case (.disconnected, .usb):
-            connectionState = .usbConnected(connection)
-            statusBar.update(state: .usb)
+        case (_, .usb):
+            logEvent("Ignoring unexpected USB NWConnection callback")
+            connection.cancel()
+            return
         case (.awdlConnected(let old), .awdl):
             old.cancel()
             connectionState = .awdlConnected(connection)
@@ -126,10 +132,6 @@ final class TransportManager {
             // The TransportManager will promote AWDL on USB disconnect (handleDisconnect)
             logEvent("AWDL pre-warmed while USB active (standby)")
             startAWDLStandby(connection)
-            return
-        case (.usbConnected, .usb):
-            logEvent("Ignoring duplicate \(transport) connection")
-            connection.cancel()
             return
         }
 
@@ -158,20 +160,91 @@ final class TransportManager {
         startSecureInputPolling()
     }
 
+    private func handleUSBConnectionReady() {
+        switch connectionState {
+        case .usbConnected:
+            logEvent("Ignoring duplicate USB connection")
+            return
+        case .awdlConnected(let old), .pairingAWDL(let old):
+            old.cancel()
+            connectionState = .usbConnected
+            statusBar.update(state: .usb)
+            logEvent("USB promoted over AWDL (re-plug)")
+        case .disconnected:
+            connectionState = .usbConnected
+            statusBar.update(state: .usb)
+            logEvent("USB connected")
+        }
+
+        let decoder = MessageDecoder()
+        let encoder = MessageEncoder()
+        activeDecoder = decoder
+        activeEncoder = encoder
+
+        decoder.onMessage = { [weak self] message in
+            Task { @MainActor in
+                self?.handleIncomingMessage(message)
+            }
+        }
+        decoder.onError = { error in
+            print("[TransportManager] Decode error: \(error)")
+        }
+
+        startSecureInputPolling()
+    }
+
+    private func handleUSBData(_ data: Data) {
+        guard case .usbConnected = connectionState else { return }
+        activeDecoder?.receive(data)
+    }
+
     // Pre-warmed AWDL connection kept ready as standby
     private var standbyAWDLConnection: NWConnection?
+    private var standbyAWDLDecoder: MessageDecoder?
 
     private func startAWDLStandby(_ connection: NWConnection) {
-        standbyAWDLConnection = connection
-        // Start receiving but don't make it active yet
+        if let existing = standbyAWDLConnection, existing !== connection {
+            existing.cancel()
+        }
+
         let decoder = MessageDecoder()
-        decoder.onMessage = { _ in }  // Discard while on standby
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] data, _, isComplete, error in
+        decoder.onMessage = { _ in }  // Drain standby traffic without surfacing it.
+        decoder.onError = { error in
+            print("[TransportManager] Standby AWDL decode error: \(error)")
+        }
+
+        standbyAWDLConnection = connection
+        standbyAWDLDecoder = decoder
+        startStandbyReceiveLoop(on: connection, decoder: decoder)
+    }
+
+    private func startStandbyReceiveLoop(on connection: NWConnection, decoder: MessageDecoder) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            if let data = data, !data.isEmpty {
+                decoder.receive(data)
+            }
             if isComplete || error != nil {
                 Task { @MainActor in
-                    self?.standbyAWDLConnection = nil
+                    self?.handleStandbyAWDLDisconnect(connection)
                 }
+                return
             }
+            Task { @MainActor [weak self] in
+                self?.startStandbyReceiveLoop(on: connection, decoder: decoder)
+            }
+        }
+    }
+
+    private func handleStandbyAWDLDisconnect(_ connection: NWConnection) {
+        if standbyAWDLConnection === connection {
+            standbyAWDLConnection = nil
+            standbyAWDLDecoder = nil
+            logEvent("AWDL standby dropped")
+            return
+        }
+
+        if case .awdlConnected(let current) = connectionState, current === connection {
+            handleDisconnect(connection: connection, transport: .awdl)
         }
     }
 
@@ -207,31 +280,6 @@ final class TransportManager {
         injectionRouter.releaseModifiers()
 
         switch (connectionState, transport) {
-        case (.usbConnected, .usb):
-            // Check if AWDL standby is available for fallback
-            if let awdlConn = standbyAWDLConnection {
-                logEvent("USB dropped — promoting pre-warmed AWDL connection (TRANS-03)")
-                standbyAWDLConnection = nil
-                connectionState = .awdlConnected(awdlConn)
-                statusBar.update(state: .awdl)
-                // Set up decoder for AWDL connection
-                let decoder = MessageDecoder()
-                let encoder = MessageEncoder()
-                self.activeDecoder = decoder
-                self.activeEncoder = encoder
-                decoder.onMessage = { [weak self] message in
-                    Task { @MainActor in
-                        self?.handleIncomingMessage(message)
-                    }
-                }
-                startReceiveLoop(on: awdlConn, decoder: decoder, transport: .awdl)
-                startSecureInputPolling()
-            } else {
-                logEvent("USB dropped — no AWDL standby available; disconnected")
-                connectionState = .disconnected
-                statusBar.update(state: .disconnected)
-            }
-
         case (.awdlConnected, .awdl):
             connectionState = .disconnected
             statusBar.update(state: .disconnected)
@@ -243,6 +291,60 @@ final class TransportManager {
 
         default:
             break
+        }
+    }
+
+    private func handleUSBDisconnect() {
+        guard case .usbConnected = connectionState else { return }
+
+        logEvent("usb disconnected")
+        stopSecureInputPolling()
+        injectionRouter.releaseModifiers()
+        promoteStandbyAWDLOrDisconnect()
+    }
+
+    private func promoteStandbyAWDLOrDisconnect() {
+        if let awdlConn = standbyAWDLConnection {
+            logEvent("USB dropped — promoting pre-warmed AWDL connection (TRANS-03)")
+            let decoder = standbyAWDLDecoder
+            standbyAWDLConnection = nil
+            standbyAWDLDecoder = nil
+            connectionState = .awdlConnected(awdlConn)
+            statusBar.update(state: .awdl)
+
+            let encoder = MessageEncoder()
+            activeDecoder = decoder
+            activeEncoder = encoder
+
+            decoder?.onMessage = { [weak self] message in
+                Task { @MainActor in
+                    self?.handleIncomingMessage(message)
+                }
+            }
+            decoder?.onError = { error in
+                print("[TransportManager] Decode error: \(error)")
+            }
+
+            if activeDecoder == nil {
+                let freshDecoder = MessageDecoder()
+                freshDecoder.onMessage = { [weak self] message in
+                    Task { @MainActor in
+                        self?.handleIncomingMessage(message)
+                    }
+                }
+                freshDecoder.onError = { error in
+                    print("[TransportManager] Decode error: \(error)")
+                }
+                activeDecoder = freshDecoder
+                startReceiveLoop(on: awdlConn, decoder: freshDecoder, transport: .awdl)
+            }
+            startSecureInputPolling()
+        } else {
+            logEvent("USB dropped — no AWDL standby available; disconnected")
+            connectionState = .disconnected
+            statusBar.update(state: .disconnected)
+            activeDecoder = nil
+            activeEncoder = nil
         }
     }
 
@@ -309,8 +411,24 @@ final class TransportManager {
     func send(_ message: KeydMessage) {
         guard let encoder = activeEncoder else { return }
         guard let frame = try? encoder.encode(message) else { return }
-        guard let connection = activeConnection else { return }
-        connection.send(content: frame, completion: .idempotent)
+
+        switch connectionState {
+        case .usbConnected:
+            Task { [weak self, frame] in
+                guard let self else { return }
+                do {
+                    try await self.usbListener.send(frame)
+                } catch {
+                    await MainActor.run {
+                        self.logEvent("USB send failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        case .pairingAWDL(let connection), .awdlConnected(let connection):
+            connection.send(content: frame, completion: .idempotent)
+        case .disconnected:
+            break
+        }
     }
 
     func invalidateRemotePairing() {
@@ -324,8 +442,12 @@ final class TransportManager {
 
     func resetActiveSession() {
         activeConnection?.cancel()
+        Task { [usbListener] in
+            await usbListener.disconnectCurrentConnection()
+        }
         standbyAWDLConnection?.cancel()
         standbyAWDLConnection = nil
+        standbyAWDLDecoder = nil
         activeDecoder = nil
         activeEncoder = nil
         connectionState = .disconnected
@@ -337,17 +459,15 @@ final class TransportManager {
 
     private var activeConnection: NWConnection? {
         switch connectionState {
-        case .usbConnected(let c): return c
         case .pairingAWDL(let c): return c
         case .awdlConnected(let c): return c
+        case .usbConnected: return nil
         case .disconnected: return nil
         }
     }
 
     private func isCurrentConnection(_ connection: NWConnection, for transport: ConnectionKind) -> Bool {
         switch (connectionState, transport) {
-        case (.usbConnected(let current), .usb):
-            return current === connection
         case (.pairingAWDL(let current), .awdl):
             return current === connection
         case (.awdlConnected(let current), .awdl):
@@ -398,9 +518,9 @@ final class TransportManager {
 
 // MARK: - Actor callback setters
 extension USBListener {
-    func setOnConnection(_ handler: @escaping @Sendable (NWConnection) -> Void) async {
-        onConnection = handler
-    }
+    func setOnConnectionReady(_ handler: @escaping @Sendable () -> Void) async { onConnectionReady = handler }
+    func setOnData(_ handler: @escaping @Sendable (Data) -> Void) async { onData = handler }
+    func setOnDisconnect(_ handler: @escaping @Sendable () -> Void) async { onDisconnect = handler }
 }
 extension AWDLListener {
     func setOnConnection(_ handler: @escaping @Sendable (NWConnection) -> Void) async {

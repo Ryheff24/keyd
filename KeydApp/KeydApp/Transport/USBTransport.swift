@@ -1,165 +1,210 @@
-import Network
 import Foundation
+import Network
 import SharedProtocol
 
-/// Connects to the macOS agent via USB using usbmuxd TCP tunnel.
-/// usbmuxd on macOS forwards this iOS device's connections to localhost:12345.
+/// Accepts a Mac-side usbmux tunnel on a fixed TCP port exposed by the iPhone app.
+/// The host initiates the usbmux connection; iOS listens and promotes USB when the
+/// inbound tunnel becomes ready.
 actor USBTransport {
     static let port: UInt16 = 12345
+
+    private var listener: NWListener?
     private var connection: NWConnection?
     private var isReady = false
+    private var waitContinuation: CheckedContinuation<Bool, Never>?
+    private var waitTimeoutTask: Task<Void, Never>?
+
     var onMessage: ((KeydMessage) -> Void)?
     var onDisconnect: (() -> Void)?
+    var onConnectionReady: (() -> Void)?
 
     private let decoder = MessageDecoder()
     private let encoder = MessageEncoder()
 
-    /// Connect with exponential backoff retry.
-    /// - Returns: `true` when a TCP connection is ready, `false` if all retries fail.
-    func connect() async -> Bool {
+    /// Ensure the listener is running, then wait briefly for an inbound usbmux tunnel.
+    /// If the initial wait times out, the listener remains active and a later tunnel
+    /// will still trigger `onConnectionReady`.
+    func connect(timeoutNanoseconds: UInt64 = 8_000_000_000) async -> Bool {
         if isReady {
             return true
         }
 
-        decoder.onMessage = { [weak self] msg in
-            Task { await self?.onMessage?(msg) }
+        do {
+            try startListenerIfNeeded()
+        } catch {
+            print("[USBTransport] Failed to start USB listener: \(error)")
+            return false
         }
 
-        var delay: TimeInterval = 0.5
-        let maxDelay: TimeInterval = 5.0
-        var attempts = 0
-        let maxAttempts = 10
+        if isReady {
+            return true
+        }
 
-        while attempts < maxAttempts {
-            do {
-                try await attemptConnect()
-                print("[USBTransport] Connected on attempt \(attempts + 1)")
-                return true
-            } catch is CancellationError {
-                connection = nil
-                return false
-            } catch {
-                attempts += 1
-                print("[USBTransport] Connect attempt \(attempts) failed: \(error). Retrying in \(delay)s...")
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                if Task.isCancelled {
-                    connection = nil
-                    return false
-                }
-                delay = min(delay * 2, maxDelay)
+        resolvePendingWait(with: false)
+
+        return await withCheckedContinuation { continuation in
+            waitContinuation = continuation
+            waitTimeoutTask?.cancel()
+            waitTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                await self?.resolvePendingWait(with: false)
             }
         }
-
-        connection = nil
-        print("[USBTransport] Max retries reached. Connection failed.")
-        return false
     }
 
-    private func attemptConnect() async throws {
+    private func startListenerIfNeeded() throws {
+        guard listener == nil else { return }
+
+        decoder.onMessage = { [weak self] message in
+            Task { await self?.onMessage?(message) }
+        }
+
         let params = NWParameters.tcp
-        let tcpOptions = NWProtocolTCP.Options()
-        tcpOptions.enableKeepalive = true
-        tcpOptions.keepaliveIdle = 10
-        params.defaultProtocolStack.transportProtocol = tcpOptions
+        let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!)
 
-        let endpoint = NWEndpoint.hostPort(
-            host: "127.0.0.1",
-            port: NWEndpoint.Port(rawValue: Self.port)!
-        )
-        let conn = NWConnection(to: endpoint, using: params)
-        self.connection = conn
-        self.isReady = false
-
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            conn.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
-                    Task { await self?.markReady(conn) }
-                    cont.resume()
-                    Task { await self?.startReceiving(conn) }
-                case .failed(let error):
-                    Task { await self?.clearConnection() }
-                    cont.resume(throwing: error)
-                case .cancelled:
-                    Task { await self?.clearConnection() }
-                    cont.resume(throwing: CancellationError())
-                default:
-                    break
-                }
-            }
-            conn.start(queue: .global(qos: .userInteractive))
+        listener.newConnectionHandler = { [weak self] newConnection in
+            Task { await self?.acceptConnection(newConnection) }
         }
+        listener.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                print("[USBTransport] Listening for USB tunnel on port \(Self.port)")
+            case .failed(let error):
+                print("[USBTransport] Listener failed: \(error)")
+                Task { await self?.handleListenerStopped() }
+            case .cancelled:
+                Task { await self?.handleListenerStopped() }
+            default:
+                break
+            }
+        }
+
+        listener.start(queue: .global(qos: .userInteractive))
+        self.listener = listener
     }
 
-    private func setConnection(_ connection: NWConnection?) {
-        self.connection = connection
+    private func acceptConnection(_ newConnection: NWConnection) async {
+        if let existing = connection, existing !== newConnection {
+            connection = nil
+            isReady = false
+            existing.cancel()
+        }
+
+        connection = newConnection
+        isReady = false
+
+        newConnection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                Task { await self?.handleConnectionReady(newConnection) }
+            case .failed(let error):
+                print("[USBTransport] USB tunnel failed: \(error)")
+                Task { await self?.handleConnectionClosed(newConnection) }
+            case .cancelled:
+                Task { await self?.handleConnectionClosed(newConnection) }
+            default:
+                break
+            }
+        }
+
+        newConnection.start(queue: .global(qos: .userInteractive))
     }
 
-    private func markReady(_ connection: NWConnection) {
-        self.connection = connection
-        self.isReady = true
+    private func handleConnectionReady(_ readyConnection: NWConnection) async {
+        guard connection === readyConnection else { return }
+
+        isReady = true
+        print("[USBTransport] USB tunnel ready")
+        resolvePendingWait(with: true)
+        onConnectionReady?()
+        await startReceiving(on: readyConnection)
     }
 
-    private func clearConnection() {
+    private func handleConnectionClosed(_ closedConnection: NWConnection) async {
+        guard connection === closedConnection else { return }
+
         connection = nil
         isReady = false
+        onDisconnect?()
     }
 
-    private func startReceiving(_ connection: NWConnection) async {
+    private func handleListenerStopped() {
+        listener = nil
+        connection = nil
+        isReady = false
+        resolvePendingWait(with: false)
+    }
+
+    private func resolvePendingWait(with result: Bool) {
+        waitTimeoutTask?.cancel()
+        waitTimeoutTask = nil
+        waitContinuation?.resume(returning: result)
+        waitContinuation = nil
+    }
+
+    private func startReceiving(on connection: NWConnection) async {
         while true {
             do {
                 let data = try await receiveOnce(on: connection)
                 decoder.receive(data)
             } catch {
                 print("[USBTransport] Receive error: \(error)")
-                clearConnection()
-                onDisconnect?()
+                await handleConnectionClosed(connection)
                 return
             }
         }
     }
 
     private func receiveOnce(on connection: NWConnection) async throws -> Data {
-        try await withCheckedThrowingContinuation { cont in
+        try await withCheckedThrowingContinuation { continuation in
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
                 if let error = error {
-                    cont.resume(throwing: error)
+                    continuation.resume(throwing: error)
                 } else if isComplete {
-                    cont.resume(throwing: URLError(.networkConnectionLost))
+                    continuation.resume(throwing: URLError(.networkConnectionLost))
                 } else if let data = data {
-                    cont.resume(returning: data)
+                    continuation.resume(returning: data)
                 }
             }
         }
     }
 
     func send(_ message: KeydMessage) async throws {
-        guard let conn = connection else {
+        guard let connection else {
             throw URLError(.notConnectedToInternet)
         }
+
         let frame = try encoder.encode(message)
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            conn.send(content: frame, completion: .contentProcessed { error in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: frame, completion: .contentProcessed { error in
                 if let error = error {
-                    cont.resume(throwing: error)
+                    continuation.resume(throwing: error)
                 } else {
-                    cont.resume()
+                    continuation.resume()
                 }
             })
         }
     }
 
     func sendBestEffort(_ message: KeydMessage) throws {
-        guard let conn = connection else {
+        guard let connection else {
             throw URLError(.notConnectedToInternet)
         }
+
         let frame = try encoder.encode(message)
-        conn.send(content: frame, completion: .idempotent)
+        connection.send(content: frame, completion: .idempotent)
     }
 
     func disconnect() {
-        connection?.cancel()
-        clearConnection()
+        resolvePendingWait(with: false)
+
+        let activeConnection = connection
+        connection = nil
+        isReady = false
+        activeConnection?.cancel()
+
+        listener?.cancel()
+        listener = nil
     }
 
     var isConnected: Bool { connection != nil }

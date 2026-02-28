@@ -216,6 +216,21 @@ final class TransportManager: ObservableObject {
                 }
             }
         }
+        await usbTransport.setOnConnectionReady { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+
+                if case .awdlConnected = self.connectionState {
+                    self.logConnectionEvent("USB reconnected; AWDL demoted to pre-warm")
+                }
+
+                if self.connectionState != .usbConnected {
+                    self.connectionState = .usbConnected
+                    self.setIdleTimerState(true)
+                    self.logConnectionEvent("USB connected")
+                }
+            }
+        }
         await usbTransport.setOnMessage { [weak self] message in
             Task { @MainActor in
                 self?.handleIncomingMessage(message)
@@ -235,14 +250,6 @@ final class TransportManager: ObservableObject {
             }
             return
         }
-
-        // Promote USB; log if AWDL was previously active (USB re-plug case)
-        if case .awdlConnected = connectionState {
-            logConnectionEvent("USB reconnected; AWDL demoted to pre-warm")
-        }
-        connectionState = .usbConnected
-        setIdleTimerState(true)
-        logConnectionEvent("USB connected")
     }
 
     // MARK: - Send
@@ -472,5 +479,6 @@ extension AWDLTransport {
 }
 extension USBTransport {
     func setOnDisconnect(_ handler: @escaping () -> Void) async { onDisconnect = handler }
+    func setOnConnectionReady(_ handler: @escaping () -> Void) async { onConnectionReady = handler }
     func setOnMessage(_ handler: @escaping (KeydMessage) -> Void) async { onMessage = handler }
 }
