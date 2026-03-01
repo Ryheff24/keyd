@@ -105,11 +105,6 @@ private struct SystemKeyboardHost: UIViewRepresentable {
             return false
         }
 
-        @available(iOS 18.4, *)
-        func textField(_ textField: UITextField, insertInputSuggestion inputSuggestion: UIInputSuggestion) {
-            // Phase 1 keeps direct key forwarding only; drop keyboard suggestions for now.
-            (textField as? InterceptingTextField)?.restoreBackingText()
-        }
     }
 }
 
@@ -127,9 +122,9 @@ private final class KeyboardInputContainer: UIView {
         textField.backgroundColor = .clear
         textField.textColor = .clear
         textField.tintColor = .clear
-        textField.autocorrectionType = .no
+        textField.autocorrectionType = .default
         textField.autocapitalizationType = .none
-        textField.spellCheckingType = .no
+        textField.spellCheckingType = .default
         textField.smartQuotesType = .no
         textField.smartDashesType = .no
         textField.smartInsertDeleteType = .no
@@ -138,7 +133,7 @@ private final class KeyboardInputContainer: UIView {
         textField.returnKeyType = .default
         textField.enablesReturnKeyAutomatically = false
         if #available(iOS 17.0, *) {
-            textField.inlinePredictionType = .no
+            textField.inlinePredictionType = .default
         }
         textField.restoreBackingText()
 
@@ -170,6 +165,7 @@ private final class KeyboardInputContainer: UIView {
     func activateKeyboard() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.window != nil else { return }
+            UIApplication.shared.applicationSupportsShakeToEdit = false
             self.textField.restoreBackingText()
             self.textField.becomeFirstResponder()
         }
@@ -192,6 +188,7 @@ private final class InterceptingTextField: UITextField {
     private var releaseWorkItem: DispatchWorkItem?
 
     override var canBecomeFirstResponder: Bool { true }
+    override var undoManager: UndoManager? { nil }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
