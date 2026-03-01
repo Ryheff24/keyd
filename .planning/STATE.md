@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-01T00:13:02.972Z"
+last_updated: "2026-03-01T00:17:45Z"
 progress:
   total_phases: 1
   completed_phases: 0
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 Phase: 1 of 3 (Transport and Core Keyboard)
 Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-03-01 - Completed quick task 4: disable shake to undo typing.
+Last activity: 2026-03-01 - Completed quick task 5: disable predictive text when using slide to type
 
 Progress: [████████░░] 80% (4 of 5 phase plans with SUMMARY)
 
@@ -90,6 +90,7 @@ None.
 | 2 | Cmd-Shift-4 should crosshair, but it’s doing full-screen screenshots | 2026-02-28 | 22c3978 | [2-cmd-shift-4-should-crosshair-but-it-s-do](./quick/2-cmd-shift-4-should-crosshair-but-it-s-do/) |
 | 3 | Hold Backspace for 0.5s -> entire word deleted in TextEdit (word-delete) doesnt work | 2026-02-28 | 261eebf | [3-hold-backspace-for-0-5s-entire-word-dele](./quick/3-hold-backspace-for-0-5s-entire-word-dele/) |
 | 4 | disable shake to undo typing. | 2026-03-01 | 3492fd6 | [4-disable-shake-to-undo-typing](./quick/4-disable-shake-to-undo-typing/) |
+| 5 | disable predictive text when using slide to type | 2026-03-01 | de52b41 | [5-disable-predictive-text-when-using-slide](./quick/5-disable-predictive-text-when-using-slide/) |
 
 ## Session Continuity
 
