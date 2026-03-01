@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 01.1 (Connected Integration Test Suite)
-Plan: 3 of N in current phase (01.1-01, 01.1-02, 01.1-03 complete)
-Status: In progress
-Last activity: 2026-03-01 - Completed 01.1-03 iOS integration test layer
+Plan: 4 of 4 in current phase (01.1-01, 01.1-02, 01.1-03, 01.1-04 complete)
+Status: Phase 01.1 complete
+Last activity: 2026-03-01 - Completed 01.1-04 CLI entry point (make test-integration + deploy gate)
 
-Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [███░░░░░░░] plans 1-3 done
+Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [██████████] plans 1-4 done (COMPLETE)
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1
 | Phase 01-transport-and-core-keyboard P07 | 19 | 3 tasks | 14 files |
 | Phase 01.1 P02 | 9 | 3 tasks | 4 files |
 | Phase 01.1 P03 | 9 | 2 tasks | 10 files |
+| Phase 01.1 P04 | 2 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Recent decisions affecting current work:
 - [Phase 01.1]: NotificationCenter-based message observer in TransportManager+Testing.swift: hooks into handleIncomingMessage via notifyTestObservers() — zero production-path impact
 - [Phase 01.1]: IntegrationTestCase.swift NOT shared as source into XCTest target — types accessed via @testable import KeydApp to avoid duplicate symbol errors
 - [Phase 01.1]: SuiteCHarness separate from IntegrationHarness: IntegrationHarness imports XCTest (cannot be imported in main app); SuiteCHarness conforms to IntegrationHarnessProtocol without XCTest
+- [01.1-04]: test-integration mode uses $mac_binary --test-mode (not open -n $bundle) — open cannot pass CommandLine.arguments to the process
+- [01.1-04]: deploy: test-integration prerequisite blocks make deploy on integration test failure
 
 ### Pending Todos
 
@@ -117,8 +120,8 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-01T21:15:00Z
-Stopped at: Completed 01.1-03-PLAN.md (iOS integration test layer: KeydIntegrationTests XCTest target, IntegrationHarness, 6 XCTest methods, Suite C in TransportTestRunnerView; BUILD SUCCEEDED)
+Last session: 2026-03-01T21:19:00Z
+Stopped at: Completed 01.1-04-PLAN.md (CLI entry point: make test-integration + deploy gate; Phase 01.1 COMPLETE)
 
 ### What's already built (do not rebuild)
 - `SharedProtocol/` SPM package — Messages (with testReset/testResetAck + Equatable), MessageEncoder, MessageDecoder, TransportStateMachine (FSM) — builds + 76 tests pass (plans 01-01, 01-07, 01.1-01)
@@ -139,6 +142,8 @@ Stopped at: Completed 01.1-03-PLAN.md (iOS integration test layer: KeydIntegrati
 - `KeydApp/KeydApp/Debug/TransportManager+Testing.swift` — NotificationCenter observer hook, injectTestPairingToken (plan 01.1-03)
 - `KeydApp/KeydApp/Debug/TransportManagerRegistry.swift` — Singleton for test harness to locate TransportManager (plan 01.1-03)
 - Suite C: Connected section in TransportTestRunnerView with SuiteCHarness and IntegrationSuiteCRunner (plan 01.1-03)
+- `scripts/deploy-and-run.sh` test-integration mode: kill agent, build KeydIntegrationTests, start $mac_binary --test-mode, xcodebuild test, teardown (plan 01.1-04)
+- `Makefile` make test-integration target + deploy: test-integration prerequisite (plan 01.1-04)
 
 ### What's NOT done yet
 - Phase 2: Text sync and real-time cursor tracking
