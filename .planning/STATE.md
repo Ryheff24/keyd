@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T20:57:31.664Z"
+last_updated: "2026-03-01T21:15:13.465Z"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 01.1 (Connected Integration Test Suite)
-Plan: 2 of N in current phase (01.1-01, 01.1-02 complete)
+Plan: 3 of N in current phase (01.1-01, 01.1-02, 01.1-03 complete)
 Status: In progress
-Last activity: 2026-03-01 - Completed 01.1-02 Mac Agent --test-mode flag
+Last activity: 2026-03-01 - Completed 01.1-03 iOS integration test layer
 
-Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [██░░░░░░░░] plans 1-2 done
+Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [███░░░░░░░] plans 1-3 done
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1
 | Phase 01 P04 | 270 | 4 tasks | 14 files |
 | Phase 01-transport-and-core-keyboard P07 | 19 | 3 tasks | 14 files |
 | Phase 01.1 P02 | 9 | 3 tasks | 4 files |
+| Phase 01.1 P03 | 9 | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,10 @@ Recent decisions affecting current work:
 - [Phase 01.1-02]: TestMode? nil = production, non-nil = test: clean opt-in pattern, zero production overhead
 - [Phase 01.1-02]: testReset allowed through not-paired guard so harness can reset before pairing completes
 - [Phase 01.1-02]: Wire log format [TEST-MODE] [MSG|HB] {ts} SEND|RECV: {message} parseable by test harness stdout
+- [Phase 01.1]: TransportManagerRegistry singleton used (no AppDelegate exists — app uses @main struct KeydApp: App)
+- [Phase 01.1]: NotificationCenter-based message observer in TransportManager+Testing.swift: hooks into handleIncomingMessage via notifyTestObservers() — zero production-path impact
+- [Phase 01.1]: IntegrationTestCase.swift NOT shared as source into XCTest target — types accessed via @testable import KeydApp to avoid duplicate symbol errors
+- [Phase 01.1]: SuiteCHarness separate from IntegrationHarness: IntegrationHarness imports XCTest (cannot be imported in main app); SuiteCHarness conforms to IntegrationHarnessProtocol without XCTest
 
 ### Pending Todos
 
@@ -112,8 +117,8 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-01T20:56:17Z
-Stopped at: Completed 01.1-02-PLAN.md (Mac agent --test-mode flag: TestMode struct, in-memory pairing, 2s timeouts, stdout wire log, conn-N IDs, testReset handler; BUILD SUCCEEDED)
+Last session: 2026-03-01T21:15:00Z
+Stopped at: Completed 01.1-03-PLAN.md (iOS integration test layer: KeydIntegrationTests XCTest target, IntegrationHarness, 6 XCTest methods, Suite C in TransportTestRunnerView; BUILD SUCCEEDED)
 
 ### What's already built (do not rebuild)
 - `SharedProtocol/` SPM package — Messages (with testReset/testResetAck + Equatable), MessageEncoder, MessageDecoder, TransportStateMachine (FSM) — builds + 76 tests pass (plans 01-01, 01-07, 01.1-01)
@@ -129,6 +134,11 @@ Stopped at: Completed 01.1-02-PLAN.md (Mac agent --test-mode flag: TestMode stru
 - `SharedProtocol/Tests/SharedProtocolTests/` — 73-test FSM suite (S01-S24 scenarios, INV-001-016 invariants, stress tests, event log tests) (plan 01-07)
 - `KeydApp/KeydAppTests/` — 23-test iOS lifecycle XCTest suite (plan 01-07)
 - `KeydApp/KeydApp/Debug/TransportTestRunner*` — On-device test runner UI with JSON trace export (plan 01-07)
+- `KeydApp/KeydIntegrationTests/` — XCTest target: IntegrationHarness + PairingIntegrationTests + RegressionTests (6 test methods) (plan 01.1-03)
+- `KeydApp/KeydApp/Debug/IntegrationTestCase.swift` — Shared test case implementations + IntegrationHarnessProtocol (plan 01.1-03)
+- `KeydApp/KeydApp/Debug/TransportManager+Testing.swift` — NotificationCenter observer hook, injectTestPairingToken (plan 01.1-03)
+- `KeydApp/KeydApp/Debug/TransportManagerRegistry.swift` — Singleton for test harness to locate TransportManager (plan 01.1-03)
+- Suite C: Connected section in TransportTestRunnerView with SuiteCHarness and IntegrationSuiteCRunner (plan 01.1-03)
 
 ### What's NOT done yet
 - Phase 2: Text sync and real-time cursor tracking
