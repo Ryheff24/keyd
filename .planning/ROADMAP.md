@@ -68,6 +68,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Transport and Core Keyboard | 5/7 | In Progress (01-06 FSM formalization, 01-07 test suite) |  |
+| 1. Transport and Core Keyboard | 6/7 | In Progress|  |
 | 2. Bidirectional Text Sync and Advanced Editing | 0/TBD | Not started | - |
 | 3. App-Aware Hotkey Panel | 0/TBD | Not started | - |

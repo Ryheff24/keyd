@@ -8,7 +8,7 @@ progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 1 of 3 (Transport and Core Keyboard)
-Plan: 5 of 6 in current phase
-Status: In progress
-Last activity: 2026-03-01 - Approved 01-05 device validation checkpoint
+Plan: 6 of 6 in current phase
+Status: Phase complete
+Last activity: 2026-03-01 - Completed 01-06 FSM formalization
 
-Progress: [████████░░] 83% (5 of 6 phase plans with SUMMARY)
+Progress: [██████████] 100% (6 of 6 phase plans with SUMMARY)
 
 ## Performance Metrics
 
@@ -71,6 +71,10 @@ Recent decisions affecting current work:
 - [01-04]: Widget Extension is required architecture for Dynamic Island — main app alone cannot render in Dynamic Island
 - [01-04]: KeydConnectionAttributes.swift shared between KeydApp and KeydLiveActivity targets via project.yml sources array
 - [01-04]: TransportManager.State made Equatable to support didSet-based Live Activity lifecycle wiring
+- [01-06]: Event-outer switch pattern in transition functions avoids Swift 6 tuple exhaustiveness limitations
+- [01-06]: Connection resources (NWConnection/decoder/encoder) held in TransportManager alongside FSM state, NOT inside FSM enum cases
+- [01-06]: iOS suppressAWDLStatusUntilPaired kept as policy flag (not FSM state) — it's a UI gate, not transport lifecycle
+- [01-06]: AWDLConnectionState enum replaces isConnecting/isReady/autoConnectEnabled booleans in AWDLTransport
 
 ### Pending Todos
 
@@ -94,8 +98,8 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-02-28T15:00:00Z
-Stopped at: Completed 01-04-PLAN.md (QR pairing + Dynamic Island Live Activity)
+Last session: 2026-03-01T17:43:07Z
+Stopped at: Completed 01-06-PLAN.md (FSM formalization — pure transition functions for macOS and iOS transport)
 
 ### What's already built (do not rebuild)
 - `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder — builds + tests pass (plan 01-01)
@@ -107,5 +111,4 @@ Stopped at: Completed 01-04-PLAN.md (QR pairing + Dynamic Island Live Activity)
 - `macOS/KeydAgent/Pairing/` + `macOS/KeydAgent/UI/` — macOS pairing + QR display (plan 01-04)
 
 ### What's NOT done yet
-- Plan 01-05: Transport hardening + debug overlay (`autonomous: false` — requires human verify checkpoint)
-- Plan 01-06: Aggressive regression test harness (single-device + multi-device suites with spam/stress cases)
+- Plan 01-07: Regression test harness (FSM unit tests + on-device test suite with scenarios from AWDL_USB_SCENARIO_MATRIX.md)
