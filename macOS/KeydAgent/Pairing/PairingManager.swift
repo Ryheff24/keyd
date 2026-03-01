@@ -20,7 +20,7 @@ final class PairingManager {
     private(set) var isPaired = false
     private(set) var pairedDeviceID: String?
 
-    private let keychainService = "com.keyd.agent"
+    private let keychainService = "com.ryheff.keyd.agent"
     private let keychainSharedSecretKey = "shared-secret"
     private let keychainPairedDeviceIDKey = "paired-device-id"
 

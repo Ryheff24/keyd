@@ -118,4 +118,5 @@ Follow-up fix commits applied during device validation and debugging:
 ## bugs
 - some times the keyboard takes a while to return
 - leaving the app causes a long reconnect period
-- Lag spike followed buy a large spam of characters
+- Lag spike followed 
+buy a large spam of characters

@@ -18,22 +18,5 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<!-- LSUIElement: true — hides from Dock and app switcher (menu bar accessory) -->
-	<key>LSUIElement</key>
-	<true/>
-	<!-- NSPrincipalClass required for SwiftUI @main apps -->
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<!-- Accessibility usage description shown in Privacy prompt -->
-	<key>NSAccessibilityUsageDescription</key>
-	<string>KeydAgent uses Accessibility to inject keystrokes into the frontmost application.</string>
-	<!-- Local network usage description -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>KeydAgent communicates with the iOS companion app over USB and local network.</string>
-	<!-- Bonjour services advertised for AWDL discovery -->
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_keyd._tcp</string>
-	</array>
 </dict>
 </plist>

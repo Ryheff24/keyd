@@ -178,7 +178,7 @@ actor USBListener {
 
         try sendPlist(
             [
-                "BundleID": "com.keyd.agent",
+                "BundleID": "com.ryheff.keyd.agent",
                 "ClientVersionString": "keyd-1.0",
                 "MessageType": "ListDevices",
                 "ProgName": "KeydAgent",
@@ -240,7 +240,7 @@ actor USBListener {
         do {
             try sendPlist(
                 [
-                    "BundleID": "com.keyd.agent",
+                    "BundleID": "com.ryheff.keyd.agent",
                     "ClientVersionString": "keyd-1.0",
                     "DeviceID": deviceID,
                     "MessageType": "Connect",

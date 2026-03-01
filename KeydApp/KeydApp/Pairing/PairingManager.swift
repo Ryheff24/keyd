@@ -16,7 +16,7 @@ final class PairingManager: ObservableObject {
     @Published var pairingError: String? = nil
 
     private let installMarkerDefaultsKey = "pairing-install-marker"
-    private let keychainService = "com.keyd.app"
+    private let keychainService = "com.ryheff.keyd.app"
     private let keychainSharedSecretKey = "shared-secret"
     private let keychainMacAgentKey = "mac-agent-public-key"
 
