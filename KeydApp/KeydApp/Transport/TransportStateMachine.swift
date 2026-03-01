@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - Shared Type
 
-/// Transport connection kind shared between macOS and iOS FSMs.
-enum iOSConnectionKind: CustomStringConvertible {
+/// Transport connection kind for the iOS FSM.
+enum iOSConnectionKind: CustomStringConvertible, Equatable {
     case usb, awdl
     var description: String { self == .usb ? "USB" : "AWDL" }
 }
@@ -123,8 +123,6 @@ enum iOSTransportEvent: CustomStringConvertible {
 /// Side effects returned by the iOS transition function.
 ///
 /// TransportManager executes these after updating its FSM state.
-/// Continuations, Live Activity updates, and timers are all handled here
-/// rather than in the transition function itself.
 enum iOSTransportSideEffect: CustomStringConvertible {
     /// Start the AWDL heartbeat loop (send heartbeat every 4s, expect ack within 2s).
     case startHeartbeat
@@ -184,272 +182,270 @@ func iOSTransportTransition(
     on event: iOSTransportEvent
 ) -> (iOSTransportState, [iOSTransportSideEffect]) {
 
-    switch (state, event) {
+    switch event {
 
-    // MARK: USB Ready
+    // MARK: - USB Ready
 
-    case (.connecting, .usbReady):
-        return (.usbConnected, [
-            .disableIdleTimer,
-            .resolveConnectionContinuation,
-            .sendSessionResume,
-            .updateLiveActivity(state: .usbConnected),
-            .logEvent(description: "USB connected")
-        ])
-
-    case (.disconnected(let awdl), .usbReady):
-        // USB tunnel arrived while disconnected (late arrival after connect timeout).
-        return (.usbConnected, [
-            .disableIdleTimer,
-            .resolveConnectionContinuation,
-            .sendSessionResume,
-            .updateLiveActivity(state: .usbConnected),
-            .logEvent(description: "USB tunnel arrived (awdlEnabled was \(awdl))")
-        ])
-
-    case (.awdlConnected, .usbReady):
-        // USB arrived while AWDL is active — promote to USB.
-        return (.usbConnected, [
-            .stopHeartbeat,
-            .sendSessionResume,
-            .updateLiveActivity(state: .usbConnected),
-            .logEvent(description: "USB reconnected; AWDL session replaced")
-        ])
-
-    case (.usbConnected, .usbReady):
-        return (state, [.logEvent(description: "Duplicate USB ready event; ignored")])
-
-    // MARK: USB Disconnected
-
-    case (.usbConnected, .usbDisconnected):
-        // On USB drop, attempt fresh AWDL connection.
-        return (.disconnected(awdlEnabled: true), [
-            .enableIdleTimer,
-            .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
-            .startReconnect(skipBackoff: false),
-            .logEvent(description: "USB disconnected; attempting AWDL handoff")
-        ])
-
-    case (.connecting(let t, let awdl), .usbDisconnected) where t == .usb:
-        // USB failed during connect attempt.
-        if awdl {
-            return (.connecting(transport: .awdl, awdlEnabled: true), [
-                .logEvent(description: "USB unavailable; falling back to AWDL")
+    case .usbReady:
+        switch state {
+        case .connecting:
+            return (.usbConnected, [
+                .disableIdleTimer,
+                .resolveConnectionContinuation,
+                .sendSessionResume,
+                .updateLiveActivity(state: .usbConnected),
+                .logEvent(description: "USB connected")
             ])
-        } else {
-            return (.disconnected(awdlEnabled: false), [
-                .enableIdleTimer,
-                .updateLiveActivity(state: .disconnected(awdlEnabled: false)),
-                .logEvent(description: "USB unavailable (AWDL disabled); disconnected")
+        case .disconnected:
+            // USB tunnel arrived while disconnected (late arrival after connect timeout).
+            return (.usbConnected, [
+                .disableIdleTimer,
+                .resolveConnectionContinuation,
+                .sendSessionResume,
+                .updateLiveActivity(state: .usbConnected),
+                .logEvent(description: "USB tunnel arrived (was disconnected)")
             ])
+        case .awdlConnected:
+            // USB arrived while AWDL is active — promote to USB.
+            return (.usbConnected, [
+                .stopHeartbeat,
+                .sendSessionResume,
+                .updateLiveActivity(state: .usbConnected),
+                .logEvent(description: "USB reconnected; AWDL session replaced")
+            ])
+        case .usbConnected:
+            return (state, [.logEvent(description: "Duplicate USB ready event; ignored")])
+        default:
+            return (state, [.logEvent(description: "USB ready in state \(state); ignored")])
         }
 
-    case (_, .usbDisconnected):
-        return (state, [.logEvent(description: "USB disconnected in state \(state); ignored")])
+    // MARK: - USB Disconnected
 
-    // MARK: AWDL Ready
-
-    case (.connecting(_, let awdl), .awdlReady) where awdl:
-        return (.awdlConnected(awaitingHeartbeatAck: false), [
-            .disableIdleTimer,
-            .resolveConnectionContinuation,
-            .sendSessionResume,
-            .startHeartbeat,
-            .updateLiveActivity(state: .awdlConnected(awaitingHeartbeatAck: false)),
-            .logEvent(description: "AWDL connected")
-        ])
-
-    case (.disconnected(let awdl), .awdlReady) where awdl:
-        return (.awdlConnected(awaitingHeartbeatAck: false), [
-            .disableIdleTimer,
-            .resolveConnectionContinuation,
-            .sendSessionResume,
-            .startHeartbeat,
-            .updateLiveActivity(state: .awdlConnected(awaitingHeartbeatAck: false)),
-            .logEvent(description: "AWDL connected (was disconnected)")
-        ])
-
-    case (.awdlConnected, .awdlReady):
-        return (state, [.logEvent(description: "Duplicate AWDL ready event; ignored")])
-
-    case (.usbConnected, .awdlReady):
-        return (state, [.logEvent(description: "AWDL ready while USB is primary; AWDL discarded")])
-
-    case (_, .awdlReady):
-        return (state, [.logEvent(description: "AWDL ready in state \(state); ignored (AWDL disabled or unexpected)")])
-
-    // MARK: AWDL Disconnected
-
-    case (.awdlConnected(let awdl), .awdlDisconnected) where awdl:
-        // Was awaiting heartbeat ack when AWDL dropped — treat as failure.
-        return (.disconnected(awdlEnabled: true), [
-            .stopHeartbeat,
-            .enableIdleTimer,
-            .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
-            .startReconnect(skipBackoff: false),
-            .logEvent(description: "AWDL disconnected while awaiting heartbeat ack")
-        ])
-
-    case (.awdlConnected, .awdlDisconnected):
-        return (.disconnected(awdlEnabled: true), [
-            .stopHeartbeat,
-            .enableIdleTimer,
-            .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
-            .startReconnect(skipBackoff: false),
-            .logEvent(description: "AWDL disconnected")
-        ])
-
-    case (.connecting(let t, let awdl), .awdlDisconnected) where t == .awdl:
-        if awdl {
+    case .usbDisconnected:
+        switch state {
+        case .usbConnected:
+            // On USB drop, attempt fresh AWDL connection.
             return (.disconnected(awdlEnabled: true), [
                 .enableIdleTimer,
                 .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
                 .startReconnect(skipBackoff: false),
-                .logEvent(description: "AWDL disconnected during connect; will retry")
+                .logEvent(description: "USB disconnected; attempting AWDL handoff")
             ])
-        } else {
-            return (.disconnected(awdlEnabled: false), [
-                .enableIdleTimer,
-                .updateLiveActivity(state: .disconnected(awdlEnabled: false)),
-                .logEvent(description: "AWDL disconnected (disabled for session)")
-            ])
+        case .connecting(let t, let awdl) where t == .usb:
+            if awdl {
+                return (.connecting(transport: .awdl, awdlEnabled: true), [
+                    .logEvent(description: "USB unavailable; falling back to AWDL")
+                ])
+            } else {
+                return (.disconnected(awdlEnabled: false), [
+                    .enableIdleTimer,
+                    .updateLiveActivity(state: .disconnected(awdlEnabled: false)),
+                    .logEvent(description: "USB unavailable (AWDL disabled); disconnected")
+                ])
+            }
+        default:
+            return (state, [.logEvent(description: "USB disconnected in state \(state); ignored")])
         }
 
-    case (_, .awdlDisconnected):
-        return (state, [.logEvent(description: "AWDL disconnected in state \(state); ignored")])
+    // MARK: - AWDL Ready
 
-    // MARK: Heartbeat
+    case .awdlReady:
+        switch state {
+        case .connecting(_, let awdl) where awdl:
+            return (.awdlConnected(awaitingHeartbeatAck: false), [
+                .disableIdleTimer,
+                .resolveConnectionContinuation,
+                .sendSessionResume,
+                .startHeartbeat,
+                .updateLiveActivity(state: .awdlConnected(awaitingHeartbeatAck: false)),
+                .logEvent(description: "AWDL connected")
+            ])
+        case .disconnected(let awdl) where awdl:
+            return (.awdlConnected(awaitingHeartbeatAck: false), [
+                .disableIdleTimer,
+                .resolveConnectionContinuation,
+                .sendSessionResume,
+                .startHeartbeat,
+                .updateLiveActivity(state: .awdlConnected(awaitingHeartbeatAck: false)),
+                .logEvent(description: "AWDL connected (was disconnected)")
+            ])
+        case .awdlConnected:
+            return (state, [.logEvent(description: "Duplicate AWDL ready event; ignored")])
+        case .usbConnected:
+            return (state, [.logEvent(description: "AWDL ready while USB is primary; AWDL discarded")])
+        default:
+            return (state, [.logEvent(description: "AWDL ready in state \(state); ignored (AWDL disabled or unexpected)")])
+        }
 
-    case (.awdlConnected, .heartbeatAck):
-        // Successful ack — clear the awaiting flag.
-        return (.awdlConnected(awaitingHeartbeatAck: false), [
-            .logEvent(description: "AWDL heartbeat ack received")
-        ])
+    // MARK: - AWDL Disconnected
 
-    case (.awdlConnected, .heartbeatTimeout):
-        return (.disconnected(awdlEnabled: true), [
-            .stopHeartbeat,
-            .enableIdleTimer,
-            .closeConnections,
-            .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
-            .startReconnect(skipBackoff: false),
-            .logEvent(description: "AWDL heartbeat timed out; reconnecting")
-        ])
+    case .awdlDisconnected:
+        switch state {
+        case .awdlConnected:
+            return (.disconnected(awdlEnabled: true), [
+                .stopHeartbeat,
+                .enableIdleTimer,
+                .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
+                .startReconnect(skipBackoff: false),
+                .logEvent(description: "AWDL disconnected")
+            ])
+        case .connecting(let t, let awdl) where t == .awdl:
+            if awdl {
+                return (.disconnected(awdlEnabled: true), [
+                    .enableIdleTimer,
+                    .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
+                    .startReconnect(skipBackoff: false),
+                    .logEvent(description: "AWDL disconnected during connect; will retry")
+                ])
+            } else {
+                return (.disconnected(awdlEnabled: false), [
+                    .enableIdleTimer,
+                    .updateLiveActivity(state: .disconnected(awdlEnabled: false)),
+                    .logEvent(description: "AWDL disconnected (disabled for session)")
+                ])
+            }
+        default:
+            return (state, [.logEvent(description: "AWDL disconnected in state \(state); ignored")])
+        }
 
-    case (_, .heartbeatAck):
-        return (state, [.logEvent(description: "Heartbeat ack in state \(state); ignored")])
+    // MARK: - Heartbeat
 
-    case (_, .heartbeatTimeout):
-        return (state, [.logEvent(description: "Heartbeat timeout in state \(state); ignored")])
+    case .heartbeatAck:
+        switch state {
+        case .awdlConnected:
+            // Successful ack — clear the awaiting flag.
+            return (.awdlConnected(awaitingHeartbeatAck: false), [
+                .logEvent(description: "AWDL heartbeat ack received")
+            ])
+        default:
+            return (state, [.logEvent(description: "Heartbeat ack in state \(state); ignored")])
+        }
 
-    // MARK: Pairing
+    case .heartbeatTimeout:
+        switch state {
+        case .awdlConnected:
+            return (.disconnected(awdlEnabled: true), [
+                .stopHeartbeat,
+                .enableIdleTimer,
+                .closeConnections,
+                .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
+                .startReconnect(skipBackoff: false),
+                .logEvent(description: "AWDL heartbeat timed out; reconnecting")
+            ])
+        default:
+            return (state, [.logEvent(description: "Heartbeat timeout in state \(state); ignored")])
+        }
 
-    case (.connecting, .pairingCompleted):
-        return (.usbConnected, [
-            .disableIdleTimer,
-            .resolveConnectionContinuation,
-            .resolvePairingContinuation,
-            .sendSessionResume,
-            .updateLiveActivity(state: .usbConnected),
-            .logEvent(description: "Pairing completed; session active")
-        ])
+    // MARK: - Pairing
 
-    case (.awdlConnected, .pairingCompleted):
-        return (.awdlConnected(awaitingHeartbeatAck: false), [
-            .resolvePairingContinuation,
-            .sendSessionResume,
-            .logEvent(description: "Pairing completed while AWDL active")
-        ])
+    case .pairingCompleted:
+        switch state {
+        case .connecting:
+            return (.usbConnected, [
+                .disableIdleTimer,
+                .resolveConnectionContinuation,
+                .resolvePairingContinuation,
+                .sendSessionResume,
+                .updateLiveActivity(state: .usbConnected),
+                .logEvent(description: "Pairing completed; session active")
+            ])
+        case .awdlConnected:
+            return (.awdlConnected(awaitingHeartbeatAck: false), [
+                .resolvePairingContinuation,
+                .sendSessionResume,
+                .logEvent(description: "Pairing completed while AWDL active")
+            ])
+        case .disconnected:
+            return (.connecting(transport: .awdl, awdlEnabled: true), [
+                .resolvePairingContinuation,
+                .logEvent(description: "Pairing completed; reconnecting")
+            ])
+        default:
+            return (state, [.logEvent(description: "Pairing completed in state \(state); ignored")])
+        }
 
-    case (.disconnected, .pairingCompleted):
-        return (.connecting(transport: .awdl, awdlEnabled: true), [
-            .resolvePairingContinuation,
-            .logEvent(description: "Pairing completed; reconnecting")
-        ])
-
-    case (_, .pairingCompleted):
-        return (state, [.logEvent(description: "Pairing completed in state \(state); ignored")])
-
-    case (_, .pairingFailed):
+    case .pairingFailed:
         return (state, [.logEvent(description: "Pairing failed in state \(state)")])
 
-    // MARK: App Lifecycle
+    // MARK: - App Lifecycle
 
-    case (.usbConnected, .appBackgrounded):
-        return (.backgroundSuspended(previousTransport: .usb), [
-            .beginBackgroundTask,
-            .logEvent(description: "App backgrounded while USB connected; background task started")
-        ])
+    case .appBackgrounded:
+        switch state {
+        case .usbConnected:
+            return (.backgroundSuspended(previousTransport: .usb), [
+                .beginBackgroundTask,
+                .logEvent(description: "App backgrounded while USB connected; background task started")
+            ])
+        case .awdlConnected:
+            return (.backgroundSuspended(previousTransport: .awdl), [
+                .beginBackgroundTask,
+                .logEvent(description: "App backgrounded while AWDL connected; background task started")
+            ])
+        case .connecting:
+            return (.backgroundSuspended(previousTransport: nil), [
+                .beginBackgroundTask,
+                .logEvent(description: "App backgrounded while connecting; background task started")
+            ])
+        case .disconnected:
+            return (.backgroundSuspended(previousTransport: nil), [
+                .beginBackgroundTask,
+                .logEvent(description: "App backgrounded while disconnected; background task started")
+            ])
+        case .backgroundSuspended:
+            return (state, [.logEvent(description: "Duplicate background event; ignored")])
+        }
 
-    case (.awdlConnected, .appBackgrounded):
-        return (.backgroundSuspended(previousTransport: .awdl), [
-            .beginBackgroundTask,
-            .logEvent(description: "App backgrounded while AWDL connected; background task started")
-        ])
+    case .appForegrounded:
+        switch state {
+        case .backgroundSuspended(let prev):
+            let hadSession = prev != nil
+            let awdl = prev != .usb
+            let connectingState = iOSTransportState.connecting(transport: prev ?? .usb, awdlEnabled: awdl)
+            return (connectingState, [
+                .endBackgroundTask,
+                .startReconnect(skipBackoff: hadSession),
+                .logEvent(description: "App foregrounded; fast reconnect (skipBackoff:\(hadSession))")
+            ])
+        default:
+            return (state, [.logEvent(description: "Foregrounded in state \(state); no action needed")])
+        }
 
-    case (.connecting, .appBackgrounded):
-        return (.backgroundSuspended(previousTransport: nil), [
-            .beginBackgroundTask,
-            .logEvent(description: "App backgrounded while connecting; background task started")
-        ])
+    case .backgroundTaskExpiring:
+        switch state {
+        case .backgroundSuspended:
+            return (.disconnected(awdlEnabled: true), [
+                .closeConnections,
+                .stopHeartbeat,
+                .endBackgroundTask,
+                .enableIdleTimer,
+                .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
+                .logEvent(description: "Background task expiring; connections closed gracefully")
+            ])
+        default:
+            return (state, [.logEvent(description: "Background task expiring in state \(state); ignored")])
+        }
 
-    case (.disconnected, .appBackgrounded):
-        return (.backgroundSuspended(previousTransport: nil), [
-            .beginBackgroundTask,
-            .logEvent(description: "App backgrounded while disconnected; background task started")
-        ])
+    // MARK: - Secure Input
 
-    case (.backgroundSuspended, .appBackgrounded):
-        return (state, [.logEvent(description: "Duplicate background event; ignored")])
-
-    case (.backgroundSuspended(let prev), .appForegrounded):
-        // Fast reconnect on foreground — skip backoff if we had an active session.
-        let hadSession = prev != nil
-        let awdl = prev == .awdl || prev == nil
-        let connectingState = iOSTransportState.connecting(transport: prev ?? .usb, awdlEnabled: awdl)
-        return (connectingState, [
-            .endBackgroundTask,
-            .startReconnect(skipBackoff: hadSession),
-            .logEvent(description: "App foregrounded; fast reconnect (skipBackoff:\(hadSession))")
-        ])
-
-    case (_, .appForegrounded):
-        return (state, [.logEvent(description: "Foregrounded in state \(state); no action needed")])
-
-    case (.backgroundSuspended, .backgroundTaskExpiring):
-        return (.disconnected(awdlEnabled: true), [
-            .closeConnections,
-            .stopHeartbeat,
-            .endBackgroundTask,
-            .enableIdleTimer,
-            .updateLiveActivity(state: .disconnected(awdlEnabled: true)),
-            .logEvent(description: "Background task expiring; connections closed gracefully")
-        ])
-
-    case (_, .backgroundTaskExpiring):
-        return (state, [.logEvent(description: "Background task expiring in state \(state); ignored")])
-
-    // MARK: Secure Input
-
-    case (_, .secureInputChanged):
+    case .secureInputChanged:
         // Secure input change is purely informational — no transport state change.
         return (state, [])
 
-    // MARK: Retry Requested
+    // MARK: - Retry Requested
 
-    case (.disconnected(let awdl), .retryRequested):
-        return (.connecting(transport: awdl ? .awdl : .usb, awdlEnabled: awdl), [
-            .startReconnect(skipBackoff: true),
-            .logEvent(description: "Retry requested; reconnecting")
-        ])
-
-    case (.usbConnected, .retryRequested):
-        return (state, [.logEvent(description: "Retry requested while already connected; ignored")])
-
-    case (.awdlConnected, .retryRequested):
-        return (state, [.logEvent(description: "Retry requested while already connected; ignored")])
-
-    case (_, .retryRequested):
-        return (state, [.logEvent(description: "Retry requested in state \(state); ignored")])
+    case .retryRequested:
+        switch state {
+        case .disconnected(let awdl):
+            return (.connecting(transport: awdl ? .awdl : .usb, awdlEnabled: awdl), [
+                .startReconnect(skipBackoff: true),
+                .logEvent(description: "Retry requested; reconnecting")
+            ])
+        case .usbConnected:
+            return (state, [.logEvent(description: "Retry requested while already connected; ignored")])
+        case .awdlConnected:
+            return (state, [.logEvent(description: "Retry requested while already connected; ignored")])
+        default:
+            return (state, [.logEvent(description: "Retry requested in state \(state); ignored")])
+        }
     }
 }

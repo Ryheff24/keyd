@@ -10,6 +10,7 @@
 		0272DE4343096FED836B764D /* USBListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = D75F4FF6DE00E12CEE30C474 /* USBListener.swift */; };
 		2139AEDDC3968EADF0051BEB /* CGEventInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B297DD4CD63C3FE643A837 /* CGEventInjector.swift */; };
 		2E330DF86DACEB355126C7F8 /* TransportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8FC2D3B269DD9CADDAE6CA6 /* TransportManager.swift */; };
+		F1A2B3C4D5E600000001AAA3 /* TransportStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E600000001BBB3 /* TransportStateMachine.swift */; };
 		324D22BA20A73D6F259A102F /* InjectionRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C498CAE3BF36F21CDAC5AFE /* InjectionRouter.swift */; };
 		3618767807A2EA53B8606242 /* KeydAgentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A97EE7A738B40D4BA92D80 /* KeydAgentApp.swift */; };
 		403AB254026945B665DD4F2C /* SharedProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = AB6119F436E323C940AE3A73 /* SharedProtocol */; };
@@ -29,6 +30,7 @@
 		57B297DD4CD63C3FE643A837 /* CGEventInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGEventInjector.swift; sourceTree = "<group>"; };
 		6B986EC54D8AB0FA9D6B8116 /* AWDLListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWDLListener.swift; sourceTree = "<group>"; };
 		C8FC2D3B269DD9CADDAE6CA6 /* TransportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportManager.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E600000001BBB3 /* TransportStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportStateMachine.swift; sourceTree = "<group>"; };
 		D09B4A390950481E8205D22E /* KeydAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeydAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D447D04B019308EE362FDA8A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D75F4FF6DE00E12CEE30C474 /* USBListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBListener.swift; sourceTree = "<group>"; };
@@ -56,6 +58,7 @@
 			children = (
 				6B986EC54D8AB0FA9D6B8116 /* AWDLListener.swift */,
 				C8FC2D3B269DD9CADDAE6CA6 /* TransportManager.swift */,
+				F1A2B3C4D5E600000001BBB3 /* TransportStateMachine.swift */,
 				D75F4FF6DE00E12CEE30C474 /* USBListener.swift */,
 			);
 			path = Transport;
@@ -225,6 +228,7 @@
 				4C71638AC6328A68358EA540 /* PermissionChecker.swift in Sources */,
 				B21A0B74CD8A85BA814BEC80 /* StatusBarController.swift in Sources */,
 				2E330DF86DACEB355126C7F8 /* TransportManager.swift in Sources */,
+				F1A2B3C4D5E600000001AAA3 /* TransportStateMachine.swift in Sources */,
 				0272DE4343096FED836B764D /* USBListener.swift in Sources */,
 				F1A2B3C4D5E600000000AAA1 /* PairingManager.swift in Sources */,
 				F1A2B3C4D5E600000000AAA2 /* QRCodeView.swift in Sources */,

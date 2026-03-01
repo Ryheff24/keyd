@@ -8,14 +8,27 @@ import Carbon.HIToolbox
 
 private let logger = KeydLogger(category: "TransportManager")
 
-/// Connection state for the macOS agent.
-/// Note: `.awdlPending` holds no connection reference — pending connections live in the pool.
-enum AgentConnectionState {
-    case disconnected
-    case usbConnected
-    case awdlPending          // One or more AWDL connections awaiting identity (paired mode)
-    case pairingAWDL(NWConnection)  // Unpaired: single pairing channel
-    case awdlConnected(NWConnection)
+/// Active connection resources managed alongside FSM state.
+/// The FSM itself contains no connection references — only logical state.
+@MainActor
+private struct ConnectionResources {
+    var activeDecoder: MessageDecoder?
+    var activeEncoder: MessageEncoder?
+    var pendingUSBDecoder: MessageDecoder?
+    var pendingUSBIdentityTimeoutTask: Task<Void, Never>?
+    // Pending AWDL pool: keyed by ObjectIdentifier of NWConnection
+    var pendingAWDLSlots: [ObjectIdentifier: PendingAWDLSlot] = [:]
+    // Track the currently active AWDL NWConnection (for disconnect detection)
+    var activeAWDLConnection: NWConnection?
+    // Slot counter for timer coordination
+    var nextAWDLSlotIndex: Int = 0
+}
+
+private struct PendingAWDLSlot {
+    let connection: NWConnection
+    let decoder: MessageDecoder
+    let timeoutTask: Task<Void, Never>
+    let slotIndex: Int
 }
 
 enum ConnectionKind: CustomStringConvertible {
@@ -23,47 +36,30 @@ enum ConnectionKind: CustomStringConvertible {
     var description: String { self == .usb ? "USB" : "AWDL" }
 }
 
-/// A pending AWDL connection awaiting identity verification.
-private struct PendingAWDLSlot {
-    let connection: NWConnection
-    let decoder: MessageDecoder
-    let timeoutTask: Task<Void, Never>
-}
-
 /// Manages USB and AWDL listeners; routes decoded messages to InjectionRouter.
-/// Both listeners start concurrently so AWDL discovery stays warm while USB is primary.
-/// USB takes priority; AWDL reconnects fresh after USB disconnects.
+///
+/// All state changes go through agentTransportTransition() — no direct mutation of fsmState.
+/// Side effects are returned by the transition function and executed by handleEvent().
 @MainActor
 final class TransportManager {
     private let injectionRouter: InjectionRouter
     private let statusBar: StatusBarController
     private let pairingManager: PairingManager
-    private var connectionState: AgentConnectionState = .disconnected
+
+    // MARK: - FSM State
+
+    private var fsmState: AgentTransportState = .disconnected
+    private let eventLog = TransportEventLog(capacity: 500)
+    private var resources = ConnectionResources()
+
     var onPairingCompleted: (() -> Void)?
 
     private var usbListener = USBListener()
     private var awdlListener = AWDLListener()
 
-    private var activeDecoder: MessageDecoder?
-    private var activeEncoder: MessageEncoder?
-    private var pendingUSBDecoder: MessageDecoder?
-    private var pendingUSBIdentityTimeoutTask: Task<Void, Never>?
-
-    // Multi-slot pending AWDL connection pool (keyed by ObjectIdentifier of NWConnection)
-    private var pendingAWDLSlots: [ObjectIdentifier: PendingAWDLSlot] = [:]
-    private let maxPendingAWDLSlots = 4
-    private let pendingAWDLIdentityTimeoutNanoseconds: UInt64 = 3_000_000_000
-
-    private var activeAWDLDeviceID: String?
-    private var lastAWDLActivityAt: Date?
-
-
     // Secure input polling (AGENT-06)
     private var secureInputTimer: Timer?
     private var lastSecureInputState = false
-
-    // Connection event log for debug overlay
-    private var connectionEventLog: [String] = []
 
     init(injectionRouter: InjectionRouter, statusBar: StatusBarController, pairingManager: PairingManager) {
         self.injectionRouter = injectionRouter
@@ -73,8 +69,6 @@ final class TransportManager {
 
     func start() async {
         do {
-            // Start both transports concurrently — AWDL stays pre-warmed and USB now
-            // reconnects through a host-initiated usbmux tunnel.
             await usbListener.setOnConnectionReady { [weak self] in
                 Task { @MainActor in
                     self?.handleUSBConnectionReady()
@@ -92,7 +86,7 @@ final class TransportManager {
             }
             await awdlListener.setOnConnection { [weak self] conn in
                 Task { @MainActor in
-                    await self?.handleNewConnection(conn, transport: .awdl)
+                    await self?.handleNewAWDLConnection(conn)
                 }
             }
             await usbListener.start()
@@ -103,503 +97,184 @@ final class TransportManager {
         }
     }
 
-    private func handleNewConnection(_ connection: NWConnection, transport: ConnectionKind) async {
-        logEvent("\(transport) connection accepted")
+    // MARK: - FSM Event Handler
 
-        connection.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                Task { @MainActor in
-                    await self?.activateConnection(connection, transport: transport)
-                }
-            case .failed(let error):
-                Task { @MainActor in
-                    self?.logEvent("\(transport) connection failed before ready: \(error.localizedDescription)")
-                    self?.removePendingAWDLSlot(for: connection)
-                }
-            default:
-                break
-            }
+    /// Central event dispatch. Calls the pure transition function, updates state, logs, executes side effects.
+    private func handleEvent(_ event: AgentTransportEvent) {
+        let (newState, effects) = agentTransportTransition(from: fsmState, on: event)
+
+        // Record transition (skip no-op transitions to reduce noise)
+        if newState != fsmState || !effects.isEmpty {
+            let entry = TransportEventEntry(
+                previousState: fsmState.description,
+                event: event.description,
+                newState: newState.description,
+                sideEffects: effects.map(\.description)
+            )
+            eventLog.append(entry)
         }
 
-        connection.start(queue: .global(qos: .userInteractive))
+        fsmState = newState
+        executeSideEffects(effects)
     }
 
-    private func activateConnection(_ connection: NWConnection, transport: ConnectionKind) async {
-        logEvent("\(transport) connection ready")
-        switch (connectionState, transport) {
-        case (_, .usb):
-            logEvent("Ignoring unexpected USB NWConnection callback")
-            connection.cancel()
-            return
-
-        case (.awdlConnected, .awdl):
-            if pairingManager.isPaired {
-                if shouldProbeAWDLCandidateWhileActive() {
-                    addPendingAWDLSlot(connection)
-                    logEvent("Additional AWDL connection arrived while AWDL is active; probing candidate session identity (\(pendingAWDLSlots.count) pending)")
-                } else {
-                    logEvent("Additional AWDL connection arrived while AWDL is active; closing candidate")
-                    connection.cancel()
-                }
-            } else {
-                logEvent("Additional AWDL connection arrived while AWDL is active; closing it")
-                connection.cancel()
-            }
-            return
-
-        case (.disconnected, .awdl):
-            if pairingManager.isPaired {
-                // Paired mode: put into pending pool, don't occupy single slot
-                addPendingAWDLSlot(connection)
-                connectionState = .awdlPending
-                logEvent("AWDL connected while no confirmed session is active; waiting for session identity (\(pendingAWDLSlots.count) pending)")
-            } else {
-                connectionState = .pairingAWDL(connection)
-                logEvent("AWDL pairing channel ready")
-                let decoder = makeActiveDecoder()
-                startReceiveLoop(on: connection, decoder: decoder, transport: transport)
-            }
-            return
-
-        case (.awdlPending, .awdl):
-            if pairingManager.isPaired {
-                addPendingAWDLSlot(connection)
-                logEvent("Additional AWDL candidate arrived; waiting for session identity (\(pendingAWDLSlots.count) pending)")
-            } else {
-                connection.cancel()
-                logEvent("AWDL connection arrived while pending pool active; closing")
-            }
-            return
-
-        case (.pairingAWDL(let old), .awdl):
-            old.cancel()
-            connectionState = .pairingAWDL(connection)
-            if pairingManager.isPaired {
-                logEvent("Replaced stale AWDL candidate while waiting for session identity")
-            } else {
-                logEvent("Replaced stale AWDL pairing channel")
-            }
-
-        case (.usbConnected, .awdl):
-            logEvent("AWDL connection arrived while USB is active; closing it")
-            startAWDLStandby(connection)
-            return
-        }
-
-        let decoder = makeActiveDecoder()
-
-        // Start receive loop
-        startReceiveLoop(on: connection, decoder: decoder, transport: transport)
-
-        // Start secure input polling
-        if case .pairingAWDL = connectionState {
-            return
-        }
-        startSecureInputPolling()
-    }
-
-    // MARK: - Pending AWDL Pool
-
-    private func addPendingAWDLSlot(_ connection: NWConnection) {
-        let connID = ObjectIdentifier(connection)
-
-        // Enforce max pool size — evict oldest if at capacity
-        if pendingAWDLSlots.count >= maxPendingAWDLSlots {
-            if let oldestKey = pendingAWDLSlots.keys.first {
-                let oldest = pendingAWDLSlots.removeValue(forKey: oldestKey)
-                oldest?.timeoutTask.cancel()
-                oldest?.connection.cancel()
-                logEvent("Evicted oldest pending AWDL slot to make room")
-            }
-        }
-
-        let decoder = MessageDecoder()
-        decoder.onMessage = { [weak self, weak connection] message in
-            guard let connection else { return }
-            Task { @MainActor in
-                self?.handlePendingAWDLPoolMessage(message, connection: connection)
-            }
-        }
-        decoder.onError = { error in
-            logger.error("Pending AWDL decode error: \(error)")
-        }
-
-        let timeoutTask = Task { @MainActor [weak self, weak connection] in
-            do {
-                try await Task.sleep(nanoseconds: self?.pendingAWDLIdentityTimeoutNanoseconds ?? 3_000_000_000)
-            } catch {
-                return
-            }
-            guard let self, let connection else { return }
-            let cid = ObjectIdentifier(connection)
-            guard self.pendingAWDLSlots[cid] != nil else { return }
-            self.logEvent("Pending AWDL slot timed out without identifying; closing")
-            self.removePendingAWDLSlot(for: connection)
-        }
-
-        let slot = PendingAWDLSlot(connection: connection, decoder: decoder, timeoutTask: timeoutTask)
-        pendingAWDLSlots[connID] = slot
-
-        startPendingAWDLPoolReceiveLoop(on: connection, decoder: decoder)
-    }
-
-    private func removePendingAWDLSlot(for connection: NWConnection) {
-        let connID = ObjectIdentifier(connection)
-        guard let slot = pendingAWDLSlots.removeValue(forKey: connID) else { return }
-        slot.timeoutTask.cancel()
-        slot.connection.cancel()
-
-        // If pool is now empty and we were in awdlPending, transition to disconnected
-        if pendingAWDLSlots.isEmpty, case .awdlPending = connectionState {
-            connectionState = .disconnected
-            statusBar.update(state: .disconnected)
-            logEvent("All pending AWDL slots cleared; disconnected")
+    private func executeSideEffects(_ effects: [AgentTransportSideEffect]) {
+        for effect in effects {
+            executeSideEffect(effect)
         }
     }
 
-    private func removeAllPendingAWDLSlots(logMessage: String? = nil) {
-        for (_, slot) in pendingAWDLSlots {
-            slot.timeoutTask.cancel()
-            slot.connection.cancel()
-        }
-        pendingAWDLSlots.removeAll()
-        if let logMessage {
-            logEvent(logMessage)
-        }
-    }
+    private func executeSideEffect(_ effect: AgentTransportSideEffect) {
+        switch effect {
+        case .startUSBIdentityTimer:
+            scheduleUSBIdentityTimeout()
 
-    private func startPendingAWDLPoolReceiveLoop(on connection: NWConnection, decoder: MessageDecoder) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self, weak connection] data, _, isComplete, error in
-            guard let connection else { return }
-            if let data = data, !data.isEmpty {
-                decoder.receive(data)
-            }
-            if isComplete || error != nil {
-                Task { @MainActor in
-                    guard let self else { return }
-                    let connID = ObjectIdentifier(connection)
-                    if self.pendingAWDLSlots[connID] != nil {
-                        // Still pending — clean up the slot
-                        self.removePendingAWDLSlot(for: connection)
-                    } else {
-                        // Slot was promoted — this is the active connection dying.
-                        // Route through the proper disconnect handler.
-                        self.handleDisconnect(connection: connection, transport: .awdl)
-                    }
-                }
-                return
-            }
-            Task { @MainActor [weak self] in
-                self?.startPendingAWDLPoolReceiveLoop(on: connection, decoder: decoder)
-            }
-        }
-    }
+        case .cancelUSBIdentityTimer:
+            cancelUSBIdentityTimeout()
 
-    private func handlePendingAWDLPoolMessage(_ message: KeydMessage, connection: NWConnection) {
-        let connID = ObjectIdentifier(connection)
-        guard pendingAWDLSlots[connID] != nil else { return }
-
-        // Only process identity messages in the pending pool
-        switch message {
-        case .sessionResume(let resume):
-            if pairingManager.validateOrAdoptPairedDevice(resume.deviceID) {
-                logEvent("Pending AWDL slot matches paired device \(resume.deviceID); promoting")
-                promotePendingAWDLPoolSlot(connection: connection, initialMessage: message)
-            } else {
-                sendDirectAWDL(.pairingInvalidated, on: connection)
-                logEvent("Rejected AWDL session resume from non-paired device \(resume.deviceID)")
-                removePendingAWDLSlot(for: connection)
-            }
-
-        case .pairingRequest:
-            sendDirectAWDL(.pairingInvalidated, on: connection)
-            logEvent("Rejected AWDL pairing request from pending pool while already paired")
-            removePendingAWDLSlot(for: connection)
-
-        case .transportHeartbeat, .transportHeartbeatAck:
+        case .startAWDLIdentityTimer:
+            // Timer is started inline when the slot is added (see addPendingAWDLSlot)
             break
 
-        default:
-            sendDirectAWDL(.pairingInvalidated, on: connection)
-            logEvent("Rejected unexpected AWDL message from pending pool")
-            removePendingAWDLSlot(for: connection)
+        case .cancelAWDLIdentityTimer:
+            // Cancellation happens when the slot is removed
+            break
+
+        case .promoteToActive(let transport):
+            promoteToActive(transport: transport)
+
+        case .closeConnection(let transport):
+            closeConnection(transport: transport)
+
+        case .clearPendingAWDLPool:
+            removeAllPendingAWDLSlots(logMessage: nil)
+
+        case .updateStatusBar(let state):
+            switch state {
+            case .usbConnected:      statusBar.update(state: .usb)
+            case .awdlConnected:     statusBar.update(state: .awdl)
+            case .disconnected:      statusBar.update(state: .disconnected)
+            case .pairingAWDL:       statusBar.update(state: .awdl)
+            case .pendingUSBIdentity, .pendingAWDLPool:
+                break
+            }
+
+        case .logEvent(let description):
+            logEvent(description)
+
+        case .sendPairingInvalidated:
+            send(.pairingInvalidated)
+
+        case .startSecureInputPolling:
+            startSecureInputPolling()
+
+        case .stopSecureInputPolling:
+            stopSecureInputPolling()
+
+        case .releaseModifiers:
+            injectionRouter.releaseModifiers()
         }
     }
 
-    private func promotePendingAWDLPoolSlot(connection: NWConnection, initialMessage: KeydMessage) {
-        let connID = ObjectIdentifier(connection)
-        guard let slot = pendingAWDLSlots.removeValue(forKey: connID) else { return }
-        slot.timeoutTask.cancel()
+    // MARK: - Resource Management
 
-        // Rewire decoder to main message handler
-        slot.decoder.onMessage = { [weak self] message in
-            Task { @MainActor in
-                self?.handleIncomingMessage(message)
+    private func promoteToActive(transport: ConnectionKind) {
+        switch transport {
+        case .usb:
+            guard let decoder = resources.pendingUSBDecoder else {
+                // USB is already promoted (for cases where USB was pending and confirmed)
+                // In unpaired mode the active decoder was already set — just clear pending.
+                _ = makeActiveDecoder()
+                resources.pendingUSBDecoder = nil
+                resources.activeAWDLConnection = nil
+                return
+            }
+            resources.pendingUSBDecoder = nil
+            decoder.onMessage = { [weak self] message in
+                Task { @MainActor in self?.handleIncomingMessage(message) }
+            }
+            decoder.onError = { error in logger.error("Decode error: \(error)") }
+            resources.activeDecoder = decoder
+            resources.activeEncoder = MessageEncoder()
+            resources.activeAWDLConnection = nil
+
+        case .awdl:
+            // Find the confirmed AWDL slot (should be only one left after clearPendingAWDLPool)
+            // In the pending pool promotion path, slots are cleared before this runs.
+            // For pairing completion, the pairing channel decoder is already in activeDecoder.
+            // Check if we already have an active decoder rewired; if not, create fresh.
+            if resources.activeDecoder == nil {
+                let decoder = makeActiveDecoder()
+                _ = decoder
             }
         }
-        slot.decoder.onError = { error in
-            logger.error("Decode error: \(error)")
+    }
+
+    private func closeConnection(transport: ConnectionKind) {
+        switch transport {
+        case .usb:
+            resources.pendingUSBDecoder = nil
+            Task { [usbListener] in
+                await usbListener.disconnectCurrentConnection()
+            }
+        case .awdl:
+            resources.activeAWDLConnection?.cancel()
+            resources.activeAWDLConnection = nil
+            resources.activeDecoder = nil
+            resources.activeEncoder = nil
         }
-
-        // Close all other pending AWDL slots
-        removeAllPendingAWDLSlots(logMessage: "Clearing \(pendingAWDLSlots.count) remaining pending AWDL slots after promotion")
-
-        // Close existing active AWDL if any
-        if case .awdlConnected(let old) = connectionState {
-            stopSecureInputPolling()
-            injectionRouter.releaseModifiers()
-            old.cancel()
-        }
-
-        connectionState = .awdlConnected(connection)
-        statusBar.update(state: .awdl)
-        activeDecoder = slot.decoder
-        activeEncoder = MessageEncoder()
-        lastAWDLActivityAt = Date()
-        logEvent("AWDL session promoted from pending pool")
-        startSecureInputPolling()
-        handleIncomingMessage(initialMessage)
     }
 
     // MARK: - USB Handling
 
     private func handleUSBConnectionReady() {
+        logEvent("USB connection ready")
+
         // Clear all pending AWDL slots when USB arrives
-        if !pendingAWDLSlots.isEmpty {
+        if !resources.pendingAWDLSlots.isEmpty {
             removeAllPendingAWDLSlots(logMessage: "Clearing pending AWDL slots because USB became available")
         }
 
-        if pairingManager.isPaired {
-            switch connectionState {
-            case .usbConnected:
-                logEvent("Ignoring duplicate USB connection")
-                return
-            case .awdlConnected:
-                _ = makePendingUSBDecoder()
-                schedulePendingUSBIdentityTimeout()
-                logEvent("USB connected while AWDL is active; waiting for USB session identity")
-                return
-            case .pairingAWDL(let old):
-                old.cancel()
-                _ = makePendingUSBDecoder()
-                schedulePendingUSBIdentityTimeout()
-                logEvent("USB connected while a stale AWDL pairing channel existed; waiting for USB session identity")
-                return
-            case .awdlPending:
-                _ = makePendingUSBDecoder()
-                schedulePendingUSBIdentityTimeout()
-                logEvent("USB connected while AWDL pending; waiting for USB session identity")
-                return
-            case .disconnected:
-                _ = makePendingUSBDecoder()
-                schedulePendingUSBIdentityTimeout()
-                logEvent("USB connected while no confirmed session is active; waiting for USB session identity")
-                return
-            }
+        handleEvent(.usbConnectionArrived(deviceID: nil))
+
+        // If paired mode, set up pending USB decoder
+        if pairingManager.isPaired, case .pendingUSBIdentity = fsmState {
+            _ = makePendingUSBDecoder()
+        } else if case .usbConnected = fsmState {
+            // Unpaired mode: USB promoted immediately without identity verification
+            _ = makeActiveDecoder()
+            startSecureInputPolling()
         }
-
-        switch connectionState {
-        case .usbConnected:
-            logEvent("Ignoring duplicate USB connection")
-            return
-        case .awdlConnected(let old), .pairingAWDL(let old):
-            old.cancel()
-            connectionState = .usbConnected
-            statusBar.update(state: .usb)
-            activeAWDLDeviceID = nil
-            lastAWDLActivityAt = nil
-            logEvent("USB promoted over AWDL (re-plug)")
-        case .awdlPending:
-            connectionState = .usbConnected
-            statusBar.update(state: .usb)
-            logEvent("USB connected (was AWDL pending)")
-        case .disconnected:
-            connectionState = .usbConnected
-            statusBar.update(state: .usb)
-            logEvent("USB connected")
-        }
-
-        pendingUSBDecoder = nil
-        cancelPendingUSBIdentityTimeout()
-        _ = makeActiveDecoder()
-
-        startSecureInputPolling()
     }
 
     private func handleUSBData(_ data: Data) {
-        if case .usbConnected = connectionState {
-            activeDecoder?.receive(data)
+        if case .usbConnected = fsmState {
+            resources.activeDecoder?.receive(data)
             return
         }
-
-        pendingUSBDecoder?.receive(data)
-    }
-
-    // While USB is active, keep discovery/listening warm but do not retain a live
-    // standby AWDL socket. Fresh AWDL connections must be established after USB drops.
-    private var standbyAWDLConnection: NWConnection?
-    private var standbyAWDLDecoder: MessageDecoder?
-
-    private func startAWDLStandby(_ connection: NWConnection) {
-        if let existing = standbyAWDLConnection, existing !== connection {
-            existing.cancel()
-        }
-
-        standbyAWDLConnection = nil
-        standbyAWDLDecoder = nil
-        connection.cancel()
-    }
-
-    private func startStandbyReceiveLoop(on connection: NWConnection, decoder: MessageDecoder) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            if let data = data, !data.isEmpty {
-                decoder.receive(data)
-            }
-            if isComplete || error != nil {
-                Task { @MainActor in
-                    self?.handleStandbyAWDLDisconnect(connection)
-                }
-                return
-            }
-            Task { @MainActor [weak self] in
-                self?.startStandbyReceiveLoop(on: connection, decoder: decoder)
-            }
-        }
-    }
-
-    private func handleStandbyAWDLDisconnect(_ connection: NWConnection) {
-        if standbyAWDLConnection === connection {
-            standbyAWDLConnection = nil
-            standbyAWDLDecoder = nil
-            logEvent("AWDL standby dropped")
-            return
-        }
-
-        if case .awdlConnected(let current) = connectionState, current === connection {
-            handleDisconnect(connection: connection, transport: .awdl)
-        }
-    }
-
-    private func startReceiveLoop(on connection: NWConnection, decoder: MessageDecoder, transport: ConnectionKind) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            if let data = data, !data.isEmpty {
-                decoder.receive(data)
-            }
-            if isComplete || error != nil {
-                logger.warning("\(transport) connection closed: \(error?.localizedDescription ?? "EOF")")
-                Task { @MainActor in
-                    self?.handleDisconnect(connection: connection, transport: transport)
-                }
-                return
-            }
-            // Continue receiving
-            Task { @MainActor [weak self] in
-                self?.startReceiveLoop(on: connection, decoder: decoder, transport: transport)
-            }
-        }
-    }
-
-    private func handleDisconnect(connection: NWConnection, transport: ConnectionKind) {
-        guard isCurrentConnection(connection, for: transport) else {
-            logEvent("Ignoring disconnect from superseded \(transport) connection")
-            return
-        }
-
-        logEvent("\(transport) disconnected")
-        stopSecureInputPolling()
-
-        // CRITICAL: Release all modifier keys on disconnect (SHORT-11)
-        injectionRouter.releaseModifiers()
-
-        switch (connectionState, transport) {
-        case (.awdlConnected, .awdl):
-            connectionState = .disconnected
-            statusBar.update(state: .disconnected)
-            activeAWDLDeviceID = nil
-            lastAWDLActivityAt = nil
-            logEvent("AWDL dropped; disconnected")
-
-        case (.pairingAWDL, .awdl):
-            connectionState = .disconnected
-            activeAWDLDeviceID = nil
-            lastAWDLActivityAt = nil
-            logEvent("AWDL pairing channel dropped")
-
-        default:
-            break
-        }
+        resources.pendingUSBDecoder?.receive(data)
     }
 
     private func handleUSBDisconnect() {
-        if pendingUSBDecoder != nil {
-            cancelPendingUSBIdentityTimeout()
-            pendingUSBDecoder = nil
-            logEvent("Pending USB connection dropped")
+        if resources.pendingUSBDecoder != nil {
+            handleEvent(.usbDisconnected)
             return
         }
 
-        guard case .usbConnected = connectionState else { return }
-
-        logEvent("usb disconnected")
-        stopSecureInputPolling()
-        injectionRouter.releaseModifiers()
-        promoteStandbyAWDLOrDisconnect()
-    }
-
-    private func promoteStandbyAWDLOrDisconnect() {
-        if let awdlConn = standbyAWDLConnection {
-            logEvent("USB dropped — promoting pre-warmed AWDL connection (TRANS-03)")
-            let decoder = standbyAWDLDecoder
-            standbyAWDLConnection = nil
-            standbyAWDLDecoder = nil
-            connectionState = .awdlConnected(awdlConn)
-            statusBar.update(state: .awdl)
-
-            let encoder = MessageEncoder()
-            activeDecoder = decoder
-            activeEncoder = encoder
-
-            decoder?.onMessage = { [weak self] message in
-                Task { @MainActor in
-                    self?.handleIncomingMessage(message)
-                }
-            }
-            decoder?.onError = { error in
-                logger.error("Decode error: \(error)")
-            }
-
-            if activeDecoder == nil {
-                let freshDecoder = MessageDecoder()
-                freshDecoder.onMessage = { [weak self] message in
-                    Task { @MainActor in
-                        self?.handleIncomingMessage(message)
-                    }
-                }
-                freshDecoder.onError = { error in
-                    logger.error("Decode error: \(error)")
-                }
-                activeDecoder = freshDecoder
-                startReceiveLoop(on: awdlConn, decoder: freshDecoder, transport: .awdl)
-            }
-            startSecureInputPolling()
-        } else {
-            logEvent("USB dropped — no AWDL standby available; disconnected")
-            connectionState = .disconnected
-            statusBar.update(state: .disconnected)
-            activeDecoder = nil
-            activeEncoder = nil
-        }
+        guard case .usbConnected = fsmState else { return }
+        handleEvent(.usbDisconnected)
+        resources.activeDecoder = nil
+        resources.activeEncoder = nil
     }
 
     private func handlePendingUSBMessage(_ message: KeydMessage) {
-        guard pendingUSBDecoder != nil else { return }
+        guard resources.pendingUSBDecoder != nil else { return }
 
         switch message {
         case .sessionResume(let resume):
             if pairingManager.validateOrAdoptPairedDevice(resume.deviceID) {
                 logEvent("USB session accepted for paired device; promoting USB")
-                promotePendingUSBConnection(with: message, logMessage: "USB promoted over AWDL (matched paired device)")
+                promotePendingUSBConnection(deviceID: resume.deviceID, initialMessage: message)
             } else {
                 sendDirectUSB(.pairingInvalidated)
                 logEvent("Rejected USB session resume from non-paired device \(resume.deviceID)")
@@ -616,47 +291,300 @@ final class TransportManager {
 
         default:
             sendDirectUSB(.pairingInvalidated)
-            logEvent("Rejected unexpected USB message while AWDL is active")
+            logEvent("Rejected unexpected USB message from pending state")
             disconnectPendingUSBConnection()
         }
     }
 
-    private func handleIncomingMessage(_ message: KeydMessage) {
-        if case .awdlConnected = connectionState {
-            lastAWDLActivityAt = Date()
+    private func promotePendingUSBConnection(deviceID: String, initialMessage: KeydMessage) {
+        handleEvent(.usbIdentityConfirmed(deviceID: deviceID))
+        handleIncomingMessage(initialMessage)
+    }
+
+    private func disconnectPendingUSBConnection() {
+        handleEvent(.usbIdentityTimeout)
+    }
+
+    // MARK: - AWDL Handling
+
+    private func handleNewAWDLConnection(_ connection: NWConnection) async {
+        logEvent("AWDL connection accepted")
+
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                Task { @MainActor in
+                    await self?.handleAWDLConnectionReady(connection)
+                }
+            case .failed(let error):
+                Task { @MainActor in
+                    self?.logEvent("AWDL connection failed before ready: \(error.localizedDescription)")
+                    self?.removeAWDLSlotIfPending(connection)
+                }
+            default:
+                break
+            }
         }
 
+        connection.start(queue: .global(qos: .userInteractive))
+    }
+
+    private func handleAWDLConnectionReady(_ connection: NWConnection) async {
+        let isPaired = pairingManager.isPaired
+
+        // Route based on current FSM state
+        switch fsmState {
+        case .usbConnected:
+            // AWDL while USB active — close it immediately.
+            handleEvent(.awdlCandidateArrived(isPaired: isPaired))
+            connection.cancel()
+            return
+
+        case .disconnected, .pendingAWDLPool, .awdlConnected:
+            handleEvent(.awdlCandidateArrived(isPaired: isPaired))
+            if isPaired {
+                addPendingAWDLSlot(connection)
+            } else {
+                // pairingAWDL — activate directly as pairing channel
+                let decoder = makeActiveDecoder()
+                resources.activeAWDLConnection = connection
+                startReceiveLoop(on: connection, decoder: decoder, transport: .awdl)
+            }
+            return
+
+        case .pairingAWDL:
+            // Replace stale pairing channel
+            handleEvent(.awdlCandidateArrived(isPaired: isPaired))
+            // Close old pairing channel (done by side effect)
+            let decoder = makeActiveDecoder()
+            resources.activeAWDLConnection = connection
+            startReceiveLoop(on: connection, decoder: decoder, transport: .awdl)
+            return
+
+        case .pendingUSBIdentity:
+            // AWDL arrived while USB identity pending — add to pool if space.
+            if isPaired {
+                addPendingAWDLSlot(connection)
+            } else {
+                connection.cancel()
+                logEvent("Unpaired AWDL candidate rejected while USB identity pending")
+            }
+            return
+        }
+    }
+
+    // MARK: - Pending AWDL Pool
+
+    private func addPendingAWDLSlot(_ connection: NWConnection) {
+        let connID = ObjectIdentifier(connection)
+        let maxSlots = 4
+
+        // Enforce max pool size — evict oldest if at capacity
+        if resources.pendingAWDLSlots.count >= maxSlots {
+            if let oldestKey = resources.pendingAWDLSlots.keys.first {
+                let oldest = resources.pendingAWDLSlots.removeValue(forKey: oldestKey)
+                oldest?.timeoutTask.cancel()
+                oldest?.connection.cancel()
+                logEvent("Evicted oldest pending AWDL slot to make room")
+            }
+        }
+
+        let slotIndex = resources.nextAWDLSlotIndex
+        resources.nextAWDLSlotIndex += 1
+
+        let decoder = MessageDecoder()
+        decoder.onMessage = { [weak self, weak connection] message in
+            guard let connection else { return }
+            Task { @MainActor in
+                self?.handlePendingAWDLPoolMessage(message, connection: connection)
+            }
+        }
+        decoder.onError = { error in
+            logger.error("Pending AWDL decode error: \(error)")
+        }
+
+        let timeoutTask = Task { @MainActor [weak self, weak connection] in
+            let timeoutNs: UInt64 = 3_000_000_000
+            do {
+                try await Task.sleep(nanoseconds: timeoutNs)
+            } catch { return }
+            guard let self, let connection else { return }
+            let cid = ObjectIdentifier(connection)
+            guard self.resources.pendingAWDLSlots[cid] != nil else { return }
+            self.logEvent("Pending AWDL slot timed out without identifying; closing")
+            self.removeAWDLSlotIfPending(connection)
+            let remaining = self.resources.pendingAWDLSlots.count
+            self.handleEvent(.awdlIdentityTimeout(remainingSlots: remaining))
+        }
+
+        let slot = PendingAWDLSlot(connection: connection, decoder: decoder, timeoutTask: timeoutTask, slotIndex: slotIndex)
+        resources.pendingAWDLSlots[connID] = slot
+
+        startPendingAWDLPoolReceiveLoop(on: connection, decoder: decoder)
+    }
+
+    private func removeAWDLSlotIfPending(_ connection: NWConnection) {
+        let connID = ObjectIdentifier(connection)
+        guard let slot = resources.pendingAWDLSlots.removeValue(forKey: connID) else { return }
+        slot.timeoutTask.cancel()
+        slot.connection.cancel()
+    }
+
+    private func removeAllPendingAWDLSlots(logMessage: String?) {
+        for (_, slot) in resources.pendingAWDLSlots {
+            slot.timeoutTask.cancel()
+            slot.connection.cancel()
+        }
+        resources.pendingAWDLSlots.removeAll()
+        if let logMessage { logEvent(logMessage) }
+    }
+
+    private func startPendingAWDLPoolReceiveLoop(on connection: NWConnection, decoder: MessageDecoder) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self, weak connection] data, _, isComplete, error in
+            guard let connection else { return }
+            if let data = data, !data.isEmpty {
+                decoder.receive(data)
+            }
+            if isComplete || error != nil {
+                Task { @MainActor in
+                    guard let self else { return }
+                    let connID = ObjectIdentifier(connection)
+                    if self.resources.pendingAWDLSlots[connID] != nil {
+                        self.removeAWDLSlotIfPending(connection)
+                        let remaining = self.resources.pendingAWDLSlots.count
+                        if remaining == 0, case .pendingAWDLPool = self.fsmState {
+                            self.handleEvent(.awdlDisconnected)
+                        }
+                    } else {
+                        // Slot was promoted — route through active disconnect handler
+                        self.handleDisconnect(connection: connection, transport: .awdl)
+                    }
+                }
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.startPendingAWDLPoolReceiveLoop(on: connection, decoder: decoder)
+            }
+        }
+    }
+
+    private func handlePendingAWDLPoolMessage(_ message: KeydMessage, connection: NWConnection) {
+        let connID = ObjectIdentifier(connection)
+        guard resources.pendingAWDLSlots[connID] != nil else { return }
+
+        switch message {
+        case .sessionResume(let resume):
+            if pairingManager.validateOrAdoptPairedDevice(resume.deviceID) {
+                logEvent("Pending AWDL slot matches paired device \(resume.deviceID); promoting")
+                promotePendingAWDLPoolSlot(connection: connection, deviceID: resume.deviceID, initialMessage: message)
+            } else {
+                sendDirectAWDL(.pairingInvalidated, on: connection)
+                logEvent("Rejected AWDL session resume from non-paired device \(resume.deviceID)")
+                removeAWDLSlotIfPending(connection)
+                let remaining = resources.pendingAWDLSlots.count
+                handleEvent(.awdlIdentityTimeout(remainingSlots: remaining))
+            }
+
+        case .pairingRequest:
+            sendDirectAWDL(.pairingInvalidated, on: connection)
+            logEvent("Rejected AWDL pairing request from pending pool while already paired")
+            removeAWDLSlotIfPending(connection)
+            let remaining = resources.pendingAWDLSlots.count
+            handleEvent(.awdlIdentityTimeout(remainingSlots: remaining))
+
+        case .transportHeartbeat, .transportHeartbeatAck:
+            break
+
+        default:
+            sendDirectAWDL(.pairingInvalidated, on: connection)
+            logEvent("Rejected unexpected AWDL message from pending pool")
+            removeAWDLSlotIfPending(connection)
+            let remaining = resources.pendingAWDLSlots.count
+            handleEvent(.awdlIdentityTimeout(remainingSlots: remaining))
+        }
+    }
+
+    private func promotePendingAWDLPoolSlot(connection: NWConnection, deviceID: String, initialMessage: KeydMessage) {
+        let connID = ObjectIdentifier(connection)
+        guard let slot = resources.pendingAWDLSlots.removeValue(forKey: connID) else { return }
+        slot.timeoutTask.cancel()
+
+        // Rewire decoder to main message handler
+        slot.decoder.onMessage = { [weak self] message in
+            Task { @MainActor in self?.handleIncomingMessage(message) }
+        }
+        slot.decoder.onError = { error in logger.error("Decode error: \(error)") }
+
+        // Close all other pending AWDL slots
+        let remaining = resources.pendingAWDLSlots.count
+        removeAllPendingAWDLSlots(logMessage: remaining > 0 ? "Clearing \(remaining) remaining pending AWDL slots after promotion" : nil)
+
+        // Close existing active AWDL connection if any
+        if let old = resources.activeAWDLConnection, old !== connection {
+            stopSecureInputPolling()
+            injectionRouter.releaseModifiers()
+            old.cancel()
+        }
+
+        resources.activeDecoder = slot.decoder
+        resources.activeEncoder = MessageEncoder()
+        resources.activeAWDLConnection = connection
+
+        // Fire FSM event with remaining=0 (pool cleared)
+        handleEvent(.awdlIdentityConfirmed(deviceID: deviceID, remainingSlots: 0))
+        handleIncomingMessage(initialMessage)
+    }
+
+    // MARK: - Receive Loops
+
+    private func startReceiveLoop(on connection: NWConnection, decoder: MessageDecoder, transport: ConnectionKind) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            if let data = data, !data.isEmpty {
+                decoder.receive(data)
+            }
+            if isComplete || error != nil {
+                logger.warning("\(transport) connection closed: \(error?.localizedDescription ?? "EOF")")
+                Task { @MainActor in
+                    self?.handleDisconnect(connection: connection, transport: transport)
+                }
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.startReceiveLoop(on: connection, decoder: decoder, transport: transport)
+            }
+        }
+    }
+
+    private func handleDisconnect(connection: NWConnection, transport: ConnectionKind) {
+        guard isCurrentConnection(connection, for: transport) else {
+            logEvent("Ignoring disconnect from superseded \(transport) connection")
+            return
+        }
+        handleEvent(transport == .awdl ? .awdlDisconnected : .usbDisconnected)
+        resources.activeDecoder = nil
+        resources.activeEncoder = nil
+        resources.activeAWDLConnection = nil
+    }
+
+    private func isCurrentConnection(_ connection: NWConnection, for transport: ConnectionKind) -> Bool {
+        guard transport == .awdl else { return false }
+        return resources.activeAWDLConnection === connection
+    }
+
+    // MARK: - Incoming Message Handling
+
+    private func handleIncomingMessage(_ message: KeydMessage) {
+        // Guard: reject pairing requests when already paired
         if pairingManager.isPaired, case .pairingRequest = message {
             send(.pairingInvalidated)
             logEvent("Rejected pairing request while another device is already paired")
-
-            switch connectionState {
-            case .pairingAWDL(let connection):
-                connection.cancel()
-                connectionState = .disconnected
-                statusBar.update(state: .disconnected)
-                activeAWDLDeviceID = nil
-                lastAWDLActivityAt = nil
-                activeDecoder = nil
-                activeEncoder = nil
-                logEvent("Dropped unexpected AWDL pairing candidate")
-            case .awdlConnected(let connection):
-                connection.cancel()
-                connectionState = .disconnected
-                statusBar.update(state: .disconnected)
-                activeAWDLDeviceID = nil
-                lastAWDLActivityAt = nil
-                activeDecoder = nil
-                activeEncoder = nil
-                stopSecureInputPolling()
-                injectionRouter.releaseModifiers()
-                logEvent("Dropped unexpected AWDL pairing connection")
-            default:
-                break
+            if case .pairingAWDL = fsmState {
+                handleEvent(.pairingFailed)
             }
             return
         }
 
+        // Guard: reject non-pairing messages when not paired
         if !pairingManager.isPaired {
             switch message {
             case .pairingRequest, .sessionResume:
@@ -685,59 +613,29 @@ final class TransportManager {
                 accepted: accepted
             )
             send(.pairingResponse(response))
-            if accepted, case .pairingAWDL(let connection) = connectionState {
-                connectionState = .awdlConnected(connection)
-                statusBar.update(state: .awdl)
-                startSecureInputPolling()
-                activeAWDLDeviceID = request.deviceID
-                lastAWDLActivityAt = Date()
-                logEvent("AWDL promoted after pairing")
-            }
             if accepted {
+                handleEvent(.pairingCompleted(deviceID: request.deviceID))
                 onPairingCompleted?()
+            } else {
+                handleEvent(.pairingFailed)
             }
             logEvent("Pairing \(accepted ? "accepted" : "rejected") for \(request.deviceID)")
 
         case .sessionResume(let resume):
             if pairingManager.isPaired {
                 if pairingManager.validateOrAdoptPairedDevice(resume.deviceID) {
-                    if case .pairingAWDL(let connection) = connectionState {
-                        connectionState = .awdlConnected(connection)
-                        statusBar.update(state: .awdl)
-                        startSecureInputPolling()
-                        activeAWDLDeviceID = resume.deviceID
-                        lastAWDLActivityAt = Date()
-                        logEvent("AWDL session accepted for paired device")
-                    } else if case .awdlConnected = connectionState {
-                        activeAWDLDeviceID = resume.deviceID
-                        lastAWDLActivityAt = Date()
+                    if case .pairingAWDL = fsmState {
+                        handleEvent(.pairingCompleted(deviceID: resume.deviceID))
                     }
                     logEvent("Session resumed for \(resume.deviceID)")
                 } else {
                     send(.pairingInvalidated)
                     logEvent("Rejected session resume from non-paired device \(resume.deviceID)")
-
-                    if case .pairingAWDL(let connection) = connectionState {
-                        connection.cancel()
-                        connectionState = .disconnected
-                        statusBar.update(state: .disconnected)
-                        activeAWDLDeviceID = nil
-                        lastAWDLActivityAt = nil
-                        activeDecoder = nil
-                        activeEncoder = nil
-                        logEvent("Dropped unexpected AWDL candidate after resume mismatch")
-                    } else if case .awdlConnected(let connection) = connectionState {
-                        connection.cancel()
-                        connectionState = .disconnected
-                        statusBar.update(state: .disconnected)
-                        activeAWDLDeviceID = nil
-                        lastAWDLActivityAt = nil
-                        activeDecoder = nil
-                        activeEncoder = nil
-                        stopSecureInputPolling()
-                        injectionRouter.releaseModifiers()
-                        logEvent("Dropped unexpected AWDL session after resume mismatch")
-                    }
+                    handleEvent(.awdlDisconnected)
+                    resources.activeDecoder = nil
+                    resources.activeEncoder = nil
+                    resources.activeAWDLConnection?.cancel()
+                    resources.activeAWDLConnection = nil
                 }
             } else {
                 send(.pairingInvalidated)
@@ -753,18 +651,20 @@ final class TransportManager {
             send(.transportHeartbeatAck)
 
         case .transportHeartbeatAck:
-            break
+            handleEvent(.heartbeatAck)
 
         default:
             injectionRouter.route(message)
         }
     }
 
+    // MARK: - Send
+
     func send(_ message: KeydMessage) {
-        guard let encoder = activeEncoder else { return }
+        guard let encoder = resources.activeEncoder else { return }
         guard let frame = try? encoder.encode(message) else { return }
 
-        switch connectionState {
+        switch fsmState {
         case .usbConnected:
             Task { [weak self, frame] in
                 guard let self else { return }
@@ -776,15 +676,15 @@ final class TransportManager {
                     }
                 }
             }
-        case .pairingAWDL(let connection), .awdlConnected(let connection):
-            connection.send(content: frame, completion: .idempotent)
-        case .disconnected, .awdlPending:
+        case .pairingAWDL, .awdlConnected:
+            resources.activeAWDLConnection?.send(content: frame, completion: .idempotent)
+        case .disconnected, .pendingAWDLPool, .pendingUSBIdentity:
             break
         }
     }
 
     func invalidateRemotePairing() {
-        guard activeConnection != nil else {
+        guard resources.activeEncoder != nil else {
             logEvent("No active session to invalidate")
             return
         }
@@ -793,46 +693,21 @@ final class TransportManager {
     }
 
     func resetActiveSession() {
-        activeConnection?.cancel()
+        resources.activeAWDLConnection?.cancel()
         Task { [usbListener] in
             await usbListener.disconnectCurrentConnection()
         }
-        standbyAWDLConnection?.cancel()
-        standbyAWDLConnection = nil
-        standbyAWDLDecoder = nil
-        cancelPendingUSBIdentityTimeout()
-        pendingUSBDecoder = nil
-        removeAllPendingAWDLSlots()
-        activeAWDLDeviceID = nil
-        lastAWDLActivityAt = nil
-        activeDecoder = nil
-        activeEncoder = nil
-        connectionState = .disconnected
+        cancelUSBIdentityTimeout()
+        resources.pendingUSBDecoder = nil
+        removeAllPendingAWDLSlots(logMessage: nil)
+        resources.activeDecoder = nil
+        resources.activeEncoder = nil
+        resources.activeAWDLConnection = nil
+        fsmState = .disconnected
         statusBar.update(state: .disconnected)
         stopSecureInputPolling()
         injectionRouter.releaseModifiers()
         logEvent("Active transport session reset")
-    }
-
-    private var activeConnection: NWConnection? {
-        switch connectionState {
-        case .pairingAWDL(let c): return c
-        case .awdlConnected(let c): return c
-        case .usbConnected: return nil
-        case .disconnected: return nil
-        case .awdlPending: return nil
-        }
-    }
-
-    private func isCurrentConnection(_ connection: NWConnection, for transport: ConnectionKind) -> Bool {
-        switch (connectionState, transport) {
-        case (.pairingAWDL(let current), .awdl):
-            return current === connection
-        case (.awdlConnected(let current), .awdl):
-            return current === connection
-        default:
-            return false
-        }
     }
 
     // MARK: - Secure Input Polling (AGENT-06)
@@ -840,9 +715,7 @@ final class TransportManager {
     private func startSecureInputPolling() {
         stopSecureInputPolling()
         secureInputTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.pollSecureInput()
-            }
+            Task { @MainActor in self?.pollSecureInput() }
         }
     }
 
@@ -861,111 +734,86 @@ final class TransportManager {
         }
     }
 
-    // MARK: - Event Log (for debug overlay)
+    // MARK: - Structured Event Log (for debug overlay)
 
     func logEvent(_ event: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         let entry = "[\(timestamp)] \(event)"
-        connectionEventLog.append(entry)
-        if connectionEventLog.count > 100 { connectionEventLog.removeFirst() }
         logger.info(entry)
+        // Also append to structured log as a standalone note
+        let structuredEntry = TransportEventEntry(
+            previousState: fsmState.description,
+            event: "log",
+            newState: fsmState.description,
+            sideEffects: [event]
+        )
+        eventLog.append(structuredEntry)
     }
 
-    func getEventLog() -> [String] { connectionEventLog }
+    func getEventLog() -> [String] {
+        eventLog.export().map { entry in
+            let formatter = DateFormatter()
+            formatter.dateStyle = .none
+            formatter.timeStyle = .medium
+            let ts = formatter.string(from: entry.timestamp)
+            if entry.event == "log" {
+                return "[\(ts)] \(entry.sideEffects.first ?? "")"
+            }
+            return "[\(ts)] \(entry.previousState) --[\(entry.event)]--> \(entry.newState)"
+        }
+    }
+
+    func exportEventLogJSON() -> Data {
+        eventLog.exportJSON()
+    }
+
+    // MARK: - Resource Helpers
 
     private func makeActiveDecoder() -> MessageDecoder {
         let decoder = MessageDecoder()
         decoder.onMessage = { [weak self] message in
-            Task { @MainActor in
-                self?.handleIncomingMessage(message)
-            }
+            Task { @MainActor in self?.handleIncomingMessage(message) }
         }
-        decoder.onError = { error in
-            logger.error("Decode error: \(error)")
-        }
-        activeDecoder = decoder
-        activeEncoder = MessageEncoder()
+        decoder.onError = { error in logger.error("Decode error: \(error)") }
+        resources.activeDecoder = decoder
+        resources.activeEncoder = MessageEncoder()
         return decoder
     }
 
     private func makePendingUSBDecoder() -> MessageDecoder {
         let decoder = MessageDecoder()
         decoder.onMessage = { [weak self] message in
-            Task { @MainActor in
-                self?.handlePendingUSBMessage(message)
-            }
+            Task { @MainActor in self?.handlePendingUSBMessage(message) }
         }
-        decoder.onError = { error in
-            logger.error("Decode error: \(error)")
-        }
-        pendingUSBDecoder = decoder
+        decoder.onError = { error in logger.error("Pending USB decode error: \(error)") }
+        resources.pendingUSBDecoder = decoder
         return decoder
     }
 
-    private func promotePendingUSBConnection(with initialMessage: KeydMessage, logMessage: String) {
-        guard let decoder = pendingUSBDecoder else { return }
-
-        pendingUSBDecoder = nil
-        cancelPendingUSBIdentityTimeout()
-        decoder.onMessage = { [weak self] message in
-            Task { @MainActor in
-                self?.handleIncomingMessage(message)
-            }
-        }
-        decoder.onError = { error in
-            logger.error("Decode error: \(error)")
-        }
-
-        if case .awdlConnected(let old) = connectionState {
-            old.cancel()
-            activeAWDLDeviceID = nil
-            lastAWDLActivityAt = nil
-        }
-
-        // Also clear any pending AWDL slots
-        removeAllPendingAWDLSlots()
-
-        connectionState = .usbConnected
-        statusBar.update(state: .usb)
-        activeDecoder = decoder
-        activeEncoder = MessageEncoder()
-        logEvent(logMessage)
-        startSecureInputPolling()
-        handleIncomingMessage(initialMessage)
-    }
-
-    private func disconnectPendingUSBConnection() {
-        cancelPendingUSBIdentityTimeout()
-        pendingUSBDecoder = nil
-        Task { [usbListener] in
-            await usbListener.disconnectCurrentConnection()
-        }
-    }
-
-    private func schedulePendingUSBIdentityTimeout(timeoutNanoseconds: UInt64 = 2_000_000_000) {
-        pendingUSBIdentityTimeoutTask?.cancel()
-        pendingUSBIdentityTimeoutTask = Task { @MainActor [weak self] in
+    private func scheduleUSBIdentityTimeout(timeoutNanoseconds: UInt64 = 2_000_000_000) {
+        resources.pendingUSBIdentityTimeoutTask?.cancel()
+        resources.pendingUSBIdentityTimeoutTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
-            } catch {
-                return
-            }
-
-            guard let self, self.pendingUSBDecoder != nil else { return }
+            } catch { return }
+            guard let self, self.resources.pendingUSBDecoder != nil else { return }
             self.logEvent("Pending USB connection did not identify itself; rotating to next USB device")
-            self.disconnectPendingUSBConnection()
+            self.handleEvent(.usbIdentityTimeout)
+            self.resources.pendingUSBDecoder = nil
+            Task { [usbListener = self.usbListener] in
+                await usbListener.disconnectCurrentConnection()
+            }
         }
     }
 
-    private func cancelPendingUSBIdentityTimeout() {
-        pendingUSBIdentityTimeoutTask?.cancel()
-        pendingUSBIdentityTimeoutTask = nil
+    private func cancelUSBIdentityTimeout() {
+        resources.pendingUSBIdentityTimeoutTask?.cancel()
+        resources.pendingUSBIdentityTimeoutTask = nil
     }
 
     private func sendDirectUSB(_ message: KeydMessage) {
         let encoder = MessageEncoder()
         guard let frame = try? encoder.encode(message) else { return }
-
         Task { [weak self, frame] in
             guard let self else { return }
             do {
@@ -983,15 +831,6 @@ final class TransportManager {
         guard let frame = try? encoder.encode(message) else { return }
         connection.send(content: frame, completion: .idempotent)
     }
-
-    private func shouldProbeAWDLCandidateWhileActive() -> Bool {
-        guard case .awdlConnected = connectionState else { return true }
-        // Allow one probe at a time. The pending pool has its own 3s identity
-        // timeout, so an unidentified connection won't linger. This ensures
-        // a paired device can reconnect immediately after a hard-close even
-        // while the stale old AWDL socket hasn't been detected as dead yet.
-        return pendingAWDLSlots.isEmpty
-    }
 }
 
 // MARK: - Actor callback setters
@@ -1005,3 +844,4 @@ extension AWDLListener {
         onConnection = handler
     }
 }
+

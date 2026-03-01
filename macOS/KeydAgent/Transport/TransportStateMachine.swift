@@ -44,6 +44,15 @@ enum AgentTransportState: Equatable, CustomStringConvertible {
             return "awdlConnected(\(id))"
         }
     }
+
+    /// The current active device ID, if any confirmed session is active.
+    var activeDeviceID: String? {
+        switch self {
+        case .usbConnected(let id): return id
+        case .awdlConnected(let id): return id
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Event
@@ -165,103 +174,105 @@ func agentTransportTransition(
     on event: AgentTransportEvent
 ) -> (AgentTransportState, [AgentTransportSideEffect]) {
 
-    switch (state, event) {
+    switch event {
 
-    // MARK: USB Arrived
+    // MARK: - USB Arrived
 
-    case (.disconnected, .usbConnectionArrived(let deviceID)):
-        let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
-        return (newState, [
-            .startUSBIdentityTimer,
-            .updateStatusBar(state: newState),
-            .logEvent(description: "USB connected while disconnected; waiting for identity")
-        ])
+    case .usbConnectionArrived(let deviceID):
+        switch state {
+        case .disconnected:
+            let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
+            return (newState, [
+                .startUSBIdentityTimer,
+                .updateStatusBar(state: newState),
+                .logEvent(description: "USB connected while disconnected; waiting for identity")
+            ])
 
-    case (.awdlConnected, .usbConnectionArrived(let deviceID)):
-        // USB arrived while AWDL is active — start identity check; do NOT disrupt AWDL yet.
-        let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
-        return (newState, [
-            .startUSBIdentityTimer,
-            .logEvent(description: "USB connected while AWDL active; waiting for USB identity")
-        ])
+        case .awdlConnected:
+            // USB arrived while AWDL is active — start identity check; do NOT disrupt AWDL yet.
+            let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
+            return (newState, [
+                .startUSBIdentityTimer,
+                .logEvent(description: "USB connected while AWDL active; waiting for USB identity")
+            ])
 
-    case (.awdlConnected(let awdlID), .usbConnectionArrived(let deviceID)) where deviceID == awdlID:
-        // Same device connecting over USB while also on AWDL — start identity check.
-        let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
-        return (newState, [
-            .startUSBIdentityTimer,
-            .logEvent(description: "Same device connecting over USB while AWDL active; waiting for identity")
-        ])
+        case .pendingAWDLPool(let count):
+            // USB arrived while AWDL pool is pending — clear pool and wait for USB identity.
+            let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
+            return (newState, [
+                .clearPendingAWDLPool,
+                .startUSBIdentityTimer,
+                .updateStatusBar(state: newState),
+                .logEvent(description: "USB connected while AWDL pool pending (\(count) slots cleared); waiting for USB identity")
+            ])
 
-    case (.pendingAWDLPool(let count), .usbConnectionArrived(let deviceID)):
-        // USB arrived while AWDL pool is pending — clear pool and wait for USB identity.
-        let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
-        return (newState, [
-            .clearPendingAWDLPool,
-            .startUSBIdentityTimer,
-            .updateStatusBar(state: newState),
-            .logEvent(description: "USB connected while AWDL pool pending (\(count) slots cleared); waiting for USB identity")
-        ])
+        case .pairingAWDL:
+            // USB arrived while AWDL pairing channel open — close AWDL pairing and wait for USB identity.
+            let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
+            return (newState, [
+                .closeConnection(transport: .awdl),
+                .startUSBIdentityTimer,
+                .updateStatusBar(state: newState),
+                .logEvent(description: "USB connected while AWDL pairing channel open; closed AWDL and waiting for USB identity")
+            ])
 
-    case (.pairingAWDL, .usbConnectionArrived(let deviceID)):
-        // USB arrived while AWDL pairing channel open — close AWDL pairing and wait for USB identity.
-        let newState = AgentTransportState.pendingUSBIdentity(deviceID: deviceID)
-        return (newState, [
-            .closeConnection(transport: .awdl),
-            .startUSBIdentityTimer,
-            .updateStatusBar(state: newState),
-            .logEvent(description: "USB connected while AWDL pairing channel open; closed AWDL and waiting for USB identity")
-        ])
+        case .usbConnected:
+            return (state, [.logEvent(description: "Ignoring duplicate USB connection")])
 
-    case (.usbConnected, .usbConnectionArrived):
-        // Duplicate USB connection — ignore.
-        return (state, [.logEvent(description: "Ignoring duplicate USB connection")])
+        case .pendingUSBIdentity:
+            return (state, [.logEvent(description: "USB arrived while identity pending; ignoring duplicate")])
+        }
 
-    case (.pendingUSBIdentity, .usbConnectionArrived):
-        // Another USB arrived while one is pending — ignore (first-come wins).
-        return (state, [.logEvent(description: "USB arrived while identity pending; ignoring duplicate")])
+    // MARK: - USB Identity Confirmed
 
-    // MARK: USB Identity Confirmed
+    case .usbIdentityConfirmed(let deviceID):
+        switch state {
+        case .pendingUSBIdentity:
+            let newState = AgentTransportState.usbConnected(deviceID: deviceID)
+            return (newState, [
+                .cancelUSBIdentityTimer,
+                .clearPendingAWDLPool,
+                .closeConnection(transport: .awdl),
+                .promoteToActive(transport: .usb),
+                .updateStatusBar(state: newState),
+                .startSecureInputPolling,
+                .logEvent(description: "USB identity confirmed for \(deviceID); USB session active")
+            ])
 
-    case (.pendingUSBIdentity, .usbIdentityConfirmed(let deviceID)):
-        let newState = AgentTransportState.usbConnected(deviceID: deviceID)
-        return (newState, [
-            .cancelUSBIdentityTimer,
-            .clearPendingAWDLPool,
-            .promoteToActive(transport: .usb),
-            .updateStatusBar(state: newState),
-            .startSecureInputPolling,
-            .logEvent(description: "USB identity confirmed for \(deviceID); USB session active")
-        ])
+        case .awdlConnected(let awdlID):
+            // USB confirmed for paired device — check if it's the same device as AWDL.
+            if awdlID == deviceID {
+                // Same device: promote USB over AWDL.
+                let newState = AgentTransportState.usbConnected(deviceID: deviceID)
+                return (newState, [
+                    .cancelUSBIdentityTimer,
+                    .closeConnection(transport: .awdl),
+                    .clearPendingAWDLPool,
+                    .promoteToActive(transport: .usb),
+                    .updateStatusBar(state: newState),
+                    .logEvent(description: "USB identity confirmed for \(deviceID); promoted over AWDL")
+                ])
+            } else {
+                // Different device: reject USB (INV-007).
+                return (state, [
+                    .cancelUSBIdentityTimer,
+                    .closeConnection(transport: .usb),
+                    .sendPairingInvalidated,
+                    .logEvent(description: "USB identity from non-matching device \(deviceID) rejected; AWDL session preserved")
+                ])
+            }
 
-    case (.awdlConnected(let awdlID), .usbIdentityConfirmed(let deviceID)) where awdlID == deviceID:
-        // USB identity confirmed for the same device already on AWDL — promote USB.
-        let newState = AgentTransportState.usbConnected(deviceID: deviceID)
-        return (newState, [
-            .cancelUSBIdentityTimer,
-            .closeConnection(transport: .awdl),
-            .clearPendingAWDLPool,
-            .promoteToActive(transport: .usb),
-            .updateStatusBar(state: newState),
-            .logEvent(description: "USB identity confirmed for \(deviceID); promoted over AWDL")
-        ])
+        default:
+            // Identity confirmed while not in a pending state — ignore.
+            return (state, [
+                .cancelUSBIdentityTimer,
+                .logEvent(description: "USB identity confirmed in unexpected state \(state); ignored")
+            ])
+        }
 
-    case (.awdlConnected, .usbIdentityConfirmed(let deviceID)):
-        // USB identity confirmed for a DIFFERENT device than the active AWDL device.
-        // Per INV-007: USB promotion only for matching identity. Reject.
-        return (state, [
-            .cancelUSBIdentityTimer,
-            .closeConnection(transport: .usb),
-            .sendPairingInvalidated,
-            .logEvent(description: "USB identity from non-matching device \(deviceID) rejected; AWDL session preserved")
-        ])
+    // MARK: - USB Identity Timeout
 
-    // MARK: USB Identity Timeout
-
-    case (.pendingUSBIdentity, .usbIdentityTimeout):
-        // Return to the state we were transitioning from.
-        // Since we don't track the prior state in the enum, we go to disconnected.
-        // TransportManager handles USB listener rotation.
+    case .usbIdentityTimeout:
         return (.disconnected, [
             .cancelUSBIdentityTimer,
             .closeConnection(transport: .usb),
@@ -269,212 +280,237 @@ func agentTransportTransition(
             .logEvent(description: "USB identity timeout; rotating to next device")
         ])
 
-    // MARK: USB Disconnected
+    // MARK: - USB Disconnected
 
-    case (.usbConnected, .usbDisconnected):
-        return (.disconnected, [
-            .updateStatusBar(state: .disconnected),
-            .stopSecureInputPolling,
-            .releaseModifiers,
-            .logEvent(description: "USB disconnected; session ended")
-        ])
-
-    case (.pendingUSBIdentity, .usbDisconnected):
-        return (.disconnected, [
-            .cancelUSBIdentityTimer,
-            .updateStatusBar(state: .disconnected),
-            .logEvent(description: "Pending USB connection dropped before identity")
-        ])
-
-    case (_, .usbDisconnected):
-        return (state, [.logEvent(description: "USB disconnected in state \(state); no action")])
-
-    // MARK: AWDL Candidate Arrived
-
-    case (.disconnected, .awdlCandidateArrived(let isPaired)):
-        if isPaired {
-            return (.pendingAWDLPool(slotCount: 1), [
-                .logEvent(description: "AWDL candidate arrived while disconnected (paired); added to pending pool")
+    case .usbDisconnected:
+        switch state {
+        case .usbConnected:
+            return (.disconnected, [
+                .updateStatusBar(state: .disconnected),
+                .stopSecureInputPolling,
+                .releaseModifiers,
+                .logEvent(description: "USB disconnected; session ended")
             ])
-        } else {
+        case .pendingUSBIdentity:
+            return (.disconnected, [
+                .cancelUSBIdentityTimer,
+                .updateStatusBar(state: .disconnected),
+                .logEvent(description: "Pending USB connection dropped before identity")
+            ])
+        default:
+            return (state, [.logEvent(description: "USB disconnected in state \(state); no action")])
+        }
+
+    // MARK: - AWDL Candidate Arrived
+
+    case .awdlCandidateArrived(let isPaired):
+        switch state {
+        case .disconnected:
+            if isPaired {
+                return (.pendingAWDLPool(slotCount: 1), [
+                    .logEvent(description: "AWDL candidate arrived while disconnected (paired); added to pending pool")
+                ])
+            } else {
+                return (.pairingAWDL, [
+                    .logEvent(description: "AWDL candidate arrived while disconnected (unpaired); pairing channel open")
+                ])
+            }
+
+        case .pendingAWDLPool(let count):
+            if isPaired {
+                return (.pendingAWDLPool(slotCount: count + 1), [
+                    .logEvent(description: "Additional AWDL candidate added to pool (\(count + 1) pending)")
+                ])
+            } else {
+                return (state, [
+                    .closeConnection(transport: .awdl),
+                    .logEvent(description: "Unpaired AWDL candidate rejected while pending pool active")
+                ])
+            }
+
+        case .pairingAWDL:
+            // Replace stale pairing channel.
             return (.pairingAWDL, [
-                .logEvent(description: "AWDL candidate arrived while disconnected (unpaired); pairing channel open")
+                .closeConnection(transport: .awdl),
+                .logEvent(description: "Replaced stale AWDL pairing channel with new candidate")
             ])
+
+        case .awdlConnected:
+            if isPaired {
+                // Probe new candidate in the pending pool while session stays active.
+                return (state, [
+                    .logEvent(description: "Additional AWDL candidate arrived while AWDL active; probing in pending pool")
+                ])
+            } else {
+                return (state, [
+                    .closeConnection(transport: .awdl),
+                    .logEvent(description: "Unpaired AWDL candidate rejected while AWDL active")
+                ])
+            }
+
+        case .usbConnected:
+            return (state, [
+                .closeConnection(transport: .awdl),
+                .logEvent(description: "AWDL candidate rejected while USB is primary")
+            ])
+
+        case .pendingUSBIdentity:
+            if isPaired {
+                // Allow into pool even while USB identity is pending.
+                return (state, [
+                    .logEvent(description: "AWDL candidate arrived while USB identity pending; added to pool")
+                ])
+            } else {
+                return (state, [
+                    .closeConnection(transport: .awdl),
+                    .logEvent(description: "Unpaired AWDL candidate rejected while USB identity pending")
+                ])
+            }
         }
 
-    case (.pendingAWDLPool(let count), .awdlCandidateArrived(true)):
-        // Add another slot to the pool (up to 4, enforced by TransportManager).
-        return (.pendingAWDLPool(slotCount: count + 1), [
-            .logEvent(description: "Additional AWDL candidate added to pool (\(count + 1) pending)")
-        ])
+    // MARK: - AWDL Identity Confirmed (from pending pool)
 
-    case (.pendingAWDLPool, .awdlCandidateArrived(false)):
-        // Unpaired device in pairing mode while pool is active — close it immediately.
-        return (state, [
-            .closeConnection(transport: .awdl),
-            .logEvent(description: "Unpaired AWDL candidate rejected while pending pool active")
-        ])
+    case .awdlIdentityConfirmed(let deviceID, _):
+        switch state {
+        case .pendingAWDLPool:
+            let newState = AgentTransportState.awdlConnected(deviceID: deviceID)
+            return (newState, [
+                .clearPendingAWDLPool,
+                .promoteToActive(transport: .awdl),
+                .updateStatusBar(state: newState),
+                .startSecureInputPolling,
+                .logEvent(description: "AWDL identity confirmed for \(deviceID); AWDL session active")
+            ])
 
-    case (.pairingAWDL, .awdlCandidateArrived):
-        // Replace stale pairing channel.
-        return (.pairingAWDL, [
-            .closeConnection(transport: .awdl),
-            .logEvent(description: "Replaced stale AWDL pairing channel with new candidate")
-        ])
+        case .awdlConnected:
+            // New slot confirmed identity while another AWDL session is active — replace.
+            let newState = AgentTransportState.awdlConnected(deviceID: deviceID)
+            return (newState, [
+                .clearPendingAWDLPool,
+                .closeConnection(transport: .awdl),
+                .promoteToActive(transport: .awdl),
+                .updateStatusBar(state: newState),
+                .logEvent(description: "AWDL session replaced by new confirmed slot for \(deviceID)")
+            ])
 
-    case (.awdlConnected, .awdlCandidateArrived(true)):
-        // While AWDL is active and paired, probe the new candidate in the pending pool.
-        return (.awdlConnected(deviceID: { if case .awdlConnected(let id) = state { return id } else { return "" } }()), [
-            .logEvent(description: "Additional AWDL candidate arrived while AWDL active; added to pending pool for probing")
-        ])
+        default:
+            return (state, [.logEvent(description: "AWDL identity confirmed in unexpected state \(state); ignored")])
+        }
 
-    case (.awdlConnected, .awdlCandidateArrived(false)):
-        return (state, [
-            .closeConnection(transport: .awdl),
-            .logEvent(description: "Unpaired AWDL candidate rejected while AWDL active")
-        ])
+    // MARK: - AWDL Identity Timeout
 
-    case (.usbConnected, .awdlCandidateArrived):
-        // AWDL arrived while USB is active — close it immediately (no standby).
-        return (state, [
-            .closeConnection(transport: .awdl),
-            .logEvent(description: "AWDL candidate rejected while USB is primary")
-        ])
+    case .awdlIdentityTimeout(let remaining):
+        switch state {
+        case .pendingAWDLPool:
+            if remaining == 0 {
+                return (.disconnected, [
+                    .updateStatusBar(state: .disconnected),
+                    .logEvent(description: "Last AWDL pending slot timed out; disconnected")
+                ])
+            } else {
+                return (.pendingAWDLPool(slotCount: remaining), [
+                    .logEvent(description: "AWDL slot timed out; \(remaining) slots remaining in pool")
+                ])
+            }
+        case .awdlConnected:
+            // Timeout on a probe slot while session active — ignore.
+            return (state, [.logEvent(description: "AWDL probe slot timed out; active session unaffected")])
+        default:
+            return (state, [.logEvent(description: "AWDL identity timeout in state \(state); ignored")])
+        }
 
-    // MARK: AWDL Identity Confirmed (from pending pool)
+    // MARK: - AWDL Disconnected
 
-    case (.pendingAWDLPool, .awdlIdentityConfirmed(let deviceID, _)):
-        let newState = AgentTransportState.awdlConnected(deviceID: deviceID)
-        return (newState, [
-            .clearPendingAWDLPool,
-            .promoteToActive(transport: .awdl),
-            .updateStatusBar(state: newState),
-            .startSecureInputPolling,
-            .logEvent(description: "AWDL identity confirmed for \(deviceID); AWDL session active")
-        ])
-
-    case (.awdlConnected, .awdlIdentityConfirmed(let deviceID, _)):
-        // New AWDL slot confirmed identity while another AWDL session is active.
-        // Replace the active session with the newly confirmed one.
-        let newState = AgentTransportState.awdlConnected(deviceID: deviceID)
-        return (newState, [
-            .clearPendingAWDLPool,
-            .closeConnection(transport: .awdl),
-            .promoteToActive(transport: .awdl),
-            .updateStatusBar(state: newState),
-            .logEvent(description: "AWDL session replaced by new confirmed slot for \(deviceID)")
-        ])
-
-    // MARK: AWDL Identity Timeout (slot expired)
-
-    case (.pendingAWDLPool(let count), .awdlIdentityTimeout(let remaining)):
-        if remaining == 0 {
+    case .awdlDisconnected:
+        switch state {
+        case .awdlConnected:
             return (.disconnected, [
                 .updateStatusBar(state: .disconnected),
-                .logEvent(description: "Last AWDL pending slot timed out; disconnected")
+                .stopSecureInputPolling,
+                .releaseModifiers,
+                .logEvent(description: "AWDL disconnected; session ended")
             ])
-        } else {
+        case .pairingAWDL:
+            return (.disconnected, [
+                .updateStatusBar(state: .disconnected),
+                .logEvent(description: "AWDL pairing channel dropped")
+            ])
+        case .pendingAWDLPool(let count):
+            let remaining = max(0, count - 1)
+            if remaining == 0 {
+                return (.disconnected, [
+                    .updateStatusBar(state: .disconnected),
+                    .logEvent(description: "Last pending AWDL slot dropped; disconnected")
+                ])
+            }
             return (.pendingAWDLPool(slotCount: remaining), [
-                .logEvent(description: "AWDL slot timed out; \(remaining) slots remaining in pool")
+                .logEvent(description: "Pending AWDL slot dropped; \(remaining) remaining")
             ])
+        default:
+            return (state, [.logEvent(description: "AWDL disconnected in state \(state); no action")])
         }
 
-    case (.awdlConnected, .awdlIdentityTimeout):
-        // Timeout on a probe slot added while already connected — ignore, active session unaffected.
-        return (state, [.logEvent(description: "AWDL probe slot timed out; active session unaffected")])
+    // MARK: - Pairing Completed
 
-    // MARK: AWDL Disconnected
+    case .pairingCompleted(let deviceID):
+        switch state {
+        case .pairingAWDL:
+            let newState = AgentTransportState.awdlConnected(deviceID: deviceID)
+            return (newState, [
+                .promoteToActive(transport: .awdl),
+                .updateStatusBar(state: newState),
+                .startSecureInputPolling,
+                .logEvent(description: "AWDL pairing completed for \(deviceID); session active")
+            ])
+        default:
+            return (state, [.logEvent(description: "Pairing completed in unexpected state \(state); ignored")])
+        }
 
-    case (.awdlConnected, .awdlDisconnected):
-        return (.disconnected, [
-            .updateStatusBar(state: .disconnected),
-            .stopSecureInputPolling,
-            .releaseModifiers,
-            .logEvent(description: "AWDL disconnected; session ended")
-        ])
+    // MARK: - Pairing Failed
 
-    case (.pairingAWDL, .awdlDisconnected):
-        return (.disconnected, [
-            .updateStatusBar(state: .disconnected),
-            .logEvent(description: "AWDL pairing channel dropped")
-        ])
+    case .pairingFailed:
+        switch state {
+        case .pairingAWDL:
+            return (.disconnected, [
+                .closeConnection(transport: .awdl),
+                .updateStatusBar(state: .disconnected),
+                .logEvent(description: "AWDL pairing failed; disconnected")
+            ])
+        default:
+            return (state, [.logEvent(description: "Pairing failed in state \(state); no action")])
+        }
 
-    case (.pendingAWDLPool(let count), .awdlDisconnected):
-        let remaining = max(0, count - 1)
-        if remaining == 0 {
+    // MARK: - Secure Input Changed
+
+    case .secureInputChanged:
+        // Secure input changes are handled by the caller as a send — no state change.
+        return (state, [])
+
+    // MARK: - Heartbeat
+
+    case .heartbeatTimeout:
+        switch state {
+        case .usbConnected:
             return (.disconnected, [
                 .updateStatusBar(state: .disconnected),
-                .logEvent(description: "Last pending AWDL slot dropped; disconnected")
+                .stopSecureInputPolling,
+                .releaseModifiers,
+                .logEvent(description: "USB heartbeat timed out; disconnected")
             ])
+        case .awdlConnected:
+            return (.disconnected, [
+                .closeConnection(transport: .awdl),
+                .updateStatusBar(state: .disconnected),
+                .stopSecureInputPolling,
+                .releaseModifiers,
+                .logEvent(description: "AWDL heartbeat timed out; disconnected")
+            ])
+        default:
+            return (state, [.logEvent(description: "Heartbeat timeout in state \(state); ignored")])
         }
-        return (.pendingAWDLPool(slotCount: remaining), [
-            .logEvent(description: "Pending AWDL slot dropped; \(remaining) remaining")
-        ])
 
-    case (_, .awdlDisconnected):
-        return (state, [.logEvent(description: "AWDL disconnected in state \(state); no action")])
-
-    // MARK: Pairing Completed
-
-    case (.pairingAWDL, .pairingCompleted(let deviceID)):
-        let newState = AgentTransportState.awdlConnected(deviceID: deviceID)
-        return (newState, [
-            .promoteToActive(transport: .awdl),
-            .updateStatusBar(state: newState),
-            .startSecureInputPolling,
-            .logEvent(description: "AWDL pairing completed for \(deviceID); session active")
-        ])
-
-    case (_, .pairingCompleted):
-        return (state, [.logEvent(description: "Pairing completed in unexpected state \(state); ignored")])
-
-    // MARK: Pairing Failed
-
-    case (.pairingAWDL, .pairingFailed):
-        return (.disconnected, [
-            .closeConnection(transport: .awdl),
-            .updateStatusBar(state: .disconnected),
-            .logEvent(description: "AWDL pairing failed; disconnected")
-        ])
-
-    case (_, .pairingFailed):
-        return (state, [.logEvent(description: "Pairing failed in state \(state); no action")])
-
-    // MARK: Secure Input Changed
-
-    case (.usbConnected, .secureInputChanged):
-        // Secure input change is handled as a side-out message — no state change.
-        return (state, [])
-
-    case (.awdlConnected, .secureInputChanged):
-        return (state, [])
-
-    case (_, .secureInputChanged):
-        return (state, [])
-
-    // MARK: Heartbeat
-
-    case (.usbConnected, .heartbeatTimeout):
-        return (.disconnected, [
-            .updateStatusBar(state: .disconnected),
-            .stopSecureInputPolling,
-            .releaseModifiers,
-            .logEvent(description: "USB heartbeat timed out; disconnected")
-        ])
-
-    case (.awdlConnected, .heartbeatTimeout):
-        return (.disconnected, [
-            .closeConnection(transport: .awdl),
-            .updateStatusBar(state: .disconnected),
-            .stopSecureInputPolling,
-            .releaseModifiers,
-            .logEvent(description: "AWDL heartbeat timed out; disconnected")
-        ])
-
-    case (_, .heartbeatTimeout):
-        return (state, [.logEvent(description: "Heartbeat timeout in state \(state); ignored")])
-
-    case (_, .heartbeatAck):
+    case .heartbeatAck:
+        // Heartbeat ack is informational; no state change on macOS side.
         return (state, [])
     }
 }
