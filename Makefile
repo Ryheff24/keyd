@@ -154,6 +154,7 @@ stop:
 	$(SCRIPT) stop
 
 test-integration:
+	@sudo -v  # pre-authorize developer tools access (prevents mid-run Password: prompt on /dev/tty)
 	@WORKSPACE_PATH="$(WORKSPACE_PATH)" \
 	DERIVED_DATA="$(DERIVED_DATA)" \
 	LOG_ROOT="$(LOG_ROOT)" \

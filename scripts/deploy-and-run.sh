@@ -354,20 +354,50 @@ if [[ "$mode" == "test-integration" ]]; then
     exit 1
   fi
 
-  # Run XCTest on physical device
+  # -- Pre-flight checks for non-interactive test runs --
+  #
+  # 1. Developer Tools Security: without this, macOS prompts for an admin
+  #    password the first time developer tools attach to a process each login
+  #    session. The prompt goes to /dev/tty and bypasses stdout/stderr redirection.
+  #    Fix: run `sudo DevToolsSecurity -enable` once (persists across reboots).
+  if ! /usr/sbin/DevToolsSecurity 2>&1 | grep -q "enabled"; then
+    echo "WARNING: Developer Tools Security is not enabled." >&2
+    echo "         This may cause a 'Password:' prompt during test runs." >&2
+    echo "         Fix: sudo DevToolsSecurity -enable" >&2
+  fi
+
+  # 2. Keychain: ensure login keychain is unlocked for codesign operations.
+  #    On CI, set KEYCHAIN_PASSWORD. On dev machines the keychain is normally
+  #    already unlocked; we don't attempt interactive unlock (that itself prompts).
+  if [[ -n "${KEYCHAIN_PASSWORD:-}" ]]; then
+    login_keychain="$HOME/Library/Keychains/login.keychain-db"
+    security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$login_keychain" 2>/dev/null || true
+  fi
+
+  # Run XCTest on physical device.
+  # stdin is /dev/null so any subprocess that tries to read a password
+  # gets immediate EOF instead of blocking the terminal.
   xcodebuild test \
     -workspace "$workspace_abs" \
     -scheme KeydIntegrationTests \
     -destination "platform=iOS,id=$IPHONE_DEVICE" \
     -resultBundlePath "$session_dir/integration.xcresult" \
     -derivedDataPath "$derived_data_abs" \
+    < /dev/null \
     2>&1 | tee "$session_dir/test-output.log"
   test_exit_code=${PIPESTATUS[0]}
 
-  # Teardown agent
+  # Teardown: kill the test-mode agent reliably.
+  # SIGTERM may not stop a SwiftUI app with async tasks; escalate to SIGKILL.
   log_step "Stopping KeydAgent test-mode instance"
   kill "$agent_pid" 2>/dev/null || true
-  sleep 0.5
+  sleep 0.3
+  kill -9 "$agent_pid" 2>/dev/null || true
+
+  # SMAppService may relaunch KeydAgent in production mode after the kill.
+  # Catch any respawned instance to prevent post-script keychain access.
+  sleep 0.3
+  pkill -x "$mac_process_name" 2>/dev/null || true
 
   if [[ $test_exit_code -ne 0 ]]; then
     echo ""
