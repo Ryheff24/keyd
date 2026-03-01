@@ -31,7 +31,7 @@ final class InjectionRouter {
         case .sessionResume(let resume):
             print("[InjectionRouter] Received session resume from device: \(resume.deviceID)")
 
-        case .pairingResponse, .pairingInvalidated, .reflectState, .appStateChanged:
+        case .pairingResponse, .pairingInvalidated, .reflectState, .appStateChanged, .transportHeartbeat, .transportHeartbeatAck:
             // Mac→iOS messages — should not arrive at macOS side
             print("[InjectionRouter] Unexpected Mac→iOS message received: \(message)")
 

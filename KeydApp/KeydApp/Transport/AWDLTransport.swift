@@ -2,13 +2,15 @@ import Network
 import Foundation
 import SharedProtocol
 
-/// Discovers and connects to the macOS agent over AWDL via Bonjour (_keyd._tcp).
-/// Pre-warmed concurrently with USB; promoted to primary on USB disconnect.
+/// Discovers the macOS agent over AWDL via Bonjour (_keyd._tcp).
+/// While USB is primary, only discovery stays warm; AWDL connects fresh when needed.
 actor AWDLTransport {
     private var browser: NWBrowser?
+    private var discoveredEndpoint: NWEndpoint?
     private var connection: NWConnection?
     private var isConnecting = false
     private var isReady = false
+    private var autoConnectEnabled = false
     var onMessage: ((KeydMessage) -> Void)?
     var onDisconnect: (() -> Void)?
     var onConnectionReady: (() -> Void)?  // Called when AWDL is ready (pre-warm complete)
@@ -27,11 +29,8 @@ actor AWDLTransport {
         params.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: "_keyd._tcp", domain: nil), using: params)
 
-        browser.browseResultsChangedHandler = { [weak self] results, changes in
-            // Connect to first discovered result
-            if let result = results.first, self != nil {
-                Task { await self?.connectToEndpoint(result.endpoint) }
-            }
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            Task { await self?.handleBrowseResults(results) }
         }
         browser.stateUpdateHandler = { state in
             switch state {
@@ -50,9 +49,25 @@ actor AWDLTransport {
 
     private func resetBrowserState() {
         browser = nil
+        discoveredEndpoint = nil
         connection = nil
         isConnecting = false
         isReady = false
+        autoConnectEnabled = false
+    }
+
+    private func handleBrowseResults(_ results: Set<NWBrowser.Result>) async {
+        discoveredEndpoint = results.first?.endpoint
+
+        guard discoveredEndpoint != nil else {
+            let didLoseReadyConnection = disconnectCurrentConnection()
+            if didLoseReadyConnection {
+                onDisconnect?()
+            }
+            return
+        }
+
+        await maybeConnectIfNeeded()
     }
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) async {
@@ -81,21 +96,24 @@ actor AWDLTransport {
             await startReceiving(conn)
         case .waiting(let error):
             print("[AWDLTransport] Connection waiting: \(error)")
-            let didLoseReadyConnection = markConnectionUnavailable(for: conn)
+            let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
             }
+            await maybeConnectIfNeeded()
         case .failed(let error):
             print("[AWDLTransport] Connection failed: \(error)")
             let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
             }
+            await maybeConnectIfNeeded()
         case .cancelled:
             let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
             }
+            await maybeConnectIfNeeded()
         default:
             break
         }
@@ -107,14 +125,6 @@ actor AWDLTransport {
         isReady = ready
     }
 
-    private func markConnectionUnavailable(for conn: NWConnection) -> Bool {
-        guard connection === conn else { return false }
-
-        let wasReady = isReady
-        isReady = false
-        return wasReady
-    }
-
     private func clearConnection(for conn: NWConnection) -> Bool {
         guard connection === conn else {
             if connection == nil {
@@ -123,11 +133,23 @@ actor AWDLTransport {
             return false
         }
 
+        return disconnectCurrentConnection()
+    }
+
+    @discardableResult
+    private func disconnectCurrentConnection() -> Bool {
         let wasReady = isReady
+        let activeConnection = connection
         connection = nil
         isConnecting = false
         isReady = false
+        activeConnection?.cancel()
         return wasReady
+    }
+
+    private func maybeConnectIfNeeded() async {
+        guard autoConnectEnabled, connection == nil, !isConnecting, let endpoint = discoveredEndpoint else { return }
+        await connectToEndpoint(endpoint)
     }
 
     private func startReceiving(_ conn: NWConnection) async {
@@ -184,12 +206,35 @@ actor AWDLTransport {
         return path.status == .satisfied && path.usesInterfaceType(.wifi)
     }
 
+    func beginAutoConnect() async -> Bool {
+        autoConnectEnabled = true
+
+        if hasConnection() || isConnecting {
+            return true
+        }
+
+        guard discoveredEndpoint != nil else {
+            return false
+        }
+
+        await maybeConnectIfNeeded()
+        return true
+    }
+
+    func prepareForUSBStandby() {
+        autoConnectEnabled = false
+        _ = disconnectCurrentConnection()
+    }
+
+    func invalidateActiveConnection() {
+        _ = disconnectCurrentConnection()
+    }
+
     func stop() {
         browser?.cancel()
-        connection?.cancel()
+        _ = disconnectCurrentConnection()
         browser = nil
-        connection = nil
-        isConnecting = false
-        isReady = false
+        discoveredEndpoint = nil
+        autoConnectEnabled = false
     }
 }

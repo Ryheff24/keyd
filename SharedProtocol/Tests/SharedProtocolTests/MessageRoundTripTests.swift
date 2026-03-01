@@ -81,6 +81,18 @@ final class MessageRoundTripTests: XCTestCase {
         }
     }
 
+    func testTransportHeartbeatRoundTrip() throws {
+        let original = KeydMessage.transportHeartbeat
+        let frame = try encoder.encode(original)
+        decoder.receive(frame)
+        XCTAssertEqual(received.count, 1)
+        if case .transportHeartbeat = received[0] {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Wrong message type")
+        }
+    }
+
     // MARK: - Streaming / fragmentation
 
     func testFragmentedDelivery() throws {

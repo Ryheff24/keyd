@@ -20,8 +20,8 @@ enum ConnectionKind: CustomStringConvertible {
 }
 
 /// Manages USB and AWDL listeners; routes decoded messages to InjectionRouter.
-/// Both listeners start concurrently (AWDL pre-warmed per TRANS-04).
-/// USB takes priority; AWDL is promoted on USB disconnect (TRANS-03).
+/// Both listeners start concurrently so AWDL discovery stays warm while USB is primary.
+/// USB takes priority; AWDL reconnects fresh after USB disconnects.
 @MainActor
 final class TransportManager {
     private let injectionRouter: InjectionRouter
@@ -128,9 +128,7 @@ final class TransportManager {
             connectionState = .pairingAWDL(connection)
             logEvent("Replaced stale AWDL pairing channel")
         case (.usbConnected, .awdl):
-            // AWDL comes up while USB is active — keep as pre-warmed standby
-            // The TransportManager will promote AWDL on USB disconnect (handleDisconnect)
-            logEvent("AWDL pre-warmed while USB active (standby)")
+            logEvent("AWDL connection arrived while USB is active; closing it")
             startAWDLStandby(connection)
             return
         }
@@ -198,7 +196,8 @@ final class TransportManager {
         activeDecoder?.receive(data)
     }
 
-    // Pre-warmed AWDL connection kept ready as standby
+    // While USB is active, keep discovery/listening warm but do not retain a live
+    // standby AWDL socket. Fresh AWDL connections must be established after USB drops.
     private var standbyAWDLConnection: NWConnection?
     private var standbyAWDLDecoder: MessageDecoder?
 
@@ -207,15 +206,9 @@ final class TransportManager {
             existing.cancel()
         }
 
-        let decoder = MessageDecoder()
-        decoder.onMessage = { _ in }  // Drain standby traffic without surfacing it.
-        decoder.onError = { error in
-            print("[TransportManager] Standby AWDL decode error: \(error)")
-        }
-
-        standbyAWDLConnection = connection
-        standbyAWDLDecoder = decoder
-        startStandbyReceiveLoop(on: connection, decoder: decoder)
+        standbyAWDLConnection = nil
+        standbyAWDLDecoder = nil
+        connection.cancel()
     }
 
     private func startStandbyReceiveLoop(on connection: NWConnection, decoder: MessageDecoder) {
@@ -353,17 +346,15 @@ final class TransportManager {
             switch message {
             case .pairingRequest, .sessionResume:
                 break
+            case .transportHeartbeat, .transportHeartbeatAck:
+                return
             case .keyEvent, .hotkeyEvent:
                 send(.pairingInvalidated)
                 logEvent("Rejected input from unpaired device")
                 return
-            case .pairingResponse, .secureInputChanged, .reflectState, .appStateChanged:
+            case .pairingResponse, .pairingInvalidated, .secureInputChanged, .reflectState, .appStateChanged:
                 send(.pairingInvalidated)
                 logEvent("Rejected stale session from unpaired device")
-                return
-            case .pairingInvalidated:
-                logEvent("Received pairing invalidation while already unpaired")
-                resetActiveSession()
                 return
             }
         }
@@ -402,6 +393,12 @@ final class TransportManager {
             logEvent("Pairing invalidated by iPhone")
             pairingManager.resetPairing()
             resetActiveSession()
+
+        case .transportHeartbeat:
+            send(.transportHeartbeatAck)
+
+        case .transportHeartbeatAck:
+            break
 
         default:
             injectionRouter.route(message)

@@ -38,6 +38,13 @@ public enum KeydMessage: Codable, Sendable {
 
     /// [Phase 3] Notifies iOS of frontmost macOS application change
     case appStateChanged(AppStateChanged)
+
+    /// Transport liveness probe; either side may send it and the receiver should
+    /// reply with `transportHeartbeatAck`.
+    case transportHeartbeat
+
+    /// Acknowledges `transportHeartbeat`.
+    case transportHeartbeatAck
 }
 
 // MARK: - iOS → Mac payloads

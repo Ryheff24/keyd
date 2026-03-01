@@ -3,7 +3,7 @@ import SharedProtocol
 import UIKit
 
 /// iOS-side transport state machine.
-/// USB primary; AWDL pre-warmed and promoted on USB disconnect (TRANS-03, TRANS-04).
+/// USB is primary; AWDL discovery stays warm and a fresh AWDL connection is made when needed.
 @MainActor
 final class TransportManager: ObservableObject {
     enum State: Equatable {
@@ -36,6 +36,15 @@ final class TransportManager: ObservableObject {
     @Published var connectionState: State = .disconnected {
         didSet {
             updateLiveActivity(for: connectionState)
+            if connectionState == .awdlConnected, oldValue != .awdlConnected {
+                startAWDLHeartbeat()
+            } else if connectionState != .awdlConnected, oldValue == .awdlConnected {
+                stopAWDLHeartbeat()
+            }
+            if connectionState != .connecting {
+                awdlConnectingFallbackTask?.cancel()
+                awdlConnectingFallbackTask = nil
+            }
             if isConnected {
                 resolveConnectionReady()
             }
@@ -49,12 +58,15 @@ final class TransportManager: ObservableObject {
     private var awdlTransport = AWDLTransport()
     private let liveActivityManager = KeydLiveActivityManager()
     private var startTask: Task<Void, Never>?
+    private var awdlConnectingFallbackTask: Task<Void, Never>?
+    private var awdlHeartbeatTask: Task<Void, Never>?
     private var connectionReadyContinuation: CheckedContinuation<Void, Error>?
     private var connectionReadyTimeoutTask: Task<Void, Never>?
     private var pairingResponseContinuation: CheckedContinuation<PairingResponse, Error>?
     private var pairingResponseTimeoutTask: Task<Void, Never>?
     private var awdlEnabledForCurrentSession = true
     private var suppressAWDLStatusUntilPaired = false
+    private var awaitingAWDLHeartbeatAck = false
 
     var onSecureInputChanged: ((Bool) -> Void)?
 
@@ -130,6 +142,9 @@ final class TransportManager: ObservableObject {
     func resetConnections() {
         startTask?.cancel()
         startTask = nil
+        awdlConnectingFallbackTask?.cancel()
+        awdlConnectingFallbackTask = nil
+        stopAWDLHeartbeat()
         clearPendingConnectionReady(with: TransportError.pairingCancelled)
         clearPendingPairingResponse(with: TransportError.pairingCancelled)
         connectionState = .disconnected
@@ -161,10 +176,7 @@ final class TransportManager: ObservableObject {
                     return
                 }
                 if self.connectionState == .awdlConnected {
-                    self.connectionState = .disconnected
-                    self.setIdleTimerState(false)
-                    self.logConnectionEvent("AWDL disconnected")
-                    self.scheduleReconnect()
+                    self.enterDisconnectedState(logMessage: "AWDL disconnected")
                 }
             }
         }
@@ -176,13 +188,15 @@ final class TransportManager: ObservableObject {
                     self.resolveConnectionReady()
                     return
                 }
-                // AWDL is ready but only promote if USB is not active
                 if self.connectionState == .disconnected || self.connectionState == .connecting {
                     self.connectionState = .awdlConnected
                     self.setIdleTimerState(true)
                     self.logConnectionEvent("AWDL connected")
+                } else if self.connectionState == .usbConnected {
+                    await self.awdlTransport.prepareForUSBStandby()
+                    self.logConnectionEvent("AWDL connection closed while USB is primary")
                 } else {
-                    self.logConnectionEvent("AWDL pre-warmed and standing by")
+                    self.logConnectionEvent("AWDL connection event ignored")
                 }
             }
         }
@@ -199,29 +213,24 @@ final class TransportManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
 
-                print("[TransportManager] USB disconnected — checking AWDL pre-warm status")
+                print("[TransportManager] USB disconnected — evaluating fresh AWDL handoff")
                 self.logConnectionEvent("USB disconnected")
-
-                let awdlReady = await self.hasStableAWDLConnection()
-                if awdlReady {
-                    print("[TransportManager] AWDL pre-warmed and ready — switching to AWDL")
-                    self.connectionState = .awdlConnected
-                    self.logConnectionEvent("AWDL promoted (was pre-warmed)")
-                } else {
-                    print("[TransportManager] AWDL not ready — entering disconnected state")
-                    self.connectionState = .disconnected
-                    self.setIdleTimerState(false)
-                    self.logConnectionEvent("Disconnected — AWDL unavailable; restarting")
-                    self.scheduleReconnect()
-                }
+                await self.startAWDLConnectionAttempt(
+                    availableNowMessage: "Attempting fresh AWDL handoff",
+                    unavailableMessage: "Disconnected — AWDL unavailable"
+                )
             }
         }
         await usbTransport.setOnConnectionReady { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
 
+                if self.awdlEnabledForCurrentSession {
+                    await self.awdlTransport.prepareForUSBStandby()
+                }
+
                 if case .awdlConnected = self.connectionState {
-                    self.logConnectionEvent("USB reconnected; AWDL demoted to pre-warm")
+                    self.logConnectionEvent("USB reconnected; AWDL standby cleared")
                 }
 
                 if self.connectionState != .usbConnected {
@@ -240,13 +249,14 @@ final class TransportManager: ObservableObject {
         let connected = await usbTransport.connect()
         guard connected else {
             if connectionState == .connecting {
-                connectionState = .disconnected
-                setIdleTimerState(false)
-                logConnectionEvent(
-                    awdlEnabledForCurrentSession
-                        ? "USB unavailable — waiting for AWDL or retry"
-                        : "USB unavailable — waiting for cable or manual retry"
-                )
+                if awdlEnabledForCurrentSession {
+                    await startAWDLConnectionAttempt(
+                        availableNowMessage: "USB unavailable — attempting AWDL connection",
+                        unavailableMessage: "USB unavailable — waiting for AWDL or cable"
+                    )
+                } else {
+                    enterDisconnectedState(logMessage: "USB unavailable — waiting for cable or manual retry")
+                }
             }
             return
         }
@@ -394,6 +404,18 @@ final class TransportManager: ObservableObject {
             NotificationCenter.default.post(name: .pairingInvalidated, object: nil)
         case .secureInputChanged(let ev):
             onSecureInputChanged?(ev.isActive)
+        case .transportHeartbeat:
+            Task { [weak self] in
+                do {
+                    try await self?.sendMessage(.transportHeartbeatAck)
+                } catch {
+                    await MainActor.run {
+                        self?.logConnectionEvent("Heartbeat ack failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        case .transportHeartbeatAck:
+            awaitingAWDLHeartbeatAck = false
         case .reflectState, .appStateChanged:
             // Handled by PairingManager or future plans
             break
@@ -432,23 +454,84 @@ final class TransportManager: ObservableObject {
         }
     }
 
-    private func hasStableAWDLConnection() async -> Bool {
-        guard await awdlTransport.hasConnection() else { return false }
+    private func startAWDLHeartbeat() {
+        awdlHeartbeatTask?.cancel()
+        awaitingAWDLHeartbeatAck = false
 
-        // Give Network.framework a brief moment to publish path-loss transitions
-        // before surfacing AWDL after the USB transport drops.
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        return await awdlTransport.hasConnection()
+        awdlHeartbeatTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled, self.connectionState == .awdlConnected {
+                self.awaitingAWDLHeartbeatAck = true
+
+                do {
+                    try await self.awdlTransport.send(.transportHeartbeat)
+                } catch {
+                    guard !Task.isCancelled, self.connectionState == .awdlConnected else { return }
+                    await self.handleAWDLHeartbeatFailure("AWDL heartbeat send failed")
+                    return
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    return
+                }
+
+                guard self.connectionState == .awdlConnected else { return }
+                if self.awaitingAWDLHeartbeatAck {
+                    await self.handleAWDLHeartbeatFailure("AWDL heartbeat timed out")
+                    return
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
     }
 
-    private func scheduleReconnect(after delay: TimeInterval = 1.0) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.isConnected, self.startTask == nil else { return }
-            self.start(
-                allowAWDL: self.awdlEnabledForCurrentSession,
-                suppressAWDLStatus: self.suppressAWDLStatusUntilPaired
-            )
+    private func stopAWDLHeartbeat() {
+        awdlHeartbeatTask?.cancel()
+        awdlHeartbeatTask = nil
+        awaitingAWDLHeartbeatAck = false
+    }
+
+    private func handleAWDLHeartbeatFailure(_ logMessage: String) async {
+        guard connectionState == .awdlConnected else { return }
+
+        await awdlTransport.invalidateActiveConnection()
+        enterDisconnectedState(logMessage: logMessage)
+    }
+
+    private func startAWDLConnectionAttempt(availableNowMessage: String, unavailableMessage: String) async {
+        let canAttemptImmediately = await awdlTransport.beginAutoConnect()
+
+        if canAttemptImmediately {
+            connectionState = .connecting
+            setIdleTimerState(false)
+            logConnectionEvent(availableNowMessage)
+            scheduleAWDLConnectingFallback()
+        } else {
+            enterDisconnectedState(logMessage: unavailableMessage)
         }
+    }
+
+    private func scheduleAWDLConnectingFallback(after delayNanoseconds: UInt64 = 1_000_000_000) {
+        awdlConnectingFallbackTask?.cancel()
+        awdlConnectingFallbackTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard let self, self.connectionState == .connecting else { return }
+            self.enterDisconnectedState(logMessage: "AWDL connection still pending")
+        }
+    }
+
+    private func enterDisconnectedState(logMessage: String) {
+        connectionState = .disconnected
+        setIdleTimerState(false)
+        logConnectionEvent(logMessage)
     }
 
     private func resolvePairingResponse(_ response: PairingResponse) {
