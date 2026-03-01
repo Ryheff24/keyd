@@ -78,6 +78,30 @@ targets:
     scheme:
       testTargets: []
 
+  KeydIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: KeydIntegrationTests
+        createIntermediateGroups: true
+      - path: KeydApp/Debug/IntegrationTestCase.swift
+        createIntermediateGroups: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ryheff.keyd.app.integration-tests
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: KeydApp
+      - package: SharedProtocol
+    scheme:
+      testTargets: []
+
   KeydLiveActivity:
     type: app-extension
     platform: iOS

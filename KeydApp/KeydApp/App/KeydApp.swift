@@ -27,6 +27,9 @@ struct KeydApp: App {
                         .environmentObject(transportManager)
                         .environmentObject(pairingManager)
                         .onAppear {
+                            // Register managers for integration test harness access (debug builds only)
+                            TransportManagerRegistry.shared.transportManager = transportManager
+                            TransportManagerRegistry.shared.pairingManager = pairingManager
                             transportManager.start(allowAWDL: true)
                         }
                 } else {
@@ -34,6 +37,9 @@ struct KeydApp: App {
                     PairingView(pairingManager: pairingManager)
                         .environmentObject(transportManager)
                         .onAppear {
+                            // Register managers for integration test harness access (debug builds only)
+                            TransportManagerRegistry.shared.transportManager = transportManager
+                            TransportManagerRegistry.shared.pairingManager = pairingManager
                             // Start transport so we can send PairingRequest after QR scan
                             transportManager.start(allowAWDL: true, suppressAWDLStatus: true)
                         }

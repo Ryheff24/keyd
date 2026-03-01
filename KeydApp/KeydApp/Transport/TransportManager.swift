@@ -555,6 +555,8 @@ final class TransportManager: ObservableObject {
     // MARK: - Receive
 
     private func handleIncomingMessage(_ message: KeydMessage) {
+        // Notify any registered integration test observers (no-op in production — no observers registered).
+        notifyTestObservers(message)
         switch message {
         case .pairingResponse(let response):
             logConnectionEvent(response.accepted ? "Pairing accepted by Mac" : "Pairing rejected by Mac")
