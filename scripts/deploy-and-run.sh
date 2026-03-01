@@ -3,8 +3,11 @@ set -euo pipefail
 
 mode="${1:-}"
 
-if [[ "$mode" != "deploy" && "$mode" != "run" && "$mode" != "stop" && "$mode" != "run-mac" && "$mode" != "run-ios" && "$mode" != "attach" && "$mode" != "attach-mac" && "$mode" != "attach-ios" ]]; then
-  echo "Usage: $0 [deploy|run|stop|run-mac|run-ios|attach|attach-mac|attach-ios]" >&2
+if [[ "$mode" != "deploy" && "$mode" != "run" && "$mode" != "stop" && \
+      "$mode" != "run-mac" && "$mode" != "run-ios" && \
+      "$mode" != "attach" && "$mode" != "attach-mac" && "$mode" != "attach-ios" && \
+      "$mode" != "test-integration" ]]; then
+  echo "Usage: $0 [deploy|run|stop|run-mac|run-ios|attach|attach-mac|attach-ios|test-integration]" >&2
   exit 1
 fi
 
@@ -307,6 +310,77 @@ connect_ios_consoles() {
     cp "$meta_dir/${label}.pid" "$latest_meta_dir/${label}.pid"
   done
 }
+
+if [[ "$mode" == "test-integration" ]]; then
+  # Build the Mac agent (required before launching in test mode)
+  build_mac
+
+  # Kill any existing agent (production or test-mode instance)
+  log_step "Stopping any existing KeydAgent"
+  pkill -x "$mac_process_name" 2>/dev/null || true
+  sleep 1
+
+  # Build KeydIntegrationTests (ensures the scheme is up to date)
+  log_step "Building KeydIntegrationTests"
+  xcodebuild \
+    -workspace "$workspace_abs" \
+    -scheme KeydIntegrationTests \
+    -configuration "$configuration" \
+    -destination "generic/platform=iOS" \
+    -derivedDataPath "$derived_data_abs" \
+    build \
+    > "$meta_dir/build-integration.log" 2>&1 || {
+      cat "$meta_dir/build-integration.log" >&2
+      echo "ERROR: KeydIntegrationTests build failed" >&2
+      exit 1
+    }
+
+  # Start Mac agent in test mode (via binary, NOT `open`, to pass --test-mode)
+  log_step "Starting KeydAgent --test-mode"
+  "$mac_binary" --test-mode \
+    > "$session_dir/agent-testmode.log" 2>&1 &
+  agent_pid=$!
+  printf '%s\n' "$agent_pid" > "$meta_dir/agent.pid"
+
+  # Brief pause for agent to bind USB and AWDL listeners
+  sleep 2
+
+  log_step "Running KeydIntegrationTests on device: ${IPHONE_DEVICE:-<not set>}"
+
+  # Determine device destination
+  if [[ -z "${IPHONE_DEVICE:-}" ]]; then
+    echo "ERROR: IPHONE_DEVICE not set. Configure device-config.mk or set IPHONE_DEVICE env var." >&2
+    kill "$agent_pid" 2>/dev/null || true
+    exit 1
+  fi
+
+  # Run XCTest on physical device
+  xcodebuild test \
+    -workspace "$workspace_abs" \
+    -scheme KeydIntegrationTests \
+    -destination "platform=iOS,id=$IPHONE_DEVICE" \
+    -resultBundlePath "$session_dir/integration.xcresult" \
+    -derivedDataPath "$derived_data_abs" \
+    2>&1 | tee "$session_dir/test-output.log"
+  test_exit_code=${PIPESTATUS[0]}
+
+  # Teardown agent
+  log_step "Stopping KeydAgent test-mode instance"
+  kill "$agent_pid" 2>/dev/null || true
+  sleep 0.5
+
+  if [[ $test_exit_code -ne 0 ]]; then
+    echo ""
+    echo "==> INTEGRATION TESTS FAILED (exit $test_exit_code)" >&2
+    echo "    Wire log: $session_dir/agent-testmode.log" >&2
+    echo "    Test output: $session_dir/test-output.log" >&2
+    echo "    Result bundle: $session_dir/integration.xcresult" >&2
+    exit $test_exit_code
+  fi
+
+  log_step "All integration tests passed"
+  exit 0
+fi
 
 case "$mode" in
   deploy)
