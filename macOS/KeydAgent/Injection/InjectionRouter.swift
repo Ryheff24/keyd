@@ -1,6 +1,8 @@
 import Foundation
 import SharedProtocol
 
+private let logger = KeydLogger(category: "InjectionRouter")
+
 /// Routes decoded KeydMessages to the appropriate injector.
 /// In Phase 1: KeyEvent and HotkeyEvent → CGEventInjector
 /// In Phase 2: will also route to AXInjector for cursor/selection ops
@@ -26,14 +28,14 @@ final class InjectionRouter {
 
         case .pairingRequest(let req):
             // Phase 1: Pairing handled in TransportManager/PairingManager (Plan 04)
-            print("[InjectionRouter] Received pairing request from device: \(req.deviceID)")
+            logger.warning("Received pairing request from device: \(req.deviceID)")
 
         case .sessionResume(let resume):
-            print("[InjectionRouter] Received session resume from device: \(resume.deviceID)")
+            logger.warning("Received session resume from device: \(resume.deviceID)")
 
         case .pairingResponse, .pairingInvalidated, .reflectState, .appStateChanged, .transportHeartbeat, .transportHeartbeatAck:
             // Mac→iOS messages — should not arrive at macOS side
-            print("[InjectionRouter] Unexpected Mac→iOS message received: \(message)")
+            logger.warning("Unexpected Mac→iOS message received: \(message)")
 
         case .secureInputChanged:
             // Mac→iOS message — should not arrive at macOS side

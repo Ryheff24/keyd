@@ -1,5 +1,8 @@
 import SwiftUI
 import UIKit
+import SharedProtocol
+
+private let logger = KeydLogger(category: "KeydApp")
 
 extension Notification.Name {
     static let pairingInvalidated = Notification.Name("pairingInvalidated")
@@ -40,7 +43,7 @@ struct KeydApp: App {
             // CONTEXT.md locked decision: expanded Dynamic Island has reconnect button
             .onOpenURL { url in
                 guard url.scheme == "keyd", url.host == "reconnect" else { return }
-                print("[KeydApp] Reconnect triggered from Dynamic Island")
+                logger.info("Reconnect triggered from Dynamic Island")
                 transportManager.reconnect()
             }
             .onChange(of: scenePhase) { _, newPhase in

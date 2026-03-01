@@ -1,5 +1,8 @@
 import Darwin
 import Foundation
+import SharedProtocol
+
+private let logger = KeydLogger(category: "USBListener")
 
 /// Opens a host-side usbmux tunnel to the iPhone app's listening TCP port.
 /// Unlike the original implementation, the Mac initiates the USB tunnel and
@@ -67,7 +70,7 @@ actor USBListener {
                 }
 
                 socketFD = fd
-                print("[USBListener] Connected to iPhone over usbmuxd on port \(Self.port)")
+                logger.info("Connected to iPhone over usbmuxd on port \(Self.port)")
                 onConnectionReady?()
 
                 do {
@@ -79,7 +82,7 @@ actor USBListener {
                     }
                 } catch {
                     if !Task.isCancelled && !stopRequested {
-                        print("[USBListener] USB tunnel closed: \(error)")
+                        logger.warning("USB tunnel closed: \(error)")
                     }
                 }
 
@@ -88,7 +91,7 @@ actor USBListener {
                 break
             } catch {
                 if !Task.isCancelled && !stopRequested {
-                    print("[USBListener] USB unavailable: \(error)")
+                    logger.warning("USB unavailable: \(error)")
                 }
             }
 

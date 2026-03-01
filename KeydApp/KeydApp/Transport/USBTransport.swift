@@ -2,6 +2,8 @@ import Foundation
 import Network
 import SharedProtocol
 
+private let logger = KeydLogger(category: "USBTransport")
+
 /// Accepts a Mac-side usbmux tunnel on a fixed TCP port exposed by the iPhone app.
 /// The host initiates the usbmux connection; iOS listens and promotes USB when the
 /// inbound tunnel becomes ready.
@@ -32,7 +34,7 @@ actor USBTransport {
         do {
             try startListenerIfNeeded()
         } catch {
-            print("[USBTransport] Failed to start USB listener: \(error)")
+            logger.error("Failed to start USB listener: \(error)")
             return false
         }
 
@@ -68,9 +70,9 @@ actor USBTransport {
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                print("[USBTransport] Listening for USB tunnel on port \(Self.port)")
+                logger.info("Listening for USB tunnel on port \(Self.port)")
             case .failed(let error):
-                print("[USBTransport] Listener failed: \(error)")
+                logger.error("Listener failed: \(error)")
                 Task { await self?.handleListenerStopped() }
             case .cancelled:
                 Task { await self?.handleListenerStopped() }
@@ -98,7 +100,7 @@ actor USBTransport {
             case .ready:
                 Task { await self?.handleConnectionReady(newConnection) }
             case .failed(let error):
-                print("[USBTransport] USB tunnel failed: \(error)")
+                logger.error("USB tunnel failed: \(error)")
                 Task { await self?.handleConnectionClosed(newConnection) }
             case .cancelled:
                 Task { await self?.handleConnectionClosed(newConnection) }
@@ -114,7 +116,7 @@ actor USBTransport {
         guard connection === readyConnection else { return }
 
         isReady = true
-        print("[USBTransport] USB tunnel ready")
+        logger.info("USB tunnel ready")
         resolvePendingWait(with: true)
         onConnectionReady?()
         await startReceiving(on: readyConnection)
@@ -148,7 +150,7 @@ actor USBTransport {
                 let data = try await receiveOnce(on: connection)
                 decoder.receive(data)
             } catch {
-                print("[USBTransport] Receive error: \(error)")
+                logger.error("Receive error: \(error)")
                 await handleConnectionClosed(connection)
                 return
             }

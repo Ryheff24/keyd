@@ -2,6 +2,8 @@ import Network
 import Foundation
 import SharedProtocol
 
+private let logger = KeydLogger(category: "AWDLTransport")
+
 /// Discovers the macOS agent over AWDL via Bonjour (_keyd._tcp).
 /// While USB is primary, only discovery stays warm; AWDL connects fresh when needed.
 actor AWDLTransport {
@@ -35,9 +37,9 @@ actor AWDLTransport {
         browser.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                print("[AWDLTransport] Browser ready, searching for _keyd._tcp")
+                logger.info("Browser ready, searching for _keyd._tcp")
             case .failed(let error):
-                print("[AWDLTransport] Browser failed: \(error)")
+                logger.error("Browser failed: \(error)")
                 Task { await self.resetBrowserState() }
             default:
                 break
@@ -90,19 +92,19 @@ actor AWDLTransport {
     private func handleConnectionState(_ state: NWConnection.State, for conn: NWConnection) async {
         switch state {
         case .ready:
-            print("[AWDLTransport] Connected via AWDL")
+            logger.info("Connected via AWDL")
             setConnection(conn, ready: true)
             onConnectionReady?()
             await startReceiving(conn)
         case .waiting(let error):
-            print("[AWDLTransport] Connection waiting: \(error)")
+            logger.warning("Connection waiting: \(error)")
             let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
             }
             await maybeConnectIfNeeded()
         case .failed(let error):
-            print("[AWDLTransport] Connection failed: \(error)")
+            logger.error("Connection failed: \(error)")
             let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
@@ -158,7 +160,7 @@ actor AWDLTransport {
                 let data = try await receiveOnce(on: conn)
                 decoder.receive(data)
             } catch {
-                print("[AWDLTransport] Receive error: \(error)")
+                logger.error("Receive error: \(error)")
                 let didLoseReadyConnection = clearConnection(for: conn)
                 if didLoseReadyConnection {
                     onDisconnect?()

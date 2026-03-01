@@ -1,5 +1,8 @@
 import Network
 import Foundation
+import SharedProtocol
+
+private let logger = KeydLogger(category: "AWDLListener")
 
 /// Advertises a Bonjour service (_keyd._tcp) and accepts peer connections over AWDL.
 /// AWDL is an Apple proprietary peer-to-peer protocol active when Bonjour services
@@ -23,9 +26,9 @@ actor AWDLListener {
         l.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                print("[AWDLListener] Advertising _keyd._tcp Bonjour service")
+                logger.info("Advertising _keyd._tcp Bonjour service")
             case .failed(let error):
-                print("[AWDLListener] Failed: \(error)")
+                logger.error("Failed: \(error)")
             default:
                 break
             }

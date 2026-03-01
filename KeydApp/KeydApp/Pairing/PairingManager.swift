@@ -4,6 +4,8 @@ import Security
 import UIKit
 import SharedProtocol
 
+private let logger = KeydLogger(category: "PairingManager")
+
 /// Manages the iOS side of the one-time QR pairing handshake.
 /// Decodes QR payload; generates iOS Curve25519 key; completes ECDH;
 /// stores shared secret in Keychain for future auto-connections.
@@ -101,11 +103,11 @@ final class PairingManager: ObservableObject {
             isPaired = true
             await transportManager.finalizePairingTransportState()
             isPairing = false
-            print("[PairingManager] Pairing complete")
+            logger.info("Pairing complete")
         } catch {
             isPairing = false
             pairingError = error.localizedDescription
-            print("[PairingManager] Pairing failed: \(error)")
+            logger.error("Pairing failed: \(error)")
         }
     }
 
@@ -115,7 +117,7 @@ final class PairingManager: ObservableObject {
         isPaired = false
         isPairing = false
         pairingError = nil
-        print("[PairingManager] Cleared stored pairing state")
+        logger.info("Cleared stored pairing state")
     }
 
     // MARK: - Keychain
@@ -135,7 +137,7 @@ final class PairingManager: ObservableObject {
         clearFromKeychain(key: keychainSharedSecretKey)
         clearFromKeychain(key: keychainMacAgentKey)
         defaults.set(UUID().uuidString, forKey: installMarkerDefaultsKey)
-        print("[PairingManager] Fresh install detected; cleared stale pairing state")
+        logger.info("Fresh install detected; cleared stale pairing state")
     }
 
     private func saveToKeychain(_ data: Data, key: String) {

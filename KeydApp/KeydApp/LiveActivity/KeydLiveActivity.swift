@@ -1,5 +1,8 @@
 import ActivityKit
 import Combine
+import SharedProtocol
+
+private let logger = KeydLogger(category: "LiveActivity")
 
 /// Manages the ActivityKit Live Activity lifecycle for connection status (main app target).
 /// The Dynamic Island rendering is done by the KeydLiveActivity Widget Extension — NOT here.
@@ -29,7 +32,7 @@ final class KeydLiveActivityManager: ObservableObject {
         endTask = nil
 
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            print("[LiveActivity] Live Activities not enabled on this device")
+            logger.warning("Live Activities not enabled on this device")
             return
         }
 
@@ -43,9 +46,9 @@ final class KeydLiveActivityManager: ObservableObject {
                 content: content,
                 pushType: nil
             )
-            print("[LiveActivity] Started: \(status.rawValue)")
+            logger.info("Started: \(status.rawValue)")
         } catch {
-            print("[LiveActivity] Failed to start: \(error)")
+            logger.error("Failed to start: \(error)")
         }
     }
 
@@ -69,7 +72,7 @@ final class KeydLiveActivityManager: ObservableObject {
             await activity?.end(content, dismissalPolicy: .immediate)
             activity = nil
             endTask = nil
-            print("[LiveActivity] Ended")
+            logger.info("Ended")
         }
     }
 }

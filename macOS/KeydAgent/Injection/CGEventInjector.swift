@@ -2,6 +2,8 @@ import CoreGraphics
 import Foundation
 import SharedProtocol
 
+private let logger = KeydLogger(category: "CGEventInjector")
+
 /// Injects keystrokes into the frontmost macOS application via CGEvent.
 /// This is the ONLY write path for text and shortcuts in this project.
 /// AX text writes (kAXValueAttribute) silently fail in Safari, Firefox, Messages.
@@ -77,7 +79,7 @@ final class CGEventInjector {
             let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
             event?.flags = []
             event?.post(tap: .cghidEventTap)
-            print("[CGEventInjector] Released \(name) key")
+            logger.info("Released \(name) key")
         }
     }
 

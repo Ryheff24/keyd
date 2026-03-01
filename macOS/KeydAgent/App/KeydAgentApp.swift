@@ -1,6 +1,9 @@
 import SwiftUI
 import ServiceManagement
 import AppKit
+import SharedProtocol
+
+private let logger = KeydLogger(category: "AppDelegate")
 
 /// Main entry point for KeydAgent — a menu bar accessory app with no Dock presence.
 /// Responsibilities:
@@ -38,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try SMAppService.mainApp.register()
         } catch {
             // Already registered or registration not needed — not a fatal error
-            print("[AppDelegate] SMAppService.mainApp.register(): \(error.localizedDescription)")
+            logger.warning("SMAppService.mainApp.register(): \(error.localizedDescription)")
         }
 
         // Initialize status bar immediately so the icon appears and the user
@@ -55,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if perms.allGranted {
             startTransport()
         } else {
-            print("[AppDelegate] Missing permissions — waiting. Menu bar shows status.")
+            logger.warning("Missing permissions — waiting. Menu bar shows status.")
             // Poll every 3 seconds so the app auto-starts when the user grants permissions
             // in System Settings without needing a manual relaunch.
             permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
@@ -70,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let perms = checker.checkPermissions()
         statusBarController?.update(permissions: perms)
         if perms.allGranted {
-            print("[AppDelegate] All permissions granted — starting transport")
+            logger.info("All permissions granted — starting transport")
             permissionPollTimer?.invalidate()
             permissionPollTimer = nil
             startTransport()
@@ -112,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             await manager.start()
         }
-        print("[AppDelegate] Transport started")
+        logger.info("Transport started")
     }
 
     @MainActor
@@ -123,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.transportManager?.resetActiveSession()
         }
         closePairingWindow()
-        print("[AppDelegate] Pairing reset")
+        logger.info("Pairing reset")
     }
 
     @MainActor
@@ -136,6 +139,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Release all modifier keys on quit — prevents stuck modifiers if app is force-quit
         // during a key sequence.
         permissionPollTimer?.invalidate()
-        print("[AppDelegate] Application terminating — releasing all modifiers")
+        logger.info("Application terminating — releasing all modifiers")
     }
 }
