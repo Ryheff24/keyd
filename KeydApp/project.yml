@@ -85,8 +85,6 @@ targets:
     sources:
       - path: KeydIntegrationTests
         createIntermediateGroups: true
-      - path: KeydApp/Debug/IntegrationTestCase.swift
-        createIntermediateGroups: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ryheff.keyd.app.integration-tests

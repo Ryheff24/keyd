@@ -76,7 +76,16 @@ final class IntegrationHarness: IntegrationHarnessProtocol {
     // MARK: - Message Observation
 
     /// Await a specific message type from the Mac agent, with timeout.
-    /// The optional `beforeSend` closure is called after the observer is registered
+    /// Protocol-required method — forwards to the beforeSend variant.
+    func awaitMessage(
+        matching predicate: @escaping @MainActor (KeydMessage) -> Bool,
+        timeout: TimeInterval
+    ) async throws -> KeydMessage {
+        try await awaitMessage(matching: predicate, beforeSend: nil, timeout: timeout)
+    }
+
+    /// Await a specific message type from the Mac agent, with timeout and optional pre-send hook.
+    /// The `beforeSend` closure is called after the observer is registered
     /// but before waiting begins — prevents missed-message races.
     func awaitMessage(
         matching predicate: @escaping @MainActor (KeydMessage) -> Bool,

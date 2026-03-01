@@ -1,10 +1,12 @@
 import SwiftUI
 import SharedProtocol
+import CryptoKit
 
 // MARK: - Main Test Runner View
 
 struct TransportTestRunnerView: View {
     @StateObject private var runner = TransportTestRunner()
+    @StateObject private var suiteCRunner = IntegrationSuiteCRunner()
 
     var body: some View {
         List {
@@ -65,9 +67,43 @@ struct TransportTestRunnerView: View {
                     }
                 }
             }
+
+            // Suite C: Connected (semi-automated, requires physical device + Mac in --test-mode)
+            Section("Suite C: Connected") {
+                if suiteCRunner.isConnected {
+                    ForEach(suiteCRunner.results) { result in
+                        ScenarioRowView(result: ScenarioResult(
+                            id: result.id,
+                            scenarioName: result.name,
+                            passed: result.passed,
+                            stepsExecuted: 1,
+                            invariantViolations: [],
+                            eventTrace: [],
+                            failureDetail: result.detail,
+                            finalState: .disconnected
+                        ))
+                    }
+                    if suiteCRunner.isRunning {
+                        ProgressView(suiteCRunner.currentStep)
+                            .padding(.vertical, 4)
+                    } else {
+                        Button("Run Suite C") {
+                            Task { await suiteCRunner.runAll() }
+                        }
+                        .disabled(suiteCRunner.isRunning)
+                    }
+                } else {
+                    Text("Not connected to Mac agent. Plug in USB cable and start the Mac agent with --test-mode.")
+                        .foregroundColor(.secondary)
+                        .font(.subheadline)
+                }
+            }
         }
         .navigationTitle("Transport Tests")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            suiteCRunner.refreshConnectionState()
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if runner.isRunning {
@@ -249,4 +285,206 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uvc: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Suite C: Connected (semi-automated integration tests)
+
+/// Drives Suite C: Connected tests in the UI runner.
+/// Suite C tests are semi-automated: they require a physical device and Mac agent with --test-mode,
+/// and may prompt the user for a manual step (e.g. "unplug USB cable now").
+/// Results are advisory only — they never block deployment.
+@MainActor
+final class IntegrationSuiteCRunner: ObservableObject {
+    @Published var isRunning = false
+    @Published var isConnected = false
+    @Published var currentStep = "Running..."
+    @Published var results: [SuiteCResult] = []
+
+    struct SuiteCResult: Identifiable {
+        let id: String
+        let name: String
+        let passed: Bool
+        let detail: String?
+    }
+
+    private var harness: SuiteCHarness?
+
+    init() {
+        refreshConnectionState()
+    }
+
+    /// Refreshes connection state from TransportManagerRegistry.
+    func refreshConnectionState() {
+        let tm = TransportManagerRegistry.shared.transportManager
+        isConnected = tm?.isConnected ?? false
+        if isConnected { harness = harness ?? SuiteCHarness() }
+    }
+
+    func runAll() async {
+        guard !isRunning else { return }
+        if harness == nil { harness = SuiteCHarness() }
+        guard let harness else { return }
+
+        isRunning = true
+        results = []
+        currentStep = "Connecting..."
+
+        // USB→AWDL fallback (semi-automated: prompts human to unplug USB cable)
+        currentStep = "C-01: USB→AWDL Fallback"
+        do {
+            let result = try await IntegrationTestCase.runUSBAWDLFallback(
+                harness: harness,
+                onPrompt: { [weak self] in
+                    await MainActor.run {
+                        self?.currentStep = "MANUAL: Unplug USB cable now. Waiting 10s..."
+                    }
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)  // 10s window
+                }
+            )
+            results.append(SuiteCResult(
+                id: "C-01",
+                name: "USB→AWDL Fallback",
+                passed: result.passed,
+                detail: result.detail
+            ))
+        } catch {
+            results.append(SuiteCResult(
+                id: "C-01",
+                name: "USB→AWDL Fallback",
+                passed: false,
+                detail: error.localizedDescription
+            ))
+        }
+
+        currentStep = "Done"
+        isRunning = false
+        refreshConnectionState()
+    }
+}
+
+// MARK: - SuiteCHarness (IntegrationHarnessProtocol conformance for UI runner)
+
+/// Concrete IntegrationHarnessProtocol implementation for Suite C UI runner.
+/// Does not import XCTest — uses TransportManagerRegistry directly.
+@MainActor
+final class SuiteCHarness: IntegrationHarnessProtocol {
+    private weak var transportManager: TransportManager?
+    private weak var pairingManager: PairingManager?
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        self.transportManager = TransportManagerRegistry.shared.transportManager
+        self.pairingManager = TransportManagerRegistry.shared.pairingManager
+    }
+
+    deinit {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    var isConnectedToAgent: Bool { transportManager?.isConnected ?? false }
+
+    var currentTransport: ConnectionKind? {
+        guard let tm = transportManager else { return nil }
+        switch tm.connectionState {
+        case .usbConnected: return .usb
+        case .awdlConnected: return .awdl
+        default: return nil
+        }
+    }
+
+    func connect(timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if transportManager?.isConnected == true { return }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw HarnessError.connectionTimeout
+    }
+
+    func reset(timeout: TimeInterval) async throws {
+        guard let tm = transportManager else { throw HarnessError.noTransportManager }
+        _ = try await awaitMessage(matching: { msg in
+            if case .testResetAck = msg { return true }
+            return false
+        }, beforeSend: {
+            tm.sendTestMessage(.testReset)
+        }, timeout: timeout)
+    }
+
+    func awaitMessage(
+        matching predicate: @escaping @MainActor (KeydMessage) -> Bool,
+        timeout: TimeInterval
+    ) async throws -> KeydMessage {
+        try await awaitMessage(matching: predicate, beforeSend: nil, timeout: timeout)
+    }
+
+    func awaitMessage(
+        matching predicate: @escaping @MainActor (KeydMessage) -> Bool,
+        beforeSend: (() -> Void)?,
+        timeout: TimeInterval
+    ) async throws -> KeydMessage {
+        guard let tm = transportManager else { throw HarnessError.noTransportManager }
+
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<KeydMessage, Error>) in
+            var resumed = false
+
+            let observer = tm.registerTestMessageObserver(predicate: predicate) { [weak self] message in
+                guard !resumed else { return }
+                resumed = true
+                if let self {
+                    for obs in self.observers { NotificationCenter.default.removeObserver(obs) }
+                    self.observers.removeAll()
+                }
+                continuation.resume(returning: message)
+            }
+            observers.append(observer)
+
+            beforeSend?()
+
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                guard !resumed else { return }
+                resumed = true
+                if let self {
+                    for obs in self.observers { NotificationCenter.default.removeObserver(obs) }
+                    self.observers.removeAll()
+                }
+                continuation.resume(throwing: HarnessError.messageTimeout)
+            }
+        }
+    }
+
+    func sendAndAwait(
+        _ message: KeydMessage,
+        expecting predicate: @escaping @MainActor (KeydMessage) -> Bool,
+        timeout: TimeInterval
+    ) async throws {
+        guard let tm = transportManager else { throw HarnessError.noTransportManager }
+        _ = try await awaitMessage(matching: predicate, beforeSend: {
+            tm.sendTestMessage(message)
+        }, timeout: timeout)
+    }
+
+    func injectPairingToken(_ payload: TestPairingPayload) {
+        guard let tm = transportManager, let pm = pairingManager else { return }
+        Task { @MainActor in
+            await tm.injectTestPairingToken(payload, pairingManager: pm)
+        }
+    }
+
+    enum HarnessError: Error, LocalizedError {
+        case connectionTimeout
+        case noTransportManager
+        case messageTimeout
+
+        var errorDescription: String? {
+            switch self {
+            case .connectionTimeout: return "Connection timeout"
+            case .noTransportManager: return "TransportManager not available"
+            case .messageTimeout: return "Message timeout"
+            }
+        }
+    }
 }
