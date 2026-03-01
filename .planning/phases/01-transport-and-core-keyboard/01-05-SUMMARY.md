@@ -1,4 +1,4 @@
-# Phase 1 Plan 05: Device Validation Checklist (In Progress)
+# Phase 1 Plan 05: Device Validation Checklist (Complete)
 
 The fixes below made the app connect and become usable, but 01-05 is still open. This file is the live validation checklist for the remaining device bugs and follow-up tuning work.
 
