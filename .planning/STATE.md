@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T15:44:30.000Z"
+last_updated: "2026-03-01T20:57:31.664Z"
 progress:
-  total_phases: 3
+  total_phases: 2
   completed_phases: 1
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 11
+  completed_plans: 9
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 01.1 (Connected Integration Test Suite)
-Plan: 1 of N in current phase (01.1-01 complete)
+Plan: 2 of N in current phase (01.1-01, 01.1-02 complete)
 Status: In progress
-Last activity: 2026-03-01 - Completed 01.1-01 Wire Protocol Test Harness Cases
+Last activity: 2026-03-01 - Completed 01.1-02 Mac Agent --test-mode flag
 
-Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [█░░░░░░░░░] plan 1 done
+Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [██░░░░░░░░] plans 1-2 done
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1
 | Phase 01 P02 | 3 | 4 tasks | 13 files |
 | Phase 01 P04 | 270 | 4 tasks | 14 files |
 | Phase 01-transport-and-core-keyboard P07 | 19 | 3 tasks | 14 files |
+| Phase 01.1 P02 | 9 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,9 @@ Recent decisions affecting current work:
 - [01.1-01]: Equatable added to KeydMessage and all payload structs — required for XCTAssertEqual on decoded messages; synthesis is free since all fields are already Equatable
 - [01.1-01]: Test harness codec tests appended to TransportStateMachineTests.swift as KeydMessageCodecTests class — keeps file count low per plan instruction
 - [01.1-01]: MessageEncoder.encode() throws — plan template omitted try, corrected inline (auto-fix Rule 1)
+- [Phase 01.1-02]: TestMode? nil = production, non-nil = test: clean opt-in pattern, zero production overhead
+- [Phase 01.1-02]: testReset allowed through not-paired guard so harness can reset before pairing completes
+- [Phase 01.1-02]: Wire log format [TEST-MODE] [MSG|HB] {ts} SEND|RECV: {message} parseable by test harness stdout
 
 ### Pending Todos
 
@@ -108,12 +112,15 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-01T15:44:30Z
-Stopped at: Completed 01.1-01-PLAN.md (Wire protocol test harness cases — testReset/testResetAck added to KeydMessage with Equatable and codec round-trip tests; 76 tests pass)
+Last session: 2026-03-01T20:56:17Z
+Stopped at: Completed 01.1-02-PLAN.md (Mac agent --test-mode flag: TestMode struct, in-memory pairing, 2s timeouts, stdout wire log, conn-N IDs, testReset handler; BUILD SUCCEEDED)
 
 ### What's already built (do not rebuild)
 - `SharedProtocol/` SPM package — Messages (with testReset/testResetAck + Equatable), MessageEncoder, MessageDecoder, TransportStateMachine (FSM) — builds + 76 tests pass (plans 01-01, 01-07, 01.1-01)
-- `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers — builds clean (plan 01-02)
+- `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers — builds clean with --test-mode support (plans 01-02, 01.1-02)
+- `macOS/KeydAgent/App/KeydAgentApp.swift` — TestMode struct, --test-mode detection, SMAppService skip, permissions bypass in test mode (01.1-02)
+- `macOS/KeydAgent/Pairing/PairingManager.swift` — init(testMode:), in-memory pairing path, resetInMemory() (01.1-02)
+- `macOS/KeydAgent/Transport/TransportManager.swift` — wireLog(), nextConnectionLabel(), testReset handler, timeout parameterization (01.1-02)
 - `KeydApp/` iOS Xcode project — USBTransport, AWDLTransport, TransportManager, KeyboardView, HotkeyPanel, ConnectionStatusBadge — builds clean (plan 01-03)
 - `KeydApp/KeydApp/Pairing/` — Curve25519 ECDH pairing with Keychain storage (plan 01-04)
 - `KeydApp/KeydApp/LiveActivity/` — ActivityKit attributes + manager (plan 01-04)
