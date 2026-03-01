@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 Phase: 01.1 (Connected Integration Test Suite)
 Plan: 4 of 4 in current phase (01.1-01, 01.1-02, 01.1-03, 01.1-04 complete)
 Status: Phase 01.1 complete
-Last activity: 2026-03-01 - Completed 01.1-04 CLI entry point (make test-integration + deploy gate)
+Last activity: 2026-03-01 - Completed quick task 6: Fix bundle identifiers to always include .ryheff in all targets and plans
 
 Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [██████████] plans 1-4 done (COMPLETE)
 
