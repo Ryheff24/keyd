@@ -2,6 +2,8 @@ import Foundation
 import SharedProtocol
 import UIKit
 
+private let logger = KeydLogger(category: "TransportManager")
+
 /// iOS-side transport state machine.
 /// USB is primary; AWDL discovery stays warm and a fresh AWDL connection is made when needed.
 @MainActor
@@ -58,6 +60,7 @@ final class TransportManager: ObservableObject {
     private var awdlTransport = AWDLTransport()
     private let liveActivityManager = KeydLiveActivityManager()
     private var startTask: Task<Void, Never>?
+    private var transportResetTask: Task<Void, Never>?
     private var awdlConnectingFallbackTask: Task<Void, Never>?
     private var awdlHeartbeatTask: Task<Void, Never>?
     private var connectionReadyContinuation: CheckedContinuation<Void, Error>?
@@ -77,7 +80,7 @@ final class TransportManager: ObservableObject {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         connectionEventLog.append("[\(timestamp)] \(event)")
         if connectionEventLog.count > 100 { connectionEventLog.removeFirst() }
-        print("[TransportManager] \(event)")
+        logger.info(event)
     }
 
     func getEventLog() -> [String] { connectionEventLog }
@@ -123,6 +126,11 @@ final class TransportManager: ObservableObject {
         startTask = Task { [weak self] in
             guard let self else { return }
             defer { self.startTask = nil }
+            let pendingReset = self.transportResetTask
+            if let pendingReset {
+                await pendingReset.value
+            }
+            guard !Task.isCancelled else { return }
             if allowAWDL {
                 await self.startAWDLPrewarm()
             } else {
@@ -151,9 +159,11 @@ final class TransportManager: ObservableObject {
         setIdleTimerState(false)
         logConnectionEvent("Transport reset")
 
-        Task { [weak self] in
+        transportResetTask?.cancel()
+        transportResetTask = Task { [weak self] in
             guard let self else { return }
             await self.usbTransport.disconnect()
+            guard !Task.isCancelled else { return }
             await self.awdlTransport.stop()
         }
     }
@@ -172,7 +182,9 @@ final class TransportManager: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if self.suppressAWDLStatusUntilPaired {
-                    self.logConnectionEvent("AWDL pairing channel disconnected")
+                    if self.connectionState != .usbConnected {
+                        self.logConnectionEvent("AWDL pairing channel disconnected")
+                    }
                     return
                 }
                 if self.connectionState == .awdlConnected {
@@ -183,6 +195,15 @@ final class TransportManager: ObservableObject {
         await awdlTransport.setOnConnectionReady { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                if self.connectionState == .usbConnected {
+                    await self.awdlTransport.prepareForUSBStandby()
+                    self.logConnectionEvent(
+                        self.suppressAWDLStatusUntilPaired
+                            ? "AWDL pairing channel closed while USB is primary"
+                            : "AWDL connection closed while USB is primary"
+                    )
+                    return
+                }
                 if self.suppressAWDLStatusUntilPaired {
                     self.logConnectionEvent("AWDL ready for pairing")
                     self.resolveConnectionReady()
@@ -192,9 +213,6 @@ final class TransportManager: ObservableObject {
                     self.connectionState = .awdlConnected
                     self.setIdleTimerState(true)
                     self.logConnectionEvent("AWDL connected")
-                } else if self.connectionState == .usbConnected {
-                    await self.awdlTransport.prepareForUSBStandby()
-                    self.logConnectionEvent("AWDL connection closed while USB is primary")
                 } else {
                     self.logConnectionEvent("AWDL connection event ignored")
                 }
@@ -213,7 +231,7 @@ final class TransportManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
 
-                print("[TransportManager] USB disconnected — evaluating fresh AWDL handoff")
+                logger.info("USB disconnected — evaluating fresh AWDL handoff")
                 self.logConnectionEvent("USB disconnected")
                 await self.startAWDLConnectionAttempt(
                     availableNowMessage: "Attempting fresh AWDL handoff",
@@ -420,7 +438,7 @@ final class TransportManager: ObservableObject {
             // Handled by PairingManager or future plans
             break
         default:
-            print("[TransportManager] Unexpected iOS-received message: \(message)")
+            logger.warning("Unexpected iOS-received message: \(message)")
         }
     }
 

@@ -74,7 +74,6 @@ actor AWDLTransport {
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) async {
         guard connection == nil, !isConnecting else { return }  // Already connected or attempting
-        isConnecting = true
 
         let params = NWParameters.tcp
         params.includePeerToPeer = true
@@ -83,6 +82,9 @@ actor AWDLTransport {
         params.defaultProtocolStack.transportProtocol = tcpOptions
 
         let conn = NWConnection(to: endpoint, using: params)
+        connection = conn
+        isConnecting = true
+        isReady = false
         conn.stateUpdateHandler = { [weak self] state in
             Task { await self?.handleConnectionState(state, for: conn) }
         }
@@ -92,6 +94,10 @@ actor AWDLTransport {
     private func handleConnectionState(_ state: NWConnection.State, for conn: NWConnection) async {
         switch state {
         case .ready:
+            guard connection === conn else {
+                conn.cancel()
+                return
+            }
             logger.info("Connected via AWDL")
             setConnection(conn, ready: true)
             onConnectionReady?()
@@ -128,12 +134,7 @@ actor AWDLTransport {
     }
 
     private func clearConnection(for conn: NWConnection) -> Bool {
-        guard connection === conn else {
-            if connection == nil {
-                isConnecting = false
-            }
-            return false
-        }
+        guard connection === conn else { return false }
 
         return disconnectCurrentConnection()
     }

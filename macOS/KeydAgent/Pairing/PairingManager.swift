@@ -1,6 +1,9 @@
 import Foundation
 import CryptoKit
 import Security
+import SharedProtocol
+
+private let logger = KeydLogger(category: "PairingManager")
 
 /// Manages the macOS side of the one-time QR pairing handshake.
 /// Generates a Curve25519 key pair; encodes public key in QR payload;
@@ -19,11 +22,13 @@ final class PairingManager {
 
     private let keychainService = "com.keyd.agent"
     private let keychainSharedSecretKey = "shared-secret"
+    private let keychainPairedDeviceIDKey = "paired-device-id"
 
     init() {
         // Check if already paired (restore shared secret from Keychain)
         if let _ = loadSharedSecretFromKeychain() {
             isPaired = true
+            pairedDeviceID = loadPairedDeviceIDFromKeychain()
         }
     }
 
@@ -66,30 +71,55 @@ final class PairingManager {
             saveSharedSecretToKeychain(symmetricKey.withUnsafeBytes { Data($0) })
             isPaired = true
             pairedDeviceID = deviceID
-            print("[PairingManager] Paired with device \(deviceID)")
+            savePairedDeviceIDToKeychain(deviceID)
+            logger.info("Paired with device \(deviceID)")
             return true
         } catch {
-            print("[PairingManager] Pairing failed: \(error)")
+            logger.error("Pairing failed: \(error)")
             return false
         }
     }
 
     func resetPairing() {
         clearFromKeychain(key: keychainSharedSecretKey)
+        clearFromKeychain(key: keychainPairedDeviceIDKey)
         privateKey = nil
         isPaired = false
         pairedDeviceID = nil
-        print("[PairingManager] Cleared stored pairing state")
+        logger.info("Cleared stored pairing state")
+    }
+
+    @discardableResult
+    func validateOrAdoptPairedDevice(_ deviceID: String) -> Bool {
+        guard isPaired else { return false }
+
+        if let pairedDeviceID {
+            return pairedDeviceID == deviceID
+        }
+
+        pairedDeviceID = deviceID
+        savePairedDeviceIDToKeychain(deviceID)
+        logger.info("Recovered paired device identity from active session \(deviceID)")
+        return true
     }
 
     // MARK: - Keychain
 
     private func saveSharedSecretToKeychain(_ secret: Data) {
+        saveToKeychain(secret, key: keychainSharedSecretKey)
+    }
+
+    private func savePairedDeviceIDToKeychain(_ deviceID: String) {
+        guard let data = deviceID.data(using: .utf8) else { return }
+        saveToKeychain(data, key: keychainPairedDeviceIDKey)
+    }
+
+    private func saveToKeychain(_ data: Data, key: String) {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: keychainService,
-            kSecAttrAccount: keychainSharedSecretKey,
-            kSecValueData: secret
+            kSecAttrAccount: key,
+            kSecValueData: data
         ]
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)
@@ -106,6 +136,20 @@ final class PairingManager {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         return status == errSecSuccess ? (result as? Data) : nil
+    }
+
+    private func loadPairedDeviceIDFromKeychain() -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: keychainPairedDeviceIDKey,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private func clearFromKeychain(key: String) {
