@@ -9,6 +9,10 @@
       "args": [
         "apple-doc-mcp-server@latest"
       ]
+    },
+    "swiftlens": {
+      "command": "uvx",
+      "args": ["swiftlens"]
     }
   }
 }
