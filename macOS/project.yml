@@ -40,6 +40,26 @@ targets:
     dependencies:
       - package: SharedProtocol
     scheme:
-      testTargets: []
+      testTargets: [KeydAgentTests]
       commandLineArguments:
         "-NSQuitWhenWindowsClose": "NO"
+
+  KeydAgentTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: KeydAgentTests
+        createIntermediateGroups: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.agent.tests
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: M2DUW2UUKH
+    dependencies:
+      - target: KeydAgent
+      - package: SharedProtocol
+    scheme:
+      testTargets: []

@@ -54,6 +54,27 @@ targets:
       - target: KeydLiveActivity
         embed: true
     scheme:
+      testTargets: [KeydAppTests]
+
+  KeydAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: KeydAppTests
+        createIntermediateGroups: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app.tests
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - target: KeydApp
+      - package: SharedProtocol
+    scheme:
       testTargets: []
 
   KeydLiveActivity:

@@ -3,12 +3,14 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0027DC6509FF183C897FB0AC /* SharedProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 5F3D702BC9BFA01F4CCD1652 /* SharedProtocol */; };
 		0C601B22620AFE78719029D2 /* KeydConnectionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */; };
 		1DA916D330695FEFF6B6981F /* KeydConnectionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */; };
+		1E7F42CEDD1AE81127656C3D /* TransportStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B4D99779F645D85429DA90 /* TransportStateMachine.swift */; };
 		3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */; };
 		3F22B8E546825FF06EF8C1AE /* HotkeyPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E360BFADDCED9BEE97215116 /* HotkeyPanel.swift */; };
 		457B0AECC2FC1873A5F775ED /* DebugOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92BE1567A4D81EFF26220647 /* DebugOverlayView.swift */; };
@@ -21,7 +23,6 @@
 		74233BE6AC9FE5AF32E07580 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D833089AB1E968AD01E78092 /* PairingView.swift */; };
 		88DF9E5BCE9886D5A74EC57A /* KeydLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02DFED143F4C58C48738CA2 /* KeydLiveActivityBundle.swift */; };
 		8DB643D06B582FCF1EB10958 /* TransportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D017A0AA764712A04FBA4357 /* TransportManager.swift */; };
-		F1A2B3C4D5E600000002AAA4 /* TransportStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E600000002BBB4 /* TransportStateMachine.swift */; };
 		B67BCAF0BFF0F766B793406C /* KeydLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B4A426776FEFBCC865C4A8 /* KeydLiveActivity.swift */; };
 		C10C102A0894AF1A1386E9BA /* KeydApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7AB307F0248664219D7E544 /* KeydApp.swift */; };
 		DB2E71D5B2057FC57322D0BD /* KeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */; };
@@ -35,6 +36,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0C59C2EEA6EABDE415B179E4;
 			remoteInfo = KeydLiveActivity;
+		};
+		239028A53E961571E093E767 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D7D0459381DC2794B5260FE4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D099F5C92BD18A7A5ED7EB26;
+			remoteInfo = KeydApp;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -53,15 +61,17 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KeydLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KeydLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1ECA586A8B9C450961B058F6 /* RootViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewController.swift; sourceTree = "<group>"; };
+		34B4D99779F645D85429DA90 /* TransportStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportStateMachine.swift; sourceTree = "<group>"; };
 		404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWDLTransport.swift; sourceTree = "<group>"; };
+		4FA81216469191EC074FB3C6 /* KeydAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KeydAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		57B4A426776FEFBCC865C4A8 /* KeydLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivity.swift; sourceTree = "<group>"; };
 		6681C3B02C4559B5F735BEA1 /* PairingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingManager.swift; sourceTree = "<group>"; };
 		887EF92EF2C71ED65EA70EEB /* KeydLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydLiveActivityWidget.swift; sourceTree = "<group>"; };
 		92BE1567A4D81EFF26220647 /* DebugOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOverlayView.swift; sourceTree = "<group>"; };
 		95A1596C3CE0CA948A697EB7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardView.swift; sourceTree = "<group>"; };
 		A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydConnectionAttributes.swift; sourceTree = "<group>"; };
 		ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBTransport.swift; sourceTree = "<group>"; };
@@ -69,7 +79,6 @@
 		B7AB307F0248664219D7E544 /* KeydApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydApp.swift; sourceTree = "<group>"; };
 		BBCE9CA65CB85EECC390B416 /* ConnectionStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusView.swift; sourceTree = "<group>"; };
 		D017A0AA764712A04FBA4357 /* TransportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportManager.swift; sourceTree = "<group>"; };
-		F1A2B3C4D5E600000002BBB4 /* TransportStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportStateMachine.swift; sourceTree = "<group>"; };
 		D07B99D8647E91B17B1EF11F /* KeydApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KeydApp.entitlements; sourceTree = "<group>"; };
 		D833089AB1E968AD01E78092 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		DE5E2A371FE81E5D670BBCE7 /* SharedProtocol */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SharedProtocol; path = ../SharedProtocol; sourceTree = SOURCE_ROOT; };
@@ -83,6 +92,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				5E1C31C54CEA46C0FA0F7D28 /* SharedProtocol in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B2AAC59E0E3D16738F8777EA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0027DC6509FF183C897FB0AC /* SharedProtocol in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -120,6 +137,7 @@
 			isa = PBXGroup;
 			children = (
 				662892C39BA873FAEAE1DE01 /* KeydApp */,
+				843CE6E38579C2000948F321 /* KeydAppTests */,
 				377396AE61DF65459D57722B /* KeydLiveActivity */,
 				78C03C4E56A200203015B2EF /* Packages */,
 				F753EE555E9C5CB85CAB1E10 /* Products */,
@@ -148,7 +166,7 @@
 			children = (
 				404917E099ED0B6D3CB0AC06 /* AWDLTransport.swift */,
 				D017A0AA764712A04FBA4357 /* TransportManager.swift */,
-				F1A2B3C4D5E600000002BBB4 /* TransportStateMachine.swift */,
+				34B4D99779F645D85429DA90 /* TransportStateMachine.swift */,
 				ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */,
 			);
 			path = Transport;
@@ -173,6 +191,13 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
+		843CE6E38579C2000948F321 /* KeydAppTests */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = KeydAppTests;
+			sourceTree = "<group>";
+		};
 		C89A52CEE94A53324B02003E /* Pairing */ = {
 			isa = PBXGroup;
 			children = (
@@ -194,6 +219,7 @@
 			isa = PBXGroup;
 			children = (
 				979E6799DC7B2673A9727BD6 /* KeydApp.app */,
+				4FA81216469191EC074FB3C6 /* KeydAppTests.xctest */,
 				04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */,
 			);
 			name = Products;
@@ -218,6 +244,26 @@
 			productName = KeydLiveActivity;
 			productReference = 04BDF0E80C3305D3F68E9EBF /* KeydLiveActivity.appex */;
 			productType = "com.apple.product-type.app-extension";
+		};
+		49F52649F297887163F2D27B /* KeydAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A5419E3675D4E5476504714 /* Build configuration list for PBXNativeTarget "KeydAppTests" */;
+			buildPhases = (
+				55B49AAE43BE88EF4833CD86 /* Sources */,
+				B2AAC59E0E3D16738F8777EA /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6F5228880EFAFB9319508E44 /* PBXTargetDependency */,
+			);
+			name = KeydAppTests;
+			packageProductDependencies = (
+				5F3D702BC9BFA01F4CCD1652 /* SharedProtocol */,
+			);
+			productName = KeydAppTests;
+			productReference = 4FA81216469191EC074FB3C6 /* KeydAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		D099F5C92BD18A7A5ED7EB26 /* KeydApp */ = {
 			isa = PBXNativeTarget;
@@ -250,9 +296,15 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					0C59C2EEA6EABDE415B179E4 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					49F52649F297887163F2D27B = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 					D099F5C92BD18A7A5ED7EB26 = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -270,16 +322,25 @@
 			packageReferences = (
 				567B821E5D00F50680945422 /* XCLocalSwiftPackageReference "../SharedProtocol" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				D099F5C92BD18A7A5ED7EB26 /* KeydApp */,
+				49F52649F297887163F2D27B /* KeydAppTests */,
 				0C59C2EEA6EABDE415B179E4 /* KeydLiveActivity */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		55B49AAE43BE88EF4833CD86 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		871FEDBA408994379262A34F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -306,7 +367,7 @@
 				74233BE6AC9FE5AF32E07580 /* PairingView.swift in Sources */,
 				68C1A56FA763E576003F8CD0 /* RootViewController.swift in Sources */,
 				8DB643D06B582FCF1EB10958 /* TransportManager.swift in Sources */,
-				F1A2B3C4D5E600000002AAA4 /* TransportStateMachine.swift in Sources */,
+				1E7F42CEDD1AE81127656C3D /* TransportStateMachine.swift in Sources */,
 				3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -314,6 +375,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		6F5228880EFAFB9319508E44 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D099F5C92BD18A7A5ED7EB26 /* KeydApp */;
+			targetProxy = 239028A53E961571E093E767 /* PBXContainerItemProxy */;
+		};
 		90C95E26261D73599E634183 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 0C59C2EEA6EABDE415B179E4 /* KeydLiveActivity */;
@@ -385,20 +451,40 @@
 				CODE_SIGN_ENTITLEMENTS = KeydApp/KeydApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = KeydApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app;
 				PRODUCT_NAME = KeydApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		458F9B17C62431F82A58B098 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/KeydApp.app/KeydApp";
+			};
+			name = Release;
 		};
 		579EE6B72BC16DFA77CC1D5F /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -470,14 +556,14 @@
 				CODE_SIGN_ENTITLEMENTS = KeydApp/KeydApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = KeydApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app;
 				PRODUCT_NAME = KeydApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -489,7 +575,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = KeydLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -497,7 +583,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.live-activity";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.keyd.app.live-activity";
 				PRODUCT_NAME = KeydLiveActivity;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -505,11 +591,31 @@
 			};
 			name = Debug;
 		};
+		B222D46DD8BEE889773D6D45 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.keyd.app.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/KeydApp.app/KeydApp";
+			};
+			name = Debug;
+		};
 		EC1F0DC514F257BCC9337C53 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = KeydLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -517,7 +623,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.live-activity";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.keyd.app.live-activity";
 				PRODUCT_NAME = KeydLiveActivity;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
@@ -528,6 +634,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0A5419E3675D4E5476504714 /* Build configuration list for PBXNativeTarget "KeydAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B222D46DD8BEE889773D6D45 /* Debug */,
+				458F9B17C62431F82A58B098 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		0FBBB09332E2AA6DAFC18FDE /* Build configuration list for PBXProject "KeydApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -565,6 +680,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		5F3D702BC9BFA01F4CCD1652 /* SharedProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SharedProtocol;
+		};
 		83DC1729EFA37F8173C7FB6D /* SharedProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SharedProtocol;

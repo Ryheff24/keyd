@@ -31,10 +31,7 @@ private struct PendingAWDLSlot {
     let slotIndex: Int
 }
 
-enum ConnectionKind: CustomStringConvertible {
-    case usb, awdl
-    var description: String { self == .usb ? "USB" : "AWDL" }
-}
+// ConnectionKind is now defined in SharedProtocol (imported above).
 
 /// Manages USB and AWDL listeners; routes decoded messages to InjectionRouter.
 ///
