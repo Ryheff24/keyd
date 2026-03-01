@@ -20,16 +20,32 @@ final class PairingManager {
     private(set) var isPaired = false
     private(set) var pairedDeviceID: String?
 
+    private let testMode: TestMode?
     private let keychainService = "com.ryheff.keyd.agent"
     private let keychainSharedSecretKey = "shared-secret"
     private let keychainPairedDeviceIDKey = "paired-device-id"
 
-    init() {
-        // Check if already paired (restore shared secret from Keychain)
-        if let _ = loadSharedSecretFromKeychain() {
-            isPaired = true
-            pairedDeviceID = loadPairedDeviceIDFromKeychain()
+    init(testMode: TestMode? = nil) {
+        self.testMode = testMode
+        if testMode != nil {
+            // Test mode: start unpaired, no Keychain reads — each test case is a clean slate.
+            isPaired = false
+            pairedDeviceID = nil
+        } else {
+            // Check if already paired (restore shared secret from Keychain)
+            if let _ = loadSharedSecretFromKeychain() {
+                isPaired = true
+                pairedDeviceID = loadPairedDeviceIDFromKeychain()
+            }
         }
+    }
+
+    /// Clears in-memory pairing state without touching the Keychain.
+    /// Called by TransportManager when it receives a TestReset message in test mode.
+    func resetInMemory() {
+        isPaired = false
+        pairedDeviceID = nil
+        privateKey = nil
     }
 
     var currentPublicKeyData: Data? {
@@ -67,12 +83,19 @@ final class PairingManager {
                 outputByteCount: 32
             )
 
-            // Store shared secret in Keychain
-            saveSharedSecretToKeychain(symmetricKey.withUnsafeBytes { Data($0) })
-            isPaired = true
-            pairedDeviceID = deviceID
-            savePairedDeviceIDToKeychain(deviceID)
-            logger.info("Paired with device \(deviceID)")
+            if testMode != nil {
+                // Test mode: set pairing state in memory only — never write to Keychain.
+                isPaired = true
+                pairedDeviceID = deviceID
+                logger.info("[TEST MODE] Paired with device \(deviceID) (in-memory only, no Keychain write)")
+            } else {
+                // Production: store shared secret in Keychain as usual.
+                saveSharedSecretToKeychain(symmetricKey.withUnsafeBytes { Data($0) })
+                isPaired = true
+                pairedDeviceID = deviceID
+                savePairedDeviceIDToKeychain(deviceID)
+                logger.info("Paired with device \(deviceID)")
+            }
             return true
         } catch {
             logger.error("Pairing failed: \(error)")
