@@ -35,8 +35,21 @@ Plans:
 - [x] 01-03-PLAN.md — iOS app (USB/AWDL transport, keyboard, hotkey panel)
 - [x] 01-04-PLAN.md — QR pairing + Dynamic Island Live Activity
 - [x] 01-05-PLAN.md — Transport hardening + device validation
-- [ ] 01-06-PLAN.md — Transport state machine formalization (explicit FSM)
-- [ ] 01-07-PLAN.md — On-device test suite (XCTest + scenario matrix + invariant checker)
+- [ ] 01-06-PLAN.md — Transport state machine formalization (explicit FSM). Phase 1.1 harness operational for verification
+- [ ] 01-07-PLAN.md — On-device test suite (XCTest + scenario matrix + invariant checker). Phase 1.1 harness operational for verification
+
+### Phase 01.1: Connected Integration Test Suite (INSERTED)
+
+**Goal:** End-to-end connected integration test suite validating real USB/AWDL connections, pairing handshakes, and message round-trips on physical hardware; 4 regression tests for commit 9046927 bugs; latency benchmark; `make test-integration` single-command entry point that gates `make deploy`
+**Requirements**: TEST-01, TEST-02, TEST-03, TEST-04
+**Depends on:** Phase 1 (SharedProtocol, KeydApp, KeydAgent fully implemented)
+**Plans:** 4 plans
+
+Plans:
+- [ ] 01.1-01-PLAN.md — SharedProtocol TestReset/TestResetAck protocol extension
+- [ ] 01.1-02-PLAN.md — macOS agent --test-mode flag (2s timeouts, wire log, in-memory pairing, conn-N IDs, testReset handler)
+- [ ] 01.1-03-PLAN.md — iOS KeydIntegrationTests XCTest target + IntegrationHarness + Suite C
+- [ ] 01.1-04-PLAN.md — CLI wiring: deploy-and-run.sh test-integration mode + Makefile deploy gate
 
 ### Phase 2: Bidirectional Text Sync and Advanced Editing
 **Goal**: iOS editing gestures and cursor controls operate on the macOS field, predictive text suggestions reflect the macOS field content, and the iOS app shows a live text mirror of what is in the macOS field
@@ -64,10 +77,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3
+Phases execute in numeric order: 1 → 1.1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Transport and Core Keyboard | 7/7 | Complete   | 2026-03-01 |
+| 1.1. Connected Integration Test Suite | 0/4 | Not started | - |
 | 2. Bidirectional Text Sync and Advanced Editing | 0/TBD | Not started | - |
 | 3. App-Aware Hotkey Panel | 0/TBD | Not started | - |
