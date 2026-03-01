@@ -19,6 +19,7 @@ actor USBListener {
     private var connectTask: Task<Void, Never>?
     private var stopRequested = false
     private var nextTag: UInt32 = 1
+    private var lastConnectedUSBMuxDeviceID: Int?
 
     var onConnectionReady: (@Sendable () -> Void)?
     var onData: (@Sendable (Data) -> Void)?
@@ -60,23 +61,29 @@ actor USBListener {
         while !Task.isCancelled && !stopRequested {
             do {
                 let tag = nextRequestTag()
-                let fd = try await Task.detached(priority: .userInitiated) {
-                    try Self.openTunnel(on: Self.port, tag: tag)
+                let preferredAfterDeviceID = lastConnectedUSBMuxDeviceID
+                let tunnel = try await Task.detached(priority: .userInitiated) {
+                    try Self.openTunnel(
+                        on: Self.port,
+                        tag: tag,
+                        preferAfterDeviceID: preferredAfterDeviceID
+                    )
                 }.value
 
                 guard !Task.isCancelled && !stopRequested else {
-                    Self.closeSocket(fd)
+                    Self.closeSocket(tunnel.fd)
                     break
                 }
 
-                socketFD = fd
-                logger.info("Connected to iPhone over usbmuxd on port \(Self.port)")
+                socketFD = tunnel.fd
+                lastConnectedUSBMuxDeviceID = tunnel.deviceID
+                logger.info("Connected to USB device \(tunnel.deviceID) over usbmuxd on port \(Self.port)")
                 onConnectionReady?()
 
                 do {
                     while !Task.isCancelled && !stopRequested {
                         let chunk = try await Task.detached(priority: .userInitiated) {
-                            try Self.readChunk(fd: fd)
+                            try Self.readChunk(fd: tunnel.fd)
                         }.value
                         onData?(chunk)
                     }
@@ -86,7 +93,7 @@ actor USBListener {
                     }
                 }
 
-                finishSocket(fd, notifyIfCurrent: true)
+                finishSocket(tunnel.fd, notifyIfCurrent: true)
             } catch is CancellationError {
                 break
             } catch {
@@ -129,39 +136,42 @@ actor USBListener {
         }
     }
 
-    private static func openTunnel(on port: UInt16, tag: UInt32) throws -> Int32 {
-        let deviceID = try firstAttachedDeviceID(tag: tag)
-        let fd = try connectToUSBMuxSocket()
-
-        do {
-            try sendPlist(
-                [
-                    "BundleID": "com.keyd.agent",
-                    "ClientVersionString": "keyd-1.0",
-                    "DeviceID": deviceID,
-                    "MessageType": "Connect",
-                    "PortNumber": Int(port.bigEndian),
-                    "ProgName": "KeydAgent",
-                    "kLibUSBMuxVersion": 3
-                ],
-                tag: tag &+ 1,
-                to: fd
-            )
-
-            let response = try readPlist(from: fd)
-            let resultNumber = (response["Number"] as? NSNumber)?.intValue ?? -1
-            guard resultNumber == 0 else {
-                throw USBMuxError.connectRejected(resultNumber)
-            }
-
-            return fd
-        } catch {
-            closeSocket(fd)
-            throw error
-        }
+    private struct OpenTunnelResult {
+        let fd: Int32
+        let deviceID: Int
     }
 
-    private static func firstAttachedDeviceID(tag: UInt32) throws -> Int {
+    private static func openTunnel(
+        on port: UInt16,
+        tag: UInt32,
+        preferAfterDeviceID: Int?
+    ) throws -> OpenTunnelResult {
+        let deviceIDs = try attachedDeviceIDs(tag: tag)
+        let candidateDeviceIDs = orderedDeviceIDs(deviceIDs, preferAfter: preferAfterDeviceID)
+
+        var lastConnectRejection: USBMuxError?
+
+        for (index, deviceID) in candidateDeviceIDs.enumerated() {
+            do {
+                let fd = try connectToDevice(deviceID: deviceID, on: port, tag: tag &+ UInt32(index) &+ 1)
+                return OpenTunnelResult(fd: fd, deviceID: deviceID)
+            } catch let error as USBMuxError {
+                if case .connectRejected = error {
+                    lastConnectRejection = error
+                    continue
+                }
+                throw error
+            }
+        }
+
+        if let lastConnectRejection {
+            throw lastConnectRejection
+        }
+
+        throw USBMuxError.noDevice
+    }
+
+    private static func attachedDeviceIDs(tag: UInt32) throws -> [Int] {
         let fd = try connectToUSBMuxSocket()
 
         defer { closeSocket(fd) }
@@ -183,6 +193,8 @@ actor USBListener {
             throw USBMuxError.invalidResponse
         }
 
+        var ids: [Int] = []
+
         for device in devices {
             let properties = device["Properties"] as? [String: Any]
             let connectionType = (properties?["ConnectionType"] as? String)
@@ -193,14 +205,64 @@ actor USBListener {
             }
 
             if let id = (device["DeviceID"] as? NSNumber)?.intValue {
-                return id
-            }
-            if let id = (properties?["DeviceID"] as? NSNumber)?.intValue {
-                return id
+                ids.append(id)
+            } else if let id = (properties?["DeviceID"] as? NSNumber)?.intValue {
+                ids.append(id)
             }
         }
 
-        throw USBMuxError.noDevice
+        guard !ids.isEmpty else {
+            throw USBMuxError.noDevice
+        }
+
+        return ids
+    }
+
+    private static func orderedDeviceIDs(_ deviceIDs: [Int], preferAfter deviceID: Int?) -> [Int] {
+        guard
+            let deviceID,
+            let currentIndex = deviceIDs.firstIndex(of: deviceID)
+        else {
+            return deviceIDs
+        }
+
+        let nextIndex = deviceIDs.index(after: currentIndex)
+        guard nextIndex != deviceIDs.endIndex else {
+            return deviceIDs
+        }
+
+        return Array(deviceIDs[nextIndex...]) + Array(deviceIDs[..<nextIndex])
+    }
+
+    private static func connectToDevice(deviceID: Int, on port: UInt16, tag: UInt32) throws -> Int32 {
+        let fd = try connectToUSBMuxSocket()
+
+        do {
+            try sendPlist(
+                [
+                    "BundleID": "com.keyd.agent",
+                    "ClientVersionString": "keyd-1.0",
+                    "DeviceID": deviceID,
+                    "MessageType": "Connect",
+                    "PortNumber": Int(port.bigEndian),
+                    "ProgName": "KeydAgent",
+                    "kLibUSBMuxVersion": 3
+                ],
+                tag: tag,
+                to: fd
+            )
+
+            let response = try readPlist(from: fd)
+            let resultNumber = (response["Number"] as? NSNumber)?.intValue ?? -1
+            guard resultNumber == 0 else {
+                throw USBMuxError.connectRejected(resultNumber)
+            }
+
+            return fd
+        } catch {
+            closeSocket(fd)
+            throw error
+        }
     }
 
     private static func connectToUSBMuxSocket() throws -> Int32 {

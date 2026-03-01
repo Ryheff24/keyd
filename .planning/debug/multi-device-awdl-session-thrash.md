@@ -63,3 +63,17 @@ The transport manager lacked identity gating across both transports. It promoted
 - The Mac's unified log showed one initial `AWDL connected`, then a sustained flood of `Additional AWDL connection arrived while AWDL is active; closing it`, with no successful `Session resumed`.
 - Root cause: on macOS, the first AWDL socket was still treated as authoritative as soon as it reached `.ready` whenever the app was already paired. If the unpaired iPad's prewarmed pairing channel won that race, it occupied the only AWDL slot and the paired iPhone's later AWDL resumes were all rejected.
 - Fix: when the Mac is already paired and has no confirmed active session, treat AWDL like USB: keep the first AWDL socket in an unconfirmed `pairingAWDL` state, allow later AWDL candidates to replace stale unconfirmed ones, and only promote to `awdlConnected` after a matching `sessionResume`. Unpaired AWDL `pairingRequest` traffic is rejected and the candidate socket is dropped without poisoning the paired session.
+
+## Follow-up: USB-First Device Selection
+
+- After the AWDL gating fix, another repro still failed when both devices were connected over USB and the unpaired iPad was attached first.
+- In that case, the paired iPhone would give up on USB and fall back to AWDL even though it was physically connected over USB.
+- Root cause: the macOS `USBListener` always asked usbmuxd for the first attached USB device and opened a tunnel only to that device. If the unpaired iPad was first and had the app listening, it could monopolize the only USB tunnel slot; after the app-layer rejection, the next reconnect would pick the same first USB device again, starving the paired iPhone.
+- Fix: rotate USB tunnel attempts across all attached USB devices instead of always choosing the first one. The listener now enumerates every attached USB device, starts its next attempt after the last successfully connected usbmux device, and falls through to later devices if an earlier one rejects the port connection.
+
+## Follow-up: Idle Pending USB Tunnel Starves Paired Device
+
+- A follow-up repro showed the first USB-device rotation change was still incomplete.
+- The Mac unified log showed `Connected to USB device 77 over usbmuxd on port 12345`, then `USB connected while no confirmed session is active; waiting for USB session identity`, and then nothing else on USB before the paired iPhone later resumed on AWDL.
+- Root cause: the unpaired iPad's app could accept the USB tunnel and keep it open while sending no identifying traffic. Because the pending tunnel never disconnected, the usbmux connect loop never rotated to the next attached device, so the paired iPhone never got a USB attempt.
+- Fix: add a short timeout for unconfirmed USB identity while the Mac is already paired. If the pending USB tunnel does not send `sessionResume` quickly, the agent drops that idle USB connection so `USBListener` can rotate to the next attached USB device.

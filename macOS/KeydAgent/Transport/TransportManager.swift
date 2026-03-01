@@ -38,6 +38,7 @@ final class TransportManager {
     private var activeDecoder: MessageDecoder?
     private var activeEncoder: MessageEncoder?
     private var pendingUSBDecoder: MessageDecoder?
+    private var pendingUSBIdentityTimeoutTask: Task<Void, Never>?
 
     // Secure input polling (AGENT-06)
     private var secureInputTimer: Timer?
@@ -158,15 +159,18 @@ final class TransportManager {
                 return
             case .awdlConnected:
                 _ = makePendingUSBDecoder()
+                schedulePendingUSBIdentityTimeout()
                 logEvent("USB connected while AWDL is active; waiting for USB session identity")
                 return
             case .pairingAWDL(let old):
                 old.cancel()
                 _ = makePendingUSBDecoder()
+                schedulePendingUSBIdentityTimeout()
                 logEvent("USB connected while a stale AWDL pairing channel existed; waiting for USB session identity")
                 return
             case .disconnected:
                 _ = makePendingUSBDecoder()
+                schedulePendingUSBIdentityTimeout()
                 logEvent("USB connected while no confirmed session is active; waiting for USB session identity")
                 return
             }
@@ -188,6 +192,7 @@ final class TransportManager {
         }
 
         pendingUSBDecoder = nil
+        cancelPendingUSBIdentityTimeout()
         _ = makeActiveDecoder()
 
         startSecureInputPolling()
@@ -295,6 +300,7 @@ final class TransportManager {
 
     private func handleUSBDisconnect() {
         if pendingUSBDecoder != nil {
+            cancelPendingUSBIdentityTimeout()
             pendingUSBDecoder = nil
             logEvent("Pending USB connection dropped")
             return
@@ -542,6 +548,7 @@ final class TransportManager {
         standbyAWDLConnection?.cancel()
         standbyAWDLConnection = nil
         standbyAWDLDecoder = nil
+        cancelPendingUSBIdentityTimeout()
         pendingUSBDecoder = nil
         activeDecoder = nil
         activeEncoder = nil
@@ -643,6 +650,7 @@ final class TransportManager {
         guard let decoder = pendingUSBDecoder else { return }
 
         pendingUSBDecoder = nil
+        cancelPendingUSBIdentityTimeout()
         decoder.onMessage = { [weak self] message in
             Task { @MainActor in
                 self?.handleIncomingMessage(message)
@@ -666,10 +674,31 @@ final class TransportManager {
     }
 
     private func disconnectPendingUSBConnection() {
+        cancelPendingUSBIdentityTimeout()
         pendingUSBDecoder = nil
         Task { [usbListener] in
             await usbListener.disconnectCurrentConnection()
         }
+    }
+
+    private func schedulePendingUSBIdentityTimeout(timeoutNanoseconds: UInt64 = 2_000_000_000) {
+        pendingUSBIdentityTimeoutTask?.cancel()
+        pendingUSBIdentityTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            } catch {
+                return
+            }
+
+            guard let self, self.pendingUSBDecoder != nil else { return }
+            self.logEvent("Pending USB connection did not identify itself; rotating to next USB device")
+            self.disconnectPendingUSBConnection()
+        }
+    }
+
+    private func cancelPendingUSBIdentityTimeout() {
+        pendingUSBIdentityTimeoutTask?.cancel()
+        pendingUSBIdentityTimeoutTask = nil
     }
 
     private func sendDirectUSB(_ message: KeydMessage) {
