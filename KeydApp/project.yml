@@ -71,6 +71,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: KeydApp
       - package: SharedProtocol

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0027DC6509FF183C897FB0AC /* SharedProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 5F3D702BC9BFA01F4CCD1652 /* SharedProtocol */; };
 		0C601B22620AFE78719029D2 /* KeydConnectionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */; };
+		130EEF6D7EA1C7CBF41FA2D5 /* TransportStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9816916FA32BCB85B92361A5 /* TransportStateMachineTests.swift */; };
 		1DA916D330695FEFF6B6981F /* KeydConnectionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */; };
 		1E7F42CEDD1AE81127656C3D /* TransportStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B4D99779F645D85429DA90 /* TransportStateMachine.swift */; };
 		3DE70385E25F4D691343E221 /* USBTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */; };
@@ -72,6 +73,7 @@
 		92BE1567A4D81EFF26220647 /* DebugOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOverlayView.swift; sourceTree = "<group>"; };
 		95A1596C3CE0CA948A697EB7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		979E6799DC7B2673A9727BD6 /* KeydApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KeydApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9816916FA32BCB85B92361A5 /* TransportStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportStateMachineTests.swift; sourceTree = "<group>"; };
 		9DFC2E20895DDB2BB1C464BE /* KeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardView.swift; sourceTree = "<group>"; };
 		A9293DF187A3D88EA459B12A /* KeydConnectionAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeydConnectionAttributes.swift; sourceTree = "<group>"; };
 		ABC3816F8FE3819D1DA679C5 /* USBTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBTransport.swift; sourceTree = "<group>"; };
@@ -194,6 +196,7 @@
 		843CE6E38579C2000948F321 /* KeydAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				9816916FA32BCB85B92361A5 /* TransportStateMachineTests.swift */,
 			);
 			path = KeydAppTests;
 			sourceTree = "<group>";
@@ -338,6 +341,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				130EEF6D7EA1C7CBF41FA2D5 /* TransportStateMachineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -472,6 +476,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -597,6 +602,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

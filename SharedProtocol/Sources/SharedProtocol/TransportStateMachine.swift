@@ -67,7 +67,7 @@ public enum AgentTransportState: Equatable, CustomStringConvertible, Sendable {
 }
 
 /// Events that can trigger a state transition in the macOS agent.
-public enum AgentTransportEvent: CustomStringConvertible, Sendable {
+public enum AgentTransportEvent: CustomStringConvertible, Equatable, Sendable {
     /// A USB socket became ready (before identity is known).
     case usbConnectionArrived(deviceID: String?)
     /// The pending USB connection identified itself as a known paired device.
@@ -119,7 +119,7 @@ public enum AgentTransportEvent: CustomStringConvertible, Sendable {
 ///
 /// TransportManager executes these after updating its state — the FSM itself
 /// never touches network connections, timers, or UI directly.
-public enum AgentTransportSideEffect: CustomStringConvertible, Sendable {
+public enum AgentTransportSideEffect: CustomStringConvertible, Equatable, Sendable {
     /// Start the 2-second identity timer for the pending USB connection.
     case startUSBIdentityTimer
     /// Cancel the pending USB identity timer (if active).
@@ -583,7 +583,7 @@ public enum iOSTransportState: Equatable, CustomStringConvertible, Sendable {
 }
 
 /// Events that trigger state transitions in the iOS transport.
-public enum iOSTransportEvent: CustomStringConvertible, Sendable {
+public enum iOSTransportEvent: CustomStringConvertible, Equatable, Sendable {
     /// USB tunnel accepted and ready for communication.
     case usbReady
     /// USB tunnel closed or dropped.
@@ -633,7 +633,7 @@ public enum iOSTransportEvent: CustomStringConvertible, Sendable {
 /// Side effects returned by the iOS transition function.
 ///
 /// TransportManager executes these after updating its FSM state.
-public enum iOSTransportSideEffect: CustomStringConvertible, Sendable {
+public enum iOSTransportSideEffect: CustomStringConvertible, Equatable, Sendable {
     /// Start the AWDL heartbeat loop (send heartbeat every 4s, expect ack within 2s).
     case startHeartbeat
     /// Stop the heartbeat loop.
