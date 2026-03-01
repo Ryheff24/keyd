@@ -5,6 +5,19 @@ import SharedProtocol
 
 private let logger = KeydLogger(category: "AppDelegate")
 
+/// Passed to TransportManager and PairingManager when --test-mode is active.
+/// All fields use test-safe defaults. Never instantiated in production.
+struct TestMode {
+    /// USB identity timeout (production: 2s default; test: 2s — same, but explicit for clarity)
+    let identityTimeout: TimeInterval = 2.0
+    /// AWDL slot timeout (production: 3s; test: 2s)
+    let awdlSlotTimeout: TimeInterval = 2.0
+    /// Verbose wire log to stdout for every message (excluding heartbeats, tagged [HB])
+    let verboseWireLog: Bool = true
+    /// Counter for deterministic conn-N IDs
+    var connectionCounter: Int = 0
+}
+
 /// Main entry point for KeydAgent — a menu bar accessory app with no Dock presence.
 /// Responsibilities:
 ///   1. Register as a Login Item (SMAppService.mainApp.register)
@@ -28,21 +41,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var transportManager: TransportManager?
     private var permissionPollTimer: Timer?
     private let checker = PermissionChecker()
-    private let pairingManager = PairingManager()
+    private var pairingManager: PairingManager = PairingManager()
     private var pairingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide from Dock — KeydAgent is an accessory app (menu bar only)
         NSApp.setActivationPolicy(.accessory)
 
-        // Register as Login Item — idempotent and safe to call on every launch.
-        // Appears in System Settings → General → Login Items as "KeydAgent".
-        do {
-            try SMAppService.mainApp.register()
-        } catch {
-            // Already registered or registration not needed — not a fatal error
-            logger.warning("SMAppService.mainApp.register(): \(error.localizedDescription)")
+        // Detect --test-mode flag
+        let isTestMode = ProcessInfo.processInfo.arguments.contains("--test-mode")
+        let testMode: TestMode? = isTestMode ? TestMode() : nil
+
+        if isTestMode {
+            logger.info("[TEST MODE] Agent starting in test mode — Keychain writes disabled, 2s timeouts, verbose wire log")
         }
+
+        // In test mode, skip SMAppService registration — test agents are transient processes.
+        if !isTestMode {
+            // Register as Login Item — idempotent and safe to call on every launch.
+            // Appears in System Settings → General → Login Items as "KeydAgent".
+            do {
+                try SMAppService.mainApp.register()
+            } catch {
+                // Already registered or registration not needed — not a fatal error
+                logger.warning("SMAppService.mainApp.register(): \(error.localizedDescription)")
+            }
+        }
+
+        // Build PairingManager with test mode awareness
+        pairingManager = PairingManager(testMode: testMode)
 
         // Initialize status bar immediately so the icon appears and the user
         // can see what's happening before anything else runs.
@@ -50,6 +77,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar.onShowPairing = { [weak self] in self?.showPairingWindow() }
         statusBar.onResetPairing = { [weak self] in self?.resetPairing() }
         statusBarController = statusBar
+
+        // In test mode, bypass the permissions check — test environment has permissions granted.
+        // The poll-and-wait loop is not appropriate for automated tests.
+        if isTestMode {
+            startTransport(testMode: testMode)
+            return
+        }
 
         // Silent permission check — no popups. Menu bar shows what's missing.
         let perms = checker.checkPermissions()
@@ -100,13 +134,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pairingWindow = window
     }
 
-    private func startTransport() {
+    private func startTransport(testMode: TestMode? = nil) {
         guard let statusBar = statusBarController else { return }
         let injector = InjectionRouter()
         let manager = TransportManager(
             injectionRouter: injector,
             statusBar: statusBar,
-            pairingManager: pairingManager
+            pairingManager: pairingManager,
+            testMode: testMode
         )
         manager.onPairingCompleted = { [weak self] in
             self?.closePairingWindow()
@@ -115,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             await manager.start()
         }
-        logger.info("Transport started")
+        logger.info("Transport started\(testMode != nil ? " (test mode)" : "")")
     }
 
     @MainActor
