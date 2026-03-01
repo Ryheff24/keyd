@@ -13,6 +13,7 @@ final class PairingManager: ObservableObject {
     @Published var isPairing = false
     @Published var pairingError: String? = nil
 
+    private let installMarkerDefaultsKey = "pairing-install-marker"
     private let keychainService = "com.keyd.app"
     private let keychainSharedSecretKey = "shared-secret"
     private let keychainMacAgentKey = "mac-agent-public-key"
@@ -25,6 +26,7 @@ final class PairingManager: ObservableObject {
     }
 
     init() {
+        purgeStalePairingAfterFreshInstall()
         isPaired = loadSharedSecretFromKeychain() != nil
     }
 
@@ -120,6 +122,20 @@ final class PairingManager: ObservableObject {
 
     private func saveSharedSecretToKeychain(_ data: Data) {
         saveToKeychain(data, key: keychainSharedSecretKey)
+    }
+
+    // Keychain items survive app uninstall on iOS, so use a sandboxed install marker
+    // to detect a fresh install and discard any stale pairing state before app boot.
+    private func purgeStalePairingAfterFreshInstall() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: installMarkerDefaultsKey) == nil else {
+            return
+        }
+
+        clearFromKeychain(key: keychainSharedSecretKey)
+        clearFromKeychain(key: keychainMacAgentKey)
+        defaults.set(UUID().uuidString, forKey: installMarkerDefaultsKey)
+        print("[PairingManager] Fresh install detected; cleared stale pairing state")
     }
 
     private func saveToKeychain(_ data: Data, key: String) {

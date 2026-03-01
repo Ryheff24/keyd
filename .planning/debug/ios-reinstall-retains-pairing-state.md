@@ -1,0 +1,36 @@
+# Debug Session: ios-reinstall-retains-pairing-state
+
+## Summary
+
+Issue: Removing `KeydApp` from iOS and reinstalling it still reopened into the paired state, so the user could skip scanning the macOS QR code even though a fresh install should require pairing again.
+
+## Symptoms
+
+- Expected: A freshly reinstalled app should behave like a first launch and show the QR pairing flow.
+- Actual: After reinstall, the app still considered itself paired and loaded the main keyboard UI.
+- Errors: No explicit runtime error was reported.
+- Timeline: Observed after the original QR pairing flow shipped in phase 01-04.
+- Reproduction:
+  1. Pair the iPhone app to the Mac.
+  2. Delete the iOS app.
+  3. Reinstall and relaunch the iOS app.
+  4. Observe that the app skips the QR scan flow.
+
+## Root Cause
+
+`KeydApp` derived `isPaired` entirely from `loadSharedSecretFromKeychain()`, but iOS preserves Keychain items across uninstall/reinstall. The app had no sandbox-backed install marker, so a reinstalled build still found the old shared secret and treated the device as already paired.
+
+## Fix
+
+- Added a `UserDefaults` install marker in the iOS `PairingManager`.
+- On first launch after a fresh install (marker missing), the app now clears any stored pairing entries from Keychain before loading pairing state.
+- After clearing, the app writes a new install marker so normal launches and app updates preserve legitimate pairing state.
+
+## Verification
+
+- `xcodebuild -project KeydApp/KeydApp.xcodeproj -scheme KeydApp -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`
+- Result: `BUILD SUCCEEDED`
+
+## Status
+
+Root cause found and fix applied.
