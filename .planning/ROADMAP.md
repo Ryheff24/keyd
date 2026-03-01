@@ -28,7 +28,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User taps any shortcut button (Cmd-C, Cmd-V, Cmd-Z, etc.) on the iPhone hotkey panel and the corresponding macOS shortcut executes in the frontmost app
   4. macOS agent menu bar icon shows the current connection state (USB / AWDL / disconnected) and prompts for Accessibility and Input Monitoring permissions if missing
   5. iPhone does not auto-lock while connected; hotkey panel pauses with a visible indicator when macOS has a password field focused
-**Plans**: 01-01, 01-02, 01-03, 01-04, 01-05, 01-06 (aggressive transport regression suite: single-device + multi-device + spam/stress)
+**Plans**: 7 plans
+Plans:
+- [x] 01-01-PLAN.md — SharedProtocol verify/update
+- [x] 01-02-PLAN.md — macOS agent transport + injection + menu bar
+- [x] 01-03-PLAN.md — iOS app (USB/AWDL transport, keyboard, hotkey panel)
+- [x] 01-04-PLAN.md — QR pairing + Dynamic Island Live Activity
+- [x] 01-05-PLAN.md — Transport hardening + device validation
+- [ ] 01-06-PLAN.md — Transport state machine formalization (explicit FSM)
+- [ ] 01-07-PLAN.md — On-device test suite (XCTest + scenario matrix + invariant checker)
 
 ### Phase 2: Bidirectional Text Sync and Advanced Editing
 **Goal**: iOS editing gestures and cursor controls operate on the macOS field, predictive text suggestions reflect the macOS field content, and the iOS app shows a live text mirror of what is in the macOS field
@@ -60,6 +68,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Transport and Core Keyboard | 4/6 | In Progress (01-05 stabilization, 01-06 planned) |  |
+| 1. Transport and Core Keyboard | 5/7 | In Progress (01-06 FSM formalization, 01-07 test suite) |  |
 | 2. Bidirectional Text Sync and Advanced Editing | 0/TBD | Not started | - |
 | 3. App-Aware Hotkey Panel | 0/TBD | Not started | - |
