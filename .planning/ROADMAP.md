@@ -12,7 +12,7 @@ Three phases that build toward a frozen transport layer: Phase 1 establishes the
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Transport and Core Keyboard** - USB + AWDL transport implemented and under device validation, stock keyboard host types into macOS, hotkey panel operational
+- [x] **Phase 1: Transport and Core Keyboard** - USB + AWDL transport implemented and under device validation, stock keyboard host types into macOS, hotkey panel operational (completed 2026-03-01)
 - [ ] **Phase 2: Bidirectional Text Sync and Advanced Editing** - Cursor control, text selection, predictive text, and live macOS field mirror on iOS
 - [ ] **Phase 3: App-Aware Hotkey Panel** - Hotkey panel shows app-specific shortcuts based on frontmost macOS application
 
@@ -68,6 +68,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Transport and Core Keyboard | 6/7 | In Progress|  |
+| 1. Transport and Core Keyboard | 7/7 | Complete   | 2026-03-01 |
 | 2. Bidirectional Text Sync and Advanced Editing | 0/TBD | Not started | - |
 | 3. App-Aware Hotkey Panel | 0/TBD | Not started | - |
