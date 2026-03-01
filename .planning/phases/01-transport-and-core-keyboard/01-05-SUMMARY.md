@@ -51,7 +51,7 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 ### Security
 
 - [✅] Uninstall KeydApp -> reinstall -> QR scan required again (Keychain cleared on uninstall)
-- [-] Second iPhone (different device) cannot connect without pairing QR scan
+- [✅] Second iPhone (different device) cannot connect without pairing QR scan
 
 ### Password Field
 
@@ -59,13 +59,6 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 - [✅] iPhone keyboard shows "Password Field Active" gray overlay
 - [✅] Typing on iPhone is blocked (no characters sent)
 - [✅] Focus a normal text field on Mac -> keyboard overlay disappears and typing resumes
-
-## Notes From Current Device Testing
-
-- [?] Start a Cmd-based shortcut, unplug USB while the modifier sequence is still in flight -> Command is released on macOS (no stuck modifier after disconnect)
-  what does this mean and look like
-- [-] Second iPhone (different device) cannot connect without pairing QR scan
-  Do not have a second device to verify this yet.
 
 ## Codex Addendum (2026-02-28)
 

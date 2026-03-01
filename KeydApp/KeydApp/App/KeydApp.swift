@@ -60,6 +60,7 @@ struct KeydApp: App {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
                 transportManager.suspendLiveActivity()
+                transportManager.resetConnections()
             }
             .onReceive(NotificationCenter.default.publisher(for: .pairingInvalidated)) { _ in
                 transportManager.resetConnections()
