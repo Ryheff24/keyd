@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T18:06:34.138Z"
+last_updated: "2026-03-01T15:44:30.000Z"
 progress:
   total_phases: 3
   completed_phases: 1
@@ -22,12 +22,12 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 
 ## Current Position
 
-Phase: 1 of 3 (Transport and Core Keyboard)
-Plan: 7 of 7 in current phase
-Status: Phase complete
-Last activity: 2026-03-01 - Completed 01-07 Transport FSM Test Suite
+Phase: 01.1 (Connected Integration Test Suite)
+Plan: 1 of N in current phase (01.1-01 complete)
+Status: In progress
+Last activity: 2026-03-01 - Completed 01.1-01 Wire Protocol Test Harness Cases
 
-Progress: [██████████] 100% (7 of 7 phase plans with SUMMARY)
+Progress: [██████████] 100% (Phase 01 complete) | Phase 01.1: [█░░░░░░░░░] plan 1 done
 
 ## Performance Metrics
 
@@ -52,6 +52,10 @@ Progress: [██████████] 100% (7 of 7 phase plans with SUMMARY
 | Phase 01-transport-and-core-keyboard P07 | 19 | 3 tasks | 14 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 01.1 inserted after Phase 1: Connected Integration Test Suite (URGENT)
 
 ### Decisions
 
@@ -78,6 +82,9 @@ Recent decisions affecting current work:
 - [01-06]: AWDLConnectionState enum replaces isConnecting/isReady/autoConnectEnabled booleans in AWDLTransport
 - [Phase 01-07]: FSMs relocated to SharedProtocol for cross-platform testability (SPM swift test, iOS XCTest, on-device runner)
 - [Phase 01-07]: Equatable added to FSM event/sideeffect enums for XCTest assertions; INV-001 scoped to TransportManager level (not FSM level)
+- [01.1-01]: Equatable added to KeydMessage and all payload structs — required for XCTAssertEqual on decoded messages; synthesis is free since all fields are already Equatable
+- [01.1-01]: Test harness codec tests appended to TransportStateMachineTests.swift as KeydMessageCodecTests class — keeps file count low per plan instruction
+- [01.1-01]: MessageEncoder.encode() throws — plan template omitted try, corrected inline (auto-fix Rule 1)
 
 ### Pending Todos
 
@@ -101,11 +108,11 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-01T18:06:34Z
-Stopped at: Completed 01-07-PLAN.md (Transport FSM test suite — XCTest suite covering all 24 AWDL_USB_SCENARIO_MATRIX scenarios and on-device test runner UI)
+Last session: 2026-03-01T15:44:30Z
+Stopped at: Completed 01.1-01-PLAN.md (Wire protocol test harness cases — testReset/testResetAck added to KeydMessage with Equatable and codec round-trip tests; 76 tests pass)
 
 ### What's already built (do not rebuild)
-- `SharedProtocol/` SPM package — Messages, MessageEncoder, MessageDecoder, TransportStateMachine (FSM) — builds + tests pass (plans 01-01, 01-07)
+- `SharedProtocol/` SPM package — Messages (with testReset/testResetAck + Equatable), MessageEncoder, MessageDecoder, TransportStateMachine (FSM) — builds + 76 tests pass (plans 01-01, 01-07, 01.1-01)
 - `macOS/KeydAgent/` Xcode project — Transport, Injection, MenuBar, App layers — builds clean (plan 01-02)
 - `KeydApp/` iOS Xcode project — USBTransport, AWDLTransport, TransportManager, KeyboardView, HotkeyPanel, ConnectionStatusBadge — builds clean (plan 01-03)
 - `KeydApp/KeydApp/Pairing/` — Curve25519 ECDH pairing with Keychain storage (plan 01-04)

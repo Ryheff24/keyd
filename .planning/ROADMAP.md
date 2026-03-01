@@ -43,7 +43,7 @@ Plans:
 **Goal:** End-to-end connected integration test suite validating real USB/AWDL connections, pairing handshakes, and message round-trips on physical hardware; 4 regression tests for commit 9046927 bugs; latency benchmark; `make test-integration` single-command entry point that gates `make deploy`
 **Requirements**: TEST-01, TEST-02, TEST-03, TEST-04
 **Depends on:** Phase 1 (SharedProtocol, KeydApp, KeydAgent fully implemented)
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 Plans:
 - [ ] 01.1-01-PLAN.md — SharedProtocol TestReset/TestResetAck protocol extension
