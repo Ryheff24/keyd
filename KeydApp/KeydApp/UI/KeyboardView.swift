@@ -104,6 +104,12 @@ private struct SystemKeyboardHost: UIViewRepresentable {
             (textField as? InterceptingTextField)?.restoreBackingText()
             return false
         }
+
+        @available(iOS 18.4, *)
+        func textField(_ textField: UITextField, insertInputSuggestion inputSuggestion: UIInputSuggestion) {
+            // Phase 1 keeps direct key forwarding only; drop keyboard suggestions for now.
+            (textField as? InterceptingTextField)?.restoreBackingText()
+        }
     }
 }
 
