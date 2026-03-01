@@ -64,7 +64,7 @@ metrics:
 - Generates Curve25519 key pair on demand
 - `generatePairingQRPayload()` returns JSON: `{publicKeyBase64, port:12345, agentID, version:1}`
 - `completePairing(iOSPublicKeyData:deviceID:)` performs ECDH, derives shared secret via HKDF-SHA256
-- Stores shared secret in macOS Keychain under `com.keyd.agent` service key
+- Stores shared secret in macOS Keychain under `com.ryheff.keyd.agent` service key
 
 **macOS QR display** (`macOS/KeydAgent/UI/QRCodeView.swift`):
 - `QRCodeWindowView` renders QR via `CIFilter.qrCodeGenerator()` at 10x scale using NSCIImageRep
@@ -74,7 +74,7 @@ metrics:
 - Generates iOS Curve25519 key pair
 - Sends `KeydMessage.pairingRequest(PairingRequest)` to macOS via TransportManager
 - Completes ECDH with macOS public key, derives same shared secret via HKDF-SHA256
-- Stores shared secret + macOS public key in iOS Keychain under `com.keyd.app`
+- Stores shared secret + macOS public key in iOS Keychain under `com.ryheff.keyd.app`
 - `init()` checks Keychain to set `isPaired` — enables auto-connect on subsequent launches
 
 **iOS QR scanner** (`KeydApp/KeydApp/UI/PairingView.swift`):
@@ -146,8 +146,8 @@ Dynamic Island requires physical iPhone 14 Pro or later. Code review confirms co
 ## Keychain Behavior
 
 - Shared secret stored as `kSecClassGenericPassword` items
-- iOS: service=`com.keyd.app`, two accounts: `shared-secret` + `mac-agent-public-key`
-- macOS: service=`com.keyd.agent`, account: `shared-secret`
+- iOS: service=`com.ryheff.keyd.app`, two accounts: `shared-secret` + `mac-agent-public-key`
+- macOS: service=`com.ryheff.keyd.agent`, account: `shared-secret`
 - SecItemDelete called before SecItemAdd to handle re-pairing cleanly
 
 ## Deviations from Plan
