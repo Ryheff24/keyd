@@ -1,6 +1,6 @@
 name: KeydApp
 options:
-  bundleIdPrefix: com.keyd
+  bundleIdPrefix: com.ryheff.keyd
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "16.0"
@@ -42,7 +42,7 @@ targets:
         com.apple.security.network.client: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.ryheff.keyd.app
         PRODUCT_NAME: KeydApp
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
@@ -65,7 +65,7 @@ targets:
         createIntermediateGroups: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.ryheff.keyd.app.tests
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         CODE_SIGN_STYLE: Automatic
@@ -117,7 +117,7 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.keyd.app.live-activity
+        PRODUCT_BUNDLE_IDENTIFIER: com.ryheff.keyd.app.live-activity
         PRODUCT_NAME: KeydLiveActivity
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
