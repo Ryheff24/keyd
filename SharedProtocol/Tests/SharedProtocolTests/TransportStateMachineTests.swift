@@ -1026,6 +1026,24 @@ final class TransportStateMachineTests: XCTestCase {
         XCTAssertEqual(state, .disconnected)
     }
 
+    // Regression: USB pairing handshake must be able to complete. Before the fix,
+    // .pairingCompleted was only handled from .pairingAWDL, so USB pairing would
+    // silently stay in .pendingUSBIdentity and time out.
+    func testPairingUSBCompletionPromotes() {
+        let (state, effects) = agentTransportTransition(
+            from: .pendingUSBIdentity(deviceID: nil),
+            on: .pairingCompleted(deviceID: "D1")
+        )
+        XCTAssertEqual(state, .usbConnected(deviceID: "D1"),
+            "USB pairing completion must promote to usbConnected")
+        XCTAssertTrue(effects.contains(.cancelUSBIdentityTimer),
+            "USB identity timer must be cancelled on pairing completion")
+        XCTAssertTrue(effects.contains(.promoteToActive(transport: .usb)),
+            "USB transport must be promoted to active on pairing completion")
+        XCTAssertTrue(effects.contains(.startSecureInputPolling),
+            "Secure input polling must start after USB session is active")
+    }
+
     // MARK: - iOS FSM tests
 
     func testIOSUSBReadyFromConnecting() {

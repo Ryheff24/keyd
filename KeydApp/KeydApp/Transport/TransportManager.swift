@@ -524,6 +524,16 @@ final class TransportManager: ObservableObject {
     // MARK: - Session Resume
 
     private func sendSessionResume() {
+        // During the initial pairing flow (suppressAWDLStatusUntilPaired = true), the device
+        // is not yet paired. Sending a sessionResume before pairing completes causes the Mac
+        // agent to respond with pairingInvalidated (unknown device), tearing down the transport
+        // connection before the pairing handshake can start. Skip the resume here; the pairing
+        // handshake itself establishes the session identity.
+        guard !suppressAWDLStatusUntilPaired else {
+            logConnectionEvent("Skipping session resume — pairing not yet complete")
+            return
+        }
+
         let resume = SessionResume(
             deviceID: UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
         )

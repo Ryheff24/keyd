@@ -469,6 +469,17 @@ public func agentTransportTransition(
                 .startSecureInputPolling,
                 .logEvent(description: "AWDL pairing completed for \(deviceID); session active")
             ])
+        case .pendingUSBIdentity:
+            // Pairing handshake completed over USB. The identity timer was running but
+            // the pairing request itself is the identity — promote directly to usbConnected.
+            let newState = AgentTransportState.usbConnected(deviceID: deviceID)
+            return (newState, [
+                .cancelUSBIdentityTimer,
+                .promoteToActive(transport: .usb),
+                .updateStatusBar(state: newState),
+                .startSecureInputPolling,
+                .logEvent(description: "USB pairing completed for \(deviceID); USB session active")
+            ])
         default:
             return (state, [.logEvent(description: "Pairing completed in unexpected state \(state); ignored")])
         }

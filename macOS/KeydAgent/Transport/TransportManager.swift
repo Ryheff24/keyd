@@ -234,11 +234,15 @@ final class TransportManager {
 
         handleEvent(.usbConnectionArrived(deviceID: nil))
 
-        // If paired mode, set up pending USB decoder
+        // If paired mode, set up pending USB decoder for identity verification
         if pairingManager.isPaired, case .pendingUSBIdentity = fsmState {
             _ = makePendingUSBDecoder()
+        } else if !pairingManager.isPaired, case .pendingUSBIdentity = fsmState {
+            // Unpaired mode: activate decoder immediately so the pairing request
+            // can be received. No identity verification needed — we ARE the pairing handshake.
+            _ = makeActiveDecoder()
         } else if case .usbConnected = fsmState {
-            // Unpaired mode: USB promoted immediately without identity verification
+            // Already promoted (shouldn't normally hit this path, but guard it anyway)
             _ = makeActiveDecoder()
             startSecureInputPolling()
         }
@@ -249,7 +253,12 @@ final class TransportManager {
             resources.activeDecoder?.receive(data)
             return
         }
-        resources.pendingUSBDecoder?.receive(data)
+        if resources.pendingUSBDecoder != nil {
+            resources.pendingUSBDecoder?.receive(data)
+        } else {
+            // Unpaired pairing mode: no pending decoder — route to active decoder.
+            resources.activeDecoder?.receive(data)
+        }
     }
 
     private func handleUSBDisconnect() {
@@ -662,7 +671,9 @@ final class TransportManager {
         guard let frame = try? encoder.encode(message) else { return }
 
         switch fsmState {
-        case .usbConnected:
+        case .usbConnected, .pendingUSBIdentity:
+            // .pendingUSBIdentity covers the unpaired USB pairing handshake: the pairing
+            // response must be sent back to the iOS device before the FSM promotes to usbConnected.
             Task { [weak self, frame] in
                 guard let self else { return }
                 do {
@@ -675,7 +686,7 @@ final class TransportManager {
             }
         case .pairingAWDL, .awdlConnected:
             resources.activeAWDLConnection?.send(content: frame, completion: .idempotent)
-        case .disconnected, .pendingAWDLPool, .pendingUSBIdentity:
+        case .disconnected, .pendingAWDLPool:
             break
         }
     }
