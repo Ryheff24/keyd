@@ -11,6 +11,10 @@ struct KeydApp: App {
     @StateObject private var transportManager = TransportManager()
     @StateObject private var pairingManager = PairingManager()
 
+    init() {
+        UIApplication.shared.applicationSupportsShakeToEdit = false
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
