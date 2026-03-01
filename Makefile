@@ -11,9 +11,9 @@ IOS_LABELS ?=
 
 DEVICE_SELECTORS := $(filter ipad iphone ios mac,$(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)))
 
-.PHONY: deploy run attach stop ipad iphone ios mac
+.PHONY: deploy run attach stop index test-integration ipad iphone ios mac
 
-deploy:
+deploy: test-integration
 	@WORKSPACE_PATH="$(WORKSPACE_PATH)" \
 	DERIVED_DATA="$(DERIVED_DATA)" \
 	LOG_ROOT="$(LOG_ROOT)" \
@@ -152,6 +152,41 @@ stop:
 	IPHONE_DEVICE="$(IPHONE_DEVICE)" \
 	IOS_BUNDLE_ID="$(IOS_BUNDLE_ID)" \
 	$(SCRIPT) stop
+
+test-integration:
+	@WORKSPACE_PATH="$(WORKSPACE_PATH)" \
+	DERIVED_DATA="$(DERIVED_DATA)" \
+	LOG_ROOT="$(LOG_ROOT)" \
+	CONFIGURATION="$(CONFIGURATION)" \
+	IOS_DEVICES="$(IOS_DEVICES)" \
+	IOS_LABELS="$(IOS_LABELS)" \
+	IPAD_DEVICE="$(IPAD_DEVICE)" \
+	IPHONE_DEVICE="$(IPHONE_DEVICE)" \
+	IOS_BUNDLE_ID="$(IOS_BUNDLE_ID)" \
+	$(SCRIPT) test-integration
+
+index:
+	@echo "==> Indexing SharedProtocol (SPM)..."
+	cd SharedProtocol && swift build \
+		-Xswiftc -index-store-path \
+		-Xswiftc "$(CURDIR)/SharedProtocol/.build/index/store"
+	@echo "==> Indexing KeydAgent (macOS)..."
+	xcodebuild -project macOS/KeydAgent.xcodeproj \
+		-scheme KeydAgent \
+		-destination "platform=macOS,arch=arm64" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		COMPILER_INDEX_STORE_ENABLE=YES \
+		INDEX_ENABLE_DATA_STORE=YES \
+		build 2>&1 | grep -E "^(error:|warning: |Build (succeeded|FAILED))" || true
+	@echo "==> Indexing KeydApp (iOS)..."
+	xcodebuild -workspace "$(WORKSPACE_PATH)" \
+		-scheme KeydApp \
+		-destination "generic/platform=iOS" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		COMPILER_INDEX_STORE_ENABLE=YES \
+		INDEX_ENABLE_DATA_STORE=YES \
+		build 2>&1 | grep -E "^(error:|warning: |Build (succeeded|FAILED))" || true
+	@echo "==> Index complete. Store: $(DERIVED_DATA)/Index.noindex/DataStore"
 
 ipad iphone ios mac:
 	@:
