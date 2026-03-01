@@ -117,6 +117,7 @@ None.
 | 3 | Hold Backspace for 0.5s -> entire word deleted in TextEdit (word-delete) doesnt work | 2026-02-28 | 261eebf | [3-hold-backspace-for-0-5s-entire-word-dele](./quick/3-hold-backspace-for-0-5s-entire-word-dele/) |
 | 4 | disable shake to undo typing. | 2026-03-01 | 3492fd6 | [4-disable-shake-to-undo-typing](./quick/4-disable-shake-to-undo-typing/) |
 | 5 | disable predictive text when using slide to type | 2026-03-01 | de52b41 | [5-disable-predictive-text-when-using-slide](./quick/5-disable-predictive-text-when-using-slide/) |
+| 6 | fix bundle identifiers to always include .ryheff | 2026-03-01 | d0b4de5 | [6-fix-bundle-identifiers-to-always-include](./quick/6-fix-bundle-identifiers-to-always-include/) |
 
 ## Session Continuity
 
