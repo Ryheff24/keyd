@@ -38,7 +38,7 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 
 ### Safety
 
-- [?] Start a Cmd-based shortcut, unplug USB while the modifier sequence is still in flight -> Command is released on macOS (no stuck modifier after disconnect)
+- [✅] Start a Cmd-based shortcut, unplug USB while the modifier sequence is still in flight -> Command is released on macOS (no stuck modifier after disconnect)
 - [✅] Tap the top status badge on iPhone -> debug sheet appears with event log
 - [✅] Leave iPhone idle for 2 minutes while connected -> screen stays on (idle timer disabled)
 
@@ -122,7 +122,7 @@ Follow-up fix commits applied during device validation and debugging:
 - `41f944e` `fix(01-05): invalidate stale pairings on reset`
   Added remote pairing invalidation so resetting pairing on one side can revoke the old trust instead of allowing silent reuse.
 
-## Other Bugs/fixes
+## bugs
 - some times the keyboard takes a while to return
 - leaving the app causes a long reconnect period
 - Lag spike followed buy a large spam of characters
