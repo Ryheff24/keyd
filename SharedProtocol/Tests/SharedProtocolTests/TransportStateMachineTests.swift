@@ -1166,3 +1166,26 @@ final class TransportStateMachineTests: XCTestCase {
         }
     }
 }
+
+// MARK: - KeydMessage Codec Tests (appended for test harness cases)
+final class KeydMessageCodecTests: XCTestCase {
+    func testTestResetRoundTrip() throws {
+        let encoder = MessageEncoder()
+        let data = try encoder.encode(.testReset)
+        let decoder = MessageDecoder()
+        var decoded: KeydMessage?
+        decoder.onMessage = { msg in decoded = msg }
+        decoder.receive(data)
+        XCTAssertEqual(decoded, KeydMessage.testReset)
+    }
+
+    func testTestResetAckRoundTrip() throws {
+        let encoder = MessageEncoder()
+        let data = try encoder.encode(.testResetAck)
+        let decoder = MessageDecoder()
+        var decoded: KeydMessage?
+        decoder.onMessage = { msg in decoded = msg }
+        decoder.receive(data)
+        XCTAssertEqual(decoded, KeydMessage.testResetAck)
+    }
+}
