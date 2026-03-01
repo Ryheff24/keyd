@@ -43,6 +43,11 @@ final class TransportManager {
     private let statusBar: StatusBarController
     private let pairingManager: PairingManager
 
+    // MARK: - Test Mode
+
+    /// Non-nil when launched with --test-mode. Controls timeouts, wire logging, conn IDs.
+    private var testMode: TestMode?
+
     // MARK: - FSM State
 
     private var fsmState: AgentTransportState = .disconnected
@@ -58,10 +63,38 @@ final class TransportManager {
     private var secureInputTimer: Timer?
     private var lastSecureInputState = false
 
-    init(injectionRouter: InjectionRouter, statusBar: StatusBarController, pairingManager: PairingManager) {
+    init(injectionRouter: InjectionRouter, statusBar: StatusBarController, pairingManager: PairingManager, testMode: TestMode? = nil) {
         self.injectionRouter = injectionRouter
         self.statusBar = statusBar
         self.pairingManager = pairingManager
+        self.testMode = testMode
+    }
+
+    // MARK: - Wire Logging (test mode only)
+
+    /// Logs every non-heartbeat message to stdout with microsecond timestamps.
+    /// Heartbeat messages are logged with [HB] tag so they can be grepped out.
+    private func wireLog(_ direction: String, _ message: KeydMessage) {
+        guard testMode?.verboseWireLog == true else { return }
+        let isHeartbeat: Bool
+        switch message {
+        case .transportHeartbeat, .transportHeartbeatAck: isHeartbeat = true
+        default: isHeartbeat = false
+        }
+        let tag = isHeartbeat ? "[HB]" : "[MSG]"
+        let ts = String(format: "%.6f", Date().timeIntervalSinceReferenceDate)
+        print("[TEST-MODE] \(tag) \(ts) \(direction): \(message)")
+    }
+
+    /// Returns a deterministic connection label for test mode (conn-1, conn-2, …),
+    /// or a random UUID label for production.
+    private func nextConnectionLabel() -> String {
+        if testMode != nil {
+            testMode!.connectionCounter += 1
+            return "conn-\(testMode!.connectionCounter)"
+        } else {
+            return UUID().uuidString
+        }
     }
 
     func start() async {
@@ -225,7 +258,8 @@ final class TransportManager {
     // MARK: - USB Handling
 
     private func handleUSBConnectionReady() {
-        logEvent("USB connection ready")
+        let label = nextConnectionLabel()
+        logEvent("USB connection ready [\(label)]")
 
         // Clear all pending AWDL slots when USB arrives
         if !resources.pendingAWDLSlots.isEmpty {
@@ -314,7 +348,8 @@ final class TransportManager {
     // MARK: - AWDL Handling
 
     private func handleNewAWDLConnection(_ connection: NWConnection) async {
-        logEvent("AWDL connection accepted")
+        let label = nextConnectionLabel()
+        logEvent("AWDL connection accepted [\(label)]")
 
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -409,8 +444,9 @@ final class TransportManager {
             logger.error("Pending AWDL decode error: \(error)")
         }
 
+        let awdlSlotTimeoutSeconds: TimeInterval = testMode?.awdlSlotTimeout ?? 3.0
         let timeoutTask = Task { @MainActor [weak self, weak connection] in
-            let timeoutNs: UInt64 = 3_000_000_000
+            let timeoutNs = UInt64(awdlSlotTimeoutSeconds * 1_000_000_000)
             do {
                 try await Task.sleep(nanoseconds: timeoutNs)
             } catch { return }
@@ -580,6 +616,8 @@ final class TransportManager {
     // MARK: - Incoming Message Handling
 
     private func handleIncomingMessage(_ message: KeydMessage) {
+        wireLog("RECV", message)
+
         // Guard: reject pairing requests when already paired
         if pairingManager.isPaired, case .pairingRequest = message {
             send(.pairingInvalidated)
@@ -595,6 +633,9 @@ final class TransportManager {
             switch message {
             case .pairingRequest, .sessionResume:
                 break
+            case .testReset:
+                // Allow testReset through even when unpaired — it's a test harness control message.
+                break
             case .transportHeartbeat, .transportHeartbeatAck:
                 return
             case .keyEvent, .hotkeyEvent:
@@ -604,6 +645,8 @@ final class TransportManager {
             case .pairingResponse, .pairingInvalidated, .secureInputChanged, .reflectState, .appStateChanged:
                 send(.pairingInvalidated)
                 logEvent("Rejected stale session from unpaired device")
+                return
+            default:
                 return
             }
         }
@@ -659,6 +702,16 @@ final class TransportManager {
         case .transportHeartbeatAck:
             handleEvent(.heartbeatAck)
 
+        case .testReset:
+            guard testMode != nil else {
+                logger.warning("Received testReset but not in test mode — ignoring")
+                return
+            }
+            logger.info("[TEST MODE] Received testReset — clearing in-memory pairing state")
+            pairingManager.resetInMemory()
+            send(.testResetAck)
+            logEvent("[TEST MODE] testReset handled — in-memory pairing cleared, testResetAck sent")
+
         default:
             injectionRouter.route(message)
         }
@@ -669,6 +722,7 @@ final class TransportManager {
     func send(_ message: KeydMessage) {
         guard let encoder = resources.activeEncoder else { return }
         guard let frame = try? encoder.encode(message) else { return }
+        wireLog("SEND", message)
 
         switch fsmState {
         case .usbConnected, .pendingUSBIdentity:
@@ -798,7 +852,9 @@ final class TransportManager {
         return decoder
     }
 
-    private func scheduleUSBIdentityTimeout(timeoutNanoseconds: UInt64 = 2_000_000_000) {
+    private func scheduleUSBIdentityTimeout() {
+        let identityTimeout: TimeInterval = testMode?.identityTimeout ?? 2.0
+        let timeoutNanoseconds = UInt64(identityTimeout * 1_000_000_000)
         resources.pendingUSBIdentityTimeoutTask?.cancel()
         resources.pendingUSBIdentityTimeoutTask = Task { @MainActor [weak self] in
             do {

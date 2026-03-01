@@ -40,6 +40,10 @@ final class InjectionRouter {
         case .secureInputChanged:
             // Mac→iOS message — should not arrive at macOS side
             break
+
+        case .testReset, .testResetAck:
+            // Test harness control messages — handled by TransportManager, not routed to injection
+            logger.warning("Test control message reached InjectionRouter (should be handled upstream): \(message)")
         }
     }
 
