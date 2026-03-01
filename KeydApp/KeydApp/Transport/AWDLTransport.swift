@@ -20,6 +20,16 @@ actor AWDLTransport {
     private let decoder = MessageDecoder()
     private let encoder = MessageEncoder()
 
+    // Exponential backoff for reconnect attempts
+    private var reconnectBackoff: TimeInterval = 0.0
+    private let reconnectBackoffInitial: TimeInterval = 0.5
+    private let reconnectBackoffMax: TimeInterval = 8.0
+    private var reconnectTask: Task<Void, Never>?
+
+    // Pairing mode: when true, auto-reconnect is disabled after first connection closes.
+    // Unpaired devices should not hammer the Mac with reconnect attempts.
+    private var pairingModeEnabled = false
+
     func startBrowsing() {
         guard browser == nil else { return }
 
@@ -56,6 +66,9 @@ actor AWDLTransport {
         isConnecting = false
         isReady = false
         autoConnectEnabled = false
+        reconnectBackoff = 0.0
+        reconnectTask?.cancel()
+        reconnectTask = nil
     }
 
     private func handleBrowseResults(_ results: Set<NWBrowser.Result>) async {
@@ -100,6 +113,8 @@ actor AWDLTransport {
             }
             logger.info("Connected via AWDL")
             setConnection(conn, ready: true)
+            // Don't reset backoff here — connection may die immediately.
+            // Backoff only resets on confirmed session (heartbeat ack via resetBackoff()).
             onConnectionReady?()
             await startReceiving(conn)
         case .waiting(let error):
@@ -108,22 +123,58 @@ actor AWDLTransport {
             if didLoseReadyConnection {
                 onDisconnect?()
             }
-            await maybeConnectIfNeeded()
+            await scheduleReconnectIfNeeded()
         case .failed(let error):
             logger.error("Connection failed: \(error)")
             let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
             }
-            await maybeConnectIfNeeded()
+            await scheduleReconnectIfNeeded()
         case .cancelled:
             let didLoseReadyConnection = clearConnection(for: conn)
             if didLoseReadyConnection {
                 onDisconnect?()
             }
-            await maybeConnectIfNeeded()
+            await scheduleReconnectIfNeeded()
         default:
             break
+        }
+    }
+
+    /// Schedule a reconnect with exponential backoff instead of immediate retry.
+    /// In pairing mode, do NOT reconnect after a connection closes.
+    private func scheduleReconnectIfNeeded() async {
+        guard autoConnectEnabled else { return }
+
+        // In pairing mode, disable auto-reconnect after connection closure.
+        // The unpaired device already had its chance; it should wait for user action.
+        if pairingModeEnabled {
+            autoConnectEnabled = false
+            logger.info("Pairing mode: auto-reconnect disabled after connection close")
+            return
+        }
+
+        guard connection == nil, !isConnecting, discoveredEndpoint != nil else { return }
+
+        // Apply exponential backoff
+        if reconnectBackoff == 0.0 {
+            reconnectBackoff = reconnectBackoffInitial
+        } else {
+            reconnectBackoff = min(reconnectBackoff * 2.0, reconnectBackoffMax)
+        }
+
+        let delay = reconnectBackoff
+        logger.info("Scheduling AWDL reconnect in \(delay)s")
+
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            await self?.maybeConnectIfNeeded()
         }
     }
 
@@ -209,8 +260,12 @@ actor AWDLTransport {
         return path.status == .satisfied && path.usesInterfaceType(.wifi)
     }
 
-    func beginAutoConnect() async -> Bool {
+    func beginAutoConnect(pairingMode: Bool = false) async -> Bool {
         autoConnectEnabled = true
+        pairingModeEnabled = pairingMode
+        reconnectBackoff = 0.0
+        reconnectTask?.cancel()
+        reconnectTask = nil
 
         if hasConnection() || isConnecting {
             return true
@@ -224,8 +279,17 @@ actor AWDLTransport {
         return true
     }
 
+    /// Reset the reconnect backoff (call after successful session resume acknowledgment).
+    func resetBackoff() {
+        reconnectBackoff = 0.0
+        reconnectTask?.cancel()
+        reconnectTask = nil
+    }
+
     func prepareForUSBStandby() {
         autoConnectEnabled = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
         _ = disconnectCurrentConnection()
     }
 
@@ -239,5 +303,8 @@ actor AWDLTransport {
         browser = nil
         discoveredEndpoint = nil
         autoConnectEnabled = false
+        reconnectBackoff = 0.0
+        reconnectTask?.cancel()
+        reconnectTask = nil
     }
 }

@@ -253,6 +253,7 @@ start_mac_log_collector() {
     '{ print > session_log; print > latest_log; fflush(session_log); fflush(latest_log) }' \
     < <(
       /usr/bin/log stream \
+        --info \
         --style compact \
         --predicate "subsystem == \"$log_subsystem\" AND process == \"$mac_process_name\"" \
         2>&1

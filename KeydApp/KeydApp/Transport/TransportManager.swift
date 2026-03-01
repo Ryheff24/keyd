@@ -434,6 +434,10 @@ final class TransportManager: ObservableObject {
             }
         case .transportHeartbeatAck:
             awaitingAWDLHeartbeatAck = false
+            // Reset AWDL reconnect backoff on successful heartbeat exchange
+            Task { [weak self] in
+                await self?.awdlTransport.resetBackoff()
+            }
         case .reflectState, .appStateChanged:
             // Handled by PairingManager or future plans
             break
@@ -479,6 +483,16 @@ final class TransportManager: ObservableObject {
         awdlHeartbeatTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
+            // Let the AWDL connection stabilize before heartbeating.
+            // The Mac needs time to promote the pending slot after receiving
+            // sessionResume, and AWDL has higher initial latency than LAN TCP.
+            do {
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+            } catch {
+                return
+            }
+            guard self.connectionState == .awdlConnected else { return }
+
             while !Task.isCancelled, self.connectionState == .awdlConnected {
                 self.awaitingAWDLHeartbeatAck = true
 
@@ -491,7 +505,7 @@ final class TransportManager: ObservableObject {
                 }
 
                 do {
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
                 } catch {
                     return
                 }
@@ -503,7 +517,7 @@ final class TransportManager: ObservableObject {
                 }
 
                 do {
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
                 } catch {
                     return
                 }
@@ -525,7 +539,7 @@ final class TransportManager: ObservableObject {
     }
 
     private func startAWDLConnectionAttempt(availableNowMessage: String, unavailableMessage: String) async {
-        let canAttemptImmediately = await awdlTransport.beginAutoConnect()
+        let canAttemptImmediately = await awdlTransport.beginAutoConnect(pairingMode: suppressAWDLStatusUntilPaired)
 
         if canAttemptImmediately {
             connectionState = .connecting
