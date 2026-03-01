@@ -160,7 +160,22 @@ mkdir -p "$latest_dir"
 latest_meta_dir="$latest_dir/meta"
 mkdir -p "$latest_meta_dir"
 
-if [[ "$mode" == "deploy" || "$mode" == "run" || "$mode" == "run-ios" || "$mode" == "attach-ios" ]]; then
+stop_latest_pid_file() {
+  local pid_file="$1"
+  local existing_pid=""
+
+  if [[ ! -f "$pid_file" ]]; then
+    return
+  fi
+
+  existing_pid="$(tr -d '[:space:]' < "$pid_file")"
+  if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+    kill "$existing_pid" 2>/dev/null || true
+    sleep 0.1
+  fi
+}
+
+if [[ "$mode" == "deploy" || "$mode" == "run" || "$mode" == "run-ios" || "$mode" == "attach" || "$mode" == "attach-ios" ]]; then
   load_devices
 fi
 
@@ -227,20 +242,21 @@ install_ios_builds() {
 }
 
 start_mac_log_collector() {
-  if [[ -f "$meta_dir/mac-log.pid" ]]; then
-    local existing_pid
-    existing_pid="$(tr -d '[:space:]' < "$meta_dir/mac-log.pid")"
-    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
-      kill "$existing_pid" 2>/dev/null || true
-    fi
-  fi
+  stop_latest_pid_file "$latest_meta_dir/mac-log.pid"
 
   log_step "Starting macOS log stream"
+  : > "$session_dir/mac.log"
   : > "$latest_dir/mac.log"
-  /usr/bin/log stream \
-    --style compact \
-    --predicate "subsystem == \"$log_subsystem\" AND process == \"$mac_process_name\"" \
-    2>&1 | tee "$session_dir/mac.log" > "$latest_dir/mac.log" &
+  awk \
+    -v session_log="$session_dir/mac.log" \
+    -v latest_log="$latest_dir/mac.log" \
+    '{ print > session_log; print > latest_log; fflush(session_log); fflush(latest_log) }' \
+    < <(
+      /usr/bin/log stream \
+        --style compact \
+        --predicate "subsystem == \"$log_subsystem\" AND process == \"$mac_process_name\"" \
+        2>&1
+    ) &
   printf '%s\n' "$!" > "$meta_dir/mac-log.pid"
   cp "$meta_dir/mac-log.pid" "$latest_meta_dir/mac-log.pid"
 }
@@ -278,8 +294,14 @@ connect_ios_consoles() {
       "$ios_bundle_id"
     )
 
+    stop_latest_pid_file "$latest_meta_dir/${label}.pid"
+    : > "$session_dir/${label}.log"
     : > "$latest_dir/${label}.log"
-    "${launch_args[@]}" 2>&1 | tee "$session_dir/${label}.log" > "$latest_dir/${label}.log" &
+    awk \
+      -v session_log="$session_dir/${label}.log" \
+      -v latest_log="$latest_dir/${label}.log" \
+      '{ print > session_log; print > latest_log; fflush(session_log); fflush(latest_log) }' \
+      < <("${launch_args[@]}" 2>&1) &
     printf '%s\n' "$!" > "$meta_dir/${label}.pid"
     cp "$meta_dir/${label}.pid" "$latest_meta_dir/${label}.pid"
   done
