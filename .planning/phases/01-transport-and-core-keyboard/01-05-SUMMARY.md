@@ -6,12 +6,12 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 
 ### USB Transport
 
-- [❌] iPhone keyboard is visible and status badge shows "USB" (green)
+- [✅] iPhone keyboard is visible and status badge shows "USB" (green)
 - [✅] Type "hello" on iPhone keyboard -> "hello" appears in TextEdit in real time
 - [✅] Press Backspace on iPhone -> last character deleted in TextEdit
 - [✅] Hold Backspace for 0.5s -> entire word deleted in TextEdit (word-delete)
 - [✅] Press Return on iPhone -> new line in TextEdit
-- [-] Tap the Tab hotkey on iPhone -> focus moves to next field (test in browser form)
+- [✅] Tap the Tab hotkey on iPhone -> focus moves to next field (test in browser form)
 - [✅] Press Escape on iPhone -> escape event received
 
 ### Shortcuts
@@ -31,15 +31,15 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 
 - [✅] Disconnect Wi-Fi infrastructure on Mac (System Settings -> Wi-Fi -> off OR join a non-existent network)
 - [✅] Turn off Bluetooth on Mac
-- [❌] Physically unplug USB cable -> status badge changes from green to yellow within 3 seconds
-- [❌] Type "awdl test" on iPhone -> appears in TextEdit over AWDL
-- [❌] Replug USB cable -> status badge returns to green within 5 seconds
+- [✅] Physically unplug USB cable -> status badge changes from green to yellow within 3 seconds
+- [✅] Type "awdl test" on iPhone -> appears in TextEdit over AWDL
+- [✅] Replug USB cable -> status badge returns to green within 5 seconds
 - [✅] Type one more word -> typing continues normally over USB
 
 ### Safety
 
 - [?] Start a Cmd-based shortcut, unplug USB while the modifier sequence is still in flight -> Command is released on macOS (no stuck modifier after disconnect)
-- [-] Tap the top status badge on iPhone -> debug sheet appears with event log
+- [✅] Tap the top status badge on iPhone -> debug sheet appears with event log
 - [✅] Leave iPhone idle for 2 minutes while connected -> screen stays on (idle timer disabled)
 
 ### macOS Agent
@@ -50,7 +50,7 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 
 ### Security
 
-- [❌] Uninstall KeydApp -> reinstall -> QR scan required again (Keychain cleared on uninstall)
+- [✅] Uninstall KeydApp -> reinstall -> QR scan required again (Keychain cleared on uninstall)
 - [-] Second iPhone (different device) cannot connect without pairing QR scan
 
 ### Password Field
@@ -62,21 +62,8 @@ The fixes below made the app connect and become usable, but 01-05 is still open.
 
 ## Notes From Current Device Testing
 
-- [❌] iPhone keyboard is visible and status badge shows "USB" (green)
-  Only shows AWDL even when using USB.
-- [-] Tap the Tab hotkey on iPhone -> focus moves to next field (test in browser form)
-  Tab now comes from the shortcut panel because the stock iOS keyboard host does not expose a Tab key.
-- [❌] Physically unplug USB cable -> status badge changes from green to yellow within 3 seconds
-  10+ secs to detect disconnect, sometimes it is not detected at all.
-- [❌] Type "awdl test" on iPhone -> appears in TextEdit over AWDL
-  Test fails. Phone networking on, Mac networking and Bluetooth off, AWDL never connected.
-- [❌] Replug USB cable -> status badge returns to green within 5 seconds
-  Sometimes requires clicking the manual reconnect button or takes 10+ seconds.
 - [?] Start a Cmd-based shortcut, unplug USB while the modifier sequence is still in flight -> Command is released on macOS (no stuck modifier after disconnect)
-- [-] Tap the top status badge on iPhone -> debug sheet appears with event log
-  Debug access moved to the top status badge.
-- [❌] Uninstall KeydApp -> reinstall -> QR scan required again (Keychain cleared on uninstall)
-  Reinstalling the app does not require rescanning the QR code.
+  what does this mean and look like
 - [-] Second iPhone (different device) cannot connect without pairing QR scan
   Do not have a second device to verify this yet.
 
@@ -136,8 +123,6 @@ Follow-up fix commits applied during device validation and debugging:
   Added remote pairing invalidation so resetting pairing on one side can revoke the old trust instead of allowing silent reuse.
 
 ## Other Bugs/fixes
-
-- disable undo typing popup
 - some times the keyboard takes a while to return
-- when using slide to type predictive text pops up during each word.
 - leaving the app causes a long reconnect period
+- Lag spike followed buy a large spam of characters
