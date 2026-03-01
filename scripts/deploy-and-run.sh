@@ -17,7 +17,7 @@ configuration="${CONFIGURATION:-Debug}"
 
 ios_scheme="${IOS_SCHEME:-KeydApp}"
 ios_app_name="${IOS_APP_NAME:-KeydApp}"
-ios_bundle_id="${IOS_BUNDLE_ID:-com.ryheff.keyd}"
+ios_bundle_id="${IOS_BUNDLE_ID:-com.ryheff.keyd.app}"
 ios_labels_csv="${IOS_LABELS:-}"
 
 mac_scheme="${MAC_SCHEME:-KeydAgent}"
