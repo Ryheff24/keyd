@@ -7,6 +7,8 @@ struct DebugOverlayView: View {
     @Binding var isPresented: Bool
     let onResetPairing: () -> Void
 
+    @State private var traceShareItem: TraceShareItem? = nil
+
     var body: some View {
         NavigationStack {
             List {
@@ -19,6 +21,16 @@ struct DebugOverlayView: View {
                     Button("Reset Pairing", role: .destructive) {
                         isPresented = false
                         onResetPairing()
+                    }
+
+                    Button {
+                        exportLiveTrace()
+                    } label: {
+                        Label("Export Live Event Trace", systemImage: "square.and.arrow.up")
+                    }
+
+                    NavigationLink("Transport FSM Tests") {
+                        TransportTestRunnerView()
                     }
                 }
 
@@ -61,6 +73,17 @@ struct DebugOverlayView: View {
                 }
             }
         }
+        .sheet(item: $traceShareItem) { item in
+            TraceShareSheet(items: [item.data, item.filename])
+        }
+    }
+
+    private func exportLiveTrace() {
+        let data = transportManager.exportEventLogJSON()
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let filename = "keyd-transport-trace-\(timestamp).json"
+        traceShareItem = TraceShareItem(data: data, filename: filename)
     }
 
     private var stateLabel: String {
@@ -80,4 +103,22 @@ struct DebugOverlayView: View {
         case .disconnected:   return .red
         }
     }
+}
+
+// MARK: - Share helpers
+
+private struct TraceShareItem: Identifiable {
+    let id = UUID()
+    let data: Data
+    let filename: String
+}
+
+private struct TraceShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uvc: UIActivityViewController, context: Context) {}
 }
