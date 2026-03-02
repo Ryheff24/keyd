@@ -59,18 +59,60 @@ final class IntegrationHarness: IntegrationHarnessProtocol {
     // MARK: - Reset
 
     /// Send TestReset and await TestResetAck. Synchronization barrier between test cases.
+    ///
+    /// Retries sending testReset every 1 second until testResetAck arrives or timeout expires.
+    /// A single send can be silently dropped when iOS's usbTransport actor hasn't registered
+    /// the connection yet (async race between fsmState=usbConnected and the actor being ready),
+    /// causing the ack to arrive after the timeout. Periodic resends ensure delivery.
     func reset(timeout: TimeInterval = 5.0) async throws {
         guard let tm = transportManager else { throw IntegrationError.noTransportManager }
-        _ = try await awaitMessage(
-            matching: { msg in
+
+        let deadline = Date().addingTimeInterval(timeout)
+        let retryInterval: TimeInterval = 1.0
+
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var resumed = false
+
+            // Register observer first, then start the retry loop.
+            let observer = tm.registerTestMessageObserver(predicate: { msg in
                 if case .testResetAck = msg { return true }
                 return false
-            },
-            beforeSend: {
-                tm.sendTestMessage(.testReset)
-            },
-            timeout: timeout
-        )
+            }) { [weak self] _ in
+                guard !resumed else { return }
+                resumed = true
+                if let self {
+                    for obs in self.observers {
+                        NotificationCenter.default.removeObserver(obs)
+                    }
+                    self.observers.removeAll()
+                }
+                continuation.resume(returning: ())
+            }
+            observers.append(observer)
+
+            // Retry loop: send testReset every retryInterval until ack received or timeout.
+            Task { @MainActor [weak self] in
+                // Send immediately on first iteration, then retry every retryInterval.
+                var nextSend = Date()
+                while Date() < deadline {
+                    guard !resumed else { return }
+                    if Date() >= nextSend {
+                        tm.sendTestMessage(.testReset)
+                        nextSend = Date().addingTimeInterval(retryInterval)
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms poll
+                }
+                guard !resumed else { return }
+                resumed = true
+                if let self {
+                    for obs in self.observers {
+                        NotificationCenter.default.removeObserver(obs)
+                    }
+                    self.observers.removeAll()
+                }
+                continuation.resume(throwing: IntegrationError.messageTimeout("testResetAck"))
+            }
+        }
     }
 
     // MARK: - Message Observation
