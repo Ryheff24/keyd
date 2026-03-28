@@ -80,26 +80,15 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
  * and store both as a SecIdentity in Keychain.
  */
 - (void)generateAndStoreTLSIdentity {
-    /* Create unrestricted access so Network.framework can use the key
-     * for TLS signing without triggering a Keychain authorization prompt. */
-    SecAccessRef access = NULL;
-    SecAccessCreate(CFSTR("keydrd-agent-tls"), NULL, &access);
-
-    /* Generate P-256 private key with unrestricted access */
-    NSMutableDictionary *keyAttrs = [@{
+    /* Generate P-256 private key in memory (NOT in keychain) */
+    NSDictionary *keyGenAttrs = @{
         (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
         (__bridge id)kSecAttrKeySizeInBits: @256,
-        (__bridge id)kSecAttrIsPermanent: @YES,
-        (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
-        (__bridge id)kSecAttrLabel: kTLSCertLabel,
-    } mutableCopy];
-    if (access) {
-        keyAttrs[(__bridge id)kSecAttrAccess] = (__bridge id)access;
-    }
+        (__bridge id)kSecAttrIsPermanent: @NO,
+    };
 
     CFErrorRef error = NULL;
-    SecKeyRef privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)keyAttrs, &error);
-    if (access) CFRelease(access);
+    SecKeyRef privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)keyGenAttrs, &error);
     if (!privateKey) {
         os_log_error(pairing_log(), "Failed to generate TLS private key: %{public}@",
                      (__bridge NSError *)error);
@@ -125,18 +114,39 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         return;
     }
 
-    /* Store certificate in Keychain */
-    NSDictionary *certAddQuery = @{
+    /* Create unrestricted access for keychain items — no prompts */
+    SecAccessRef access = NULL;
+    SecAccessCreate(CFSTR("keydrd-agent-tls"), NULL, &access);
+
+    /* Store private key in Keychain with unrestricted access */
+    NSMutableDictionary *keyAddQuery = [@{
+        (__bridge id)kSecClass: (__bridge id)kSecClassKey,
+        (__bridge id)kSecValueRef: (__bridge id)privateKey,
+        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+        (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
+        (__bridge id)kSecAttrIsPermanent: @YES,
+    } mutableCopy];
+    if (access) keyAddQuery[(__bridge id)kSecAttrAccess] = (__bridge id)access;
+    SecItemDelete((__bridge CFDictionaryRef)keyAddQuery);
+    OSStatus status = SecItemAdd((__bridge CFDictionaryRef)keyAddQuery, NULL);
+    if (status != errSecSuccess && status != errSecDuplicateItem) {
+        os_log_error(pairing_log(), "Failed to store private key in Keychain: %d", (int)status);
+    }
+
+    /* Store certificate in Keychain with unrestricted access */
+    NSMutableDictionary *certAddQuery = [@{
         (__bridge id)kSecClass: (__bridge id)kSecClassCertificate,
         (__bridge id)kSecValueRef: (__bridge id)selfSignedCert,
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
-
-    };
-    SecItemDelete((__bridge CFDictionaryRef)certAddQuery); /* Remove old if exists */
-    OSStatus status = SecItemAdd((__bridge CFDictionaryRef)certAddQuery, NULL);
+    } mutableCopy];
+    if (access) certAddQuery[(__bridge id)kSecAttrAccess] = (__bridge id)access;
+    SecItemDelete((__bridge CFDictionaryRef)certAddQuery);
+    status = SecItemAdd((__bridge CFDictionaryRef)certAddQuery, NULL);
     if (status != errSecSuccess && status != errSecDuplicateItem) {
         os_log_error(pairing_log(), "Failed to store certificate in Keychain: %d", (int)status);
     }
+
+    if (access) CFRelease(access);
 
     /* Create SecIdentity from the key + cert now in Keychain */
     SecIdentityRef identity = NULL;
