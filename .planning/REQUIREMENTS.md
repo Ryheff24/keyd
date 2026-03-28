@@ -79,11 +79,11 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Security
 
-- [ ] **RD-SEC-01**: TCP channels encrypted with TLS 1.3 via Network.framework
-- [ ] **RD-SEC-02**: UDP media channel encrypted with DTLS via Network.framework
-- [ ] **RD-SEC-03**: Initial pairing via QR code (Mac displays, iPad scans) with ECDH key exchange (reuse keyd v1.0 pattern with new bundle IDs)
-- [ ] **RD-SEC-04**: Certificate pinning after initial pairing (reject unknown certs)
-- [ ] **RD-SEC-05**: No cleartext mode — encryption mandatory even over USB
+- [x] **RD-SEC-01**: TCP channels encrypted with TLS 1.3 via Network.framework
+- [x] **RD-SEC-02**: UDP media channel encrypted with DTLS via Network.framework
+- [x] **RD-SEC-03**: Initial pairing via QR code (Mac displays, iPad scans) with ECDH key exchange (reuse keyd v1.0 pattern with new bundle IDs)
+- [x] **RD-SEC-04**: Certificate pinning after initial pairing (reject unknown certs)
+- [x] **RD-SEC-05**: No cleartext mode — encryption mandatory even over USB
 
 ### Performance
 
@@ -202,11 +202,11 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-REND-02 | Phase 2 | Complete |
 | RD-REND-03 | Phase 2 | Complete |
 | RD-REND-04 | Phase 2 | Complete |
-| RD-SEC-01 | Phase 2 | Pending |
-| RD-SEC-02 | Phase 2 | Pending |
-| RD-SEC-03 | Phase 2 | Pending |
-| RD-SEC-04 | Phase 2 | Pending |
-| RD-SEC-05 | Phase 2 | Pending |
+| RD-SEC-01 | Phase 2 | Complete |
+| RD-SEC-02 | Phase 2 | Complete |
+| RD-SEC-03 | Phase 2 | Complete |
+| RD-SEC-04 | Phase 2 | Complete |
+| RD-SEC-05 | Phase 2 | Complete |
 | RD-AGENT-01 | Phase 2 | Pending |
 | RD-AGENT-02 | Phase 2 | Complete |
 | RD-AGENT-03 | Phase 2 | Pending |

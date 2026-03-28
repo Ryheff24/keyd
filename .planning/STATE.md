@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Remote Desktop
 status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-03-28T17:10:32Z"
-last_activity: 2026-03-28 — Completed plan 02-05 (HEVC codecs + LZ4 decompressor)
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-03-28T17:18:16.716Z"
+last_activity: 2026-03-28 — Completed plan 02-06 (Metal renderer)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 21
-  completed_plans: 15
+  completed_plans: 17
   percent: 81
 ---
 
@@ -51,6 +51,7 @@ Progress: [████████░░] 81%
 | 02-06 | 4min | 2 tasks | 3 files |
 
 *Updated after each plan completion*
+| Phase 02-04 P04 | 12min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase 02]: HEVC encoder uses EnableLowLatencyRateControl in encoder spec dict at session creation time
 - [Phase 02]: HEVCDecoder parses both Annex-B start codes and 4-byte length-prefixed NAL units for VPS/SPS/PPS
 - [Phase 02]: LZ4Decompressor updates keyframe reference after both keyframe and delta decode for correct delta base
+- [Phase 02-04]: P-256 (not Curve25519) for ECDH -- Security.framework SecKeyCopyKeyExchangeResult supports P-256 natively in ObjC
+- [Phase 02-04]: Self-signed X.509 cert via manual ASN.1 DER encoding -- no public Apple API for cert creation
+- [Phase 02-04]: HMAC-SHA256 for HKDF key derivation -- CommonCrypto available in pure C/ObjC without CryptoKit
 
 ### Pending Todos
 
@@ -92,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-28T17:10:32Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-03-28T17:18:16.713Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
