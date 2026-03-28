@@ -171,17 +171,100 @@ Deferred to next milestone. Tracked but not in current roadmap.
 
 ## Traceability
 
-Updated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmapper) | | |
+| RD-TRANS-01 | Phase 2 | Pending |
+| RD-TRANS-02 | Phase 2 | Pending |
+| RD-TRANS-03 | Phase 2 | Pending |
+| RD-TRANS-04 | Phase 2 | Pending |
+| RD-TRANS-05 | Phase 2 | Pending |
+| RD-TRANS-06 | Phase 2 | Pending |
+| RD-TRANS-07 | Phase 2 | Pending |
+| RD-TRANS-08 | Phase 2 | Pending |
+| RD-TRANS-09 | Phase 2 | Pending |
+| RD-TRANS-10 | Phase 2 | Pending |
+| RD-CAP-01 | Phase 2 | Pending |
+| RD-CAP-02 | Phase 2 | Pending |
+| RD-CAP-03 | Phase 2 | Pending |
+| RD-CAP-04 | Phase 2 | Pending |
+| RD-CAP-05 | Phase 2 | Pending |
+| RD-CAP-06 | Phase 2 | Pending |
+| RD-COMP-01 | Phase 2 | Pending |
+| RD-COMP-02 | Phase 2 | Pending |
+| RD-COMP-03 | Phase 2 | Pending |
+| RD-COMP-04 | Phase 2 | Pending |
+| RD-COMP-05 | Phase 2 | Pending |
+| RD-COMP-06 | Phase 2 | Pending |
+| RD-COMP-07 | Phase 2 | Pending |
+| RD-COMP-08 | Phase 2 | Pending |
+| RD-COMP-09 | Phase 2 | Pending |
+| RD-REND-01 | Phase 2 | Pending |
+| RD-REND-02 | Phase 2 | Pending |
+| RD-REND-03 | Phase 2 | Pending |
+| RD-REND-04 | Phase 2 | Pending |
+| RD-SEC-01 | Phase 2 | Pending |
+| RD-SEC-02 | Phase 2 | Pending |
+| RD-SEC-03 | Phase 2 | Pending |
+| RD-SEC-04 | Phase 2 | Pending |
+| RD-SEC-05 | Phase 2 | Pending |
+| RD-AGENT-01 | Phase 2 | Pending |
+| RD-AGENT-02 | Phase 2 | Pending |
+| RD-AGENT-03 | Phase 2 | Pending |
+| RD-AGENT-04 | Phase 2 | Pending |
+| RD-AGENT-05 | Phase 2 | Pending |
+| RD-AGENT-06 | Phase 2 | Pending |
+| RD-AGENT-07 | Phase 2 | Pending |
+| RD-APP-01 | Phase 2 | Pending |
+| RD-APP-02 | Phase 2 | Pending |
+| RD-APP-03 | Phase 2 | Pending |
+| RD-APP-04 | Phase 2 | Pending |
+| RD-APP-05 | Phase 2 | Pending |
+| RD-APP-06 | Phase 2 | Pending |
+| RD-APP-07 | Phase 2 | Pending |
+| RD-PERF-01 | Phase 2 | Pending |
+| RD-PERF-02 | Phase 2 | Pending |
+| RD-PERF-03 | Phase 2 | Pending |
+| RD-PERF-04 | Phase 2 | Pending |
+| RD-PERF-07 | Phase 2 | Pending |
+| RD-INPUT-01 | Phase 3 | Pending |
+| RD-INPUT-02 | Phase 3 | Pending |
+| RD-INPUT-03 | Phase 3 | Pending |
+| RD-INPUT-04 | Phase 3 | Pending |
+| RD-INPUT-05 | Phase 3 | Pending |
+| RD-INPUT-06 | Phase 3 | Pending |
+| RD-INPUT-07 | Phase 3 | Pending |
+| RD-INPUT-08 | Phase 3 | Pending |
+| RD-INPUT-09 | Phase 3 | Pending |
+| RD-INPUT-10 | Phase 3 | Pending |
+| RD-PERF-05 | Phase 3 | Pending |
+| RD-PERF-06 | Phase 3 | Pending |
+| RD-PERF-08 | Phase 3 | Pending |
+| RD-TEST-01 | Phase 4 | Pending |
+| RD-TEST-02 | Phase 4 | Pending |
+| RD-TEST-03 | Phase 4 | Pending |
+| RD-TEST-04 | Phase 4 | Pending |
+| RD-TEST-05 | Phase 4 | Pending |
+| RD-TEST-06 | Phase 4 | Pending |
+| RD-TEST-07 | Phase 4 | Pending |
+| RD-TEST-08 | Phase 4 | Pending |
+| RD-TEST-09 | Phase 4 | Pending |
+| RD-TEST-10 | Phase 4 | Pending |
+| RD-AUDIO-01 | Phase 5 | Pending |
+| RD-AUDIO-02 | Phase 5 | Pending |
+| RD-AUDIO-03 | Phase 5 | Pending |
+| RD-AUDIO-04 | Phase 5 | Pending |
+| RD-AUDIO-05 | Phase 5 | Pending |
+| RD-CLIP-01 | Phase 5 | Pending |
+| RD-CLIP-02 | Phase 5 | Pending |
+| RD-CLIP-03 | Phase 5 | Pending |
+| RD-CLIP-04 | Phase 5 | Pending |
+| RD-REND-05 | Phase 2 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 62 total
-- Mapped to phases: 0
-- Unmapped: 62
+- v2.0 requirements: 86 total (note: original estimate of 62 was pre-finalization; actual count from file is 86)
+- Mapped to phases: 86
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-28*
-*Last updated: 2026-03-28 after research synthesis*
+*Last updated: 2026-03-27 — traceability populated by roadmapper*
