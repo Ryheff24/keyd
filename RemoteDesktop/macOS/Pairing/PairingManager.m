@@ -80,18 +80,26 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
  * and store both as a SecIdentity in Keychain.
  */
 - (void)generateAndStoreTLSIdentity {
-    /* Generate P-256 private key */
-    NSDictionary *keyAttrs = @{
+    /* Create unrestricted access so Network.framework can use the key
+     * for TLS signing without triggering a Keychain authorization prompt. */
+    SecAccessRef access = NULL;
+    SecAccessCreate(CFSTR("keydrd-agent-tls"), NULL, &access);
+
+    /* Generate P-256 private key with unrestricted access */
+    NSMutableDictionary *keyAttrs = [@{
         (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
         (__bridge id)kSecAttrKeySizeInBits: @256,
         (__bridge id)kSecAttrIsPermanent: @YES,
         (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
-
-    };
+    } mutableCopy];
+    if (access) {
+        keyAttrs[(__bridge id)kSecAttrAccess] = (__bridge id)access;
+    }
 
     CFErrorRef error = NULL;
     SecKeyRef privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)keyAttrs, &error);
+    if (access) CFRelease(access);
     if (!privateKey) {
         os_log_error(pairing_log(), "Failed to generate TLS private key: %{public}@",
                      (__bridge NSError *)error);
