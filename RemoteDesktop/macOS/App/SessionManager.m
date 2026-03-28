@@ -232,9 +232,7 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 #pragma mark - Pairing
 
 - (void)showPairingQR {
-    /* Stop transports to free port 14568 for the pairing listener */
-    [_usbTransport stopMonitoring];
-    [_wirelessTransport stopAdvertising];
+    /* Reset pairing state for fresh QR pairing */
     [_pairing resetPairing];
 
     NSString *payload = [_pairing generateQRPayload];

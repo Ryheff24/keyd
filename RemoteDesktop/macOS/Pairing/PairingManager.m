@@ -458,7 +458,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         @"scaleFactor": @(scaleFactor),
         @"protocolVersion": @1,
         @"service": @KEYDRD_SERVICE,
-        @"port": @(KEYDRD_INPUT_PORT),
+        @"port": @(KEYDRD_PAIRING_PORT),
         @"host": hostIP,
     } mutableCopy];
 
@@ -466,7 +466,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     if (!jsonData) return nil;
 
     NSString *jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
-    os_log(pairing_log(), "Generated QR payload with host=%{public}@, port=%d", hostIP, KEYDRD_INPUT_PORT);
+    os_log(pairing_log(), "Generated QR payload with host=%{public}@, port=%d", hostIP, KEYDRD_PAIRING_PORT);
     return jsonString;
 }
 
@@ -763,7 +763,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 
     /* Bind to pairing port */
     char portStr[8];
-    snprintf(portStr, sizeof(portStr), "%d", KEYDRD_INPUT_PORT);
+    snprintf(portStr, sizeof(portStr), "%d", KEYDRD_PAIRING_PORT);
     nw_endpoint_t localEndpoint = nw_endpoint_create_host("::", portStr);
     nw_parameters_set_local_endpoint(params, localEndpoint);
 
@@ -775,7 +775,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     nw_listener_set_state_changed_handler(listener, ^(nw_listener_state_t state, nw_error_t _Nullable error) {
         switch (state) {
             case nw_listener_state_ready:
-                os_log(pairing_log(), "Pairing listener ready on port %d", KEYDRD_INPUT_PORT);
+                os_log(pairing_log(), "Pairing listener ready on port %d", KEYDRD_PAIRING_PORT);
                 break;
             case nw_listener_state_failed:
                 os_log_error(pairing_log(), "Pairing listener failed: %{public}@", error);
@@ -797,7 +797,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 
     nw_listener_set_queue(listener, dispatch_get_main_queue());
     nw_listener_start(listener);
-    os_log(pairing_log(), "Starting pairing listener on port %d", KEYDRD_INPUT_PORT);
+    os_log(pairing_log(), "Starting pairing listener on port %d", KEYDRD_PAIRING_PORT);
 }
 
 - (void)stopPairingListener {

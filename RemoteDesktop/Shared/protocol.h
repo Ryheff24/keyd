@@ -5,8 +5,9 @@
 /* ---- Service Constants ---- */
 #define KEYDRD_MAGIC       0x4B44
 #define KEYDRD_SERVICE     "_keydrd._tcp"
-#define KEYDRD_MEDIA_PORT  14567  /* UDP */
-#define KEYDRD_INPUT_PORT  14568  /* TCP */
+#define KEYDRD_MEDIA_PORT    14567  /* UDP */
+#define KEYDRD_INPUT_PORT    14568  /* TCP */
+#define KEYDRD_PAIRING_PORT  14569  /* TCP -- dedicated pairing listener */
 
 /* ---- MediaFrameHeader flags (bit layout) ---- */
 #define KEYDRD_FLAG_HEVC       (1 << 0)   /* bit 0: HEVC-encoded frame */
