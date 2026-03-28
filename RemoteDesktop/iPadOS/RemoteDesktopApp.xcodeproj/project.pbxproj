@@ -24,6 +24,7 @@
 		B2000030000000000000000A /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = B2000030000000000000000F /* Shaders.metal */; };
 		B2000031000000000000000A /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000031000000000000000F /* MetalRenderer.swift */; };
 		B2000040000000000000000A /* HEVCDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000040000000000000000F /* HEVCDecoder.swift */; };
+		B2000041000000000000000A /* LZ4Decompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000041000000000000000F /* LZ4Decompressor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,6 +52,7 @@
 		B2000030000000000000000F /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		B2000031000000000000000F /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 		B2000040000000000000000F /* HEVCDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCDecoder.swift; sourceTree = "<group>"; };
+		B2000041000000000000000F /* LZ4Decompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LZ4Decompressor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +99,7 @@
 			isa = PBXGroup;
 			children = (
 				B2000040000000000000000F /* HEVCDecoder.swift */,
+				B2000041000000000000000F /* LZ4Decompressor.swift */,
 			);
 			path = Decode;
 			sourceTree = "<group>";
@@ -245,6 +248,7 @@
 				B2000030000000000000000A /* Shaders.metal in Sources */,
 				B2000031000000000000000A /* MetalRenderer.swift in Sources */,
 				B2000040000000000000000A /* HEVCDecoder.swift in Sources */,
+				B2000041000000000000000A /* LZ4Decompressor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
