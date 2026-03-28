@@ -161,13 +161,17 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
  */
 - (nullable SecCertificateRef)createSelfSignedCertificateWithPrivateKey:(SecKeyRef)privateKey {
     SecKeyRef publicKey = SecKeyCopyPublicKey(privateKey);
-    if (!publicKey) return NULL;
+    if (!publicKey) {
+        os_log_error(pairing_log(), "createSelfSignedCert: SecKeyCopyPublicKey returned NULL");
+        return NULL;
+    }
 
     /* Get the raw public key bytes for embedding in the certificate */
     CFErrorRef error = NULL;
     CFDataRef publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &error);
     CFRelease(publicKey);
     if (!publicKeyData) {
+        os_log_error(pairing_log(), "createSelfSignedCert: SecKeyCopyExternalRepresentation failed: %{public}@", error ? (__bridge NSError *)error : nil);
         if (error) CFRelease(error);
         return NULL;
     }
@@ -178,9 +182,16 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                                                      privateKey:privateKey];
     CFRelease(publicKeyData);
 
-    if (!certDER) return NULL;
+    if (!certDER) {
+        os_log_error(pairing_log(), "createSelfSignedCert: buildSelfSignedCertDER returned nil");
+        return NULL;
+    }
 
+    os_log(pairing_log(), "createSelfSignedCert: DER built (%lu bytes), creating SecCertificate", (unsigned long)certDER.length);
     SecCertificateRef cert = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certDER);
+    if (!cert) {
+        os_log_error(pairing_log(), "createSelfSignedCert: SecCertificateCreateWithData returned NULL (invalid DER)");
+    }
     return cert;
 }
 
@@ -215,13 +226,12 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02};
     [tbs appendBytes:sigAlg length:sizeof(sigAlg)];
 
-    /* Issuer: CN=keydrd-agent */
-    uint8_t issuer[] = {0x30, 0x18, 0x31, 0x16, 0x30, 0x14,
+    /* Issuer: CN=keydrd-agent (12 chars) */
+    uint8_t issuer[] = {0x30, 0x17, 0x31, 0x15, 0x30, 0x13,
         0x06, 0x03, 0x55, 0x04, 0x03, /* OID: CN */
-        0x0C, 0x0D, /* UTF8String, length 13 */
-        'k','e','y','d','r','d','-','a','g','e','n','t','\0'};
-    /* Fix: remove the null terminator from the DER */
-    [tbs appendBytes:issuer length:sizeof(issuer) - 1];
+        0x0C, 0x0C, /* UTF8String, length 12 */
+        'k','e','y','d','r','d','-','a','g','e','n','t'};
+    [tbs appendBytes:issuer length:sizeof(issuer)];
 
     /* Validity: 2024-01-01 to 2034-01-01 (UTCTime) */
     uint8_t validity[] = {0x30, 0x1E,
@@ -230,7 +240,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     [tbs appendBytes:validity length:sizeof(validity)];
 
     /* Subject: same as issuer (self-signed) */
-    [tbs appendBytes:issuer length:sizeof(issuer) - 1];
+    [tbs appendBytes:issuer length:sizeof(issuer)];
 
     /* SubjectPublicKeyInfo for P-256 */
     /* AlgorithmIdentifier: ecPublicKey + prime256v1 */
