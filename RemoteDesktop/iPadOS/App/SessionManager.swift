@@ -40,15 +40,20 @@ final class SessionManager {
 
     // MARK: - Display Geometry (from handshake)
 
-    private var displayWidth: Int = 0
-    private var displayHeight: Int = 0
-    private var displayScaleFactor: Float = 2.0
+    private var macDisplayWidth: Int = 0
+    private var macDisplayHeight: Int = 0
+    private var macScaleFactor: Float = 2.0
 
-    // MARK: - FPS Tracking
+    // MARK: - FPS Tracking (rolling window)
 
-    private var frameCount: Int = 0
-    private var fpsTimer: Timer?
-    private var lastFPSUpdate: Date = Date()
+    private var frameTimestamps: [CFAbsoluteTime] = []
+    private static let fpsWindowSize = 60
+    private var fpsUpdateTimer: Timer?
+
+    // MARK: - Latency Probe
+
+    private var latencyProbeTimer: Timer?
+    private static let latencyProbeInterval: TimeInterval = 1.0
 
     // MARK: - Reconnection
 
@@ -87,9 +92,6 @@ final class SessionManager {
             Self.log.info("Not paired -- awaiting QR scan")
             state = .awaitingPairing
         }
-
-        // Start FPS tracking timer (1-second interval)
-        startFPSTimer()
     }
 
     /// Called when QR pairing completes successfully.
@@ -129,7 +131,8 @@ final class SessionManager {
     /// Pause session when app goes to background.
     func pauseForBackground() {
         Self.log.info("App backgrounded -- pausing")
-        fpsTimer?.invalidate()
+        fpsUpdateTimer?.invalidate()
+        latencyProbeTimer?.invalidate()
         reconnectTimer?.invalidate()
     }
 
@@ -138,7 +141,8 @@ final class SessionManager {
         Self.log.info("Disconnecting session")
         state = .disconnected
         reconnectTimer?.invalidate()
-        fpsTimer?.invalidate()
+        fpsUpdateTimer?.invalidate()
+        latencyProbeTimer?.invalidate()
         usbTransport.stopMonitoring()
         wirelessTransport.stopBrowsing()
         metalRenderer.stop()
@@ -150,25 +154,21 @@ final class SessionManager {
     // MARK: - Resolution Match
 
     /// Send resolution match request to Mac via TCP.
-    /// Uses InputEventHeader with type=0x20 (modeChange).
+    /// Uses InputEventHeader type=0x21 with iPad screen dimensions payload.
     func requestResolutionMatch() {
         Self.log.info("Sending resolution match request to Mac")
 
-        // Build mode change input event with subtype for resolution match
-        let timestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000)
-        let header = InputEventHeader(type: InputEventType.modeChange.rawValue, tsUs: timestamp)
+        let timestamp = currentTimestampUs()
+        let header = InputEventHeader(type: InputEventType.resMatchRequest.rawValue, tsUs: timestamp)
         var data = header.serialize()
 
-        // Append subtype byte: 0x01 = resolution match request
-        var subtype: UInt8 = 0x01
-        data.append(Data(bytes: &subtype, count: 1))
+        // Append iPad screen dimensions as ResolutionMatchPayload
+        let iPadWidth = UInt32(UIScreen.main.nativeBounds.width)
+        let iPadHeight = UInt32(UIScreen.main.nativeBounds.height)
+        let payload = ResolutionMatchPayload(iPadWidth: iPadWidth, iPadHeight: iPadHeight)
+        data.append(payload.serialize())
 
-        // Send via active transport
-        if usbTransport.isConnected {
-            usbTransport.sendInputEvent(data)
-        } else if wirelessTransport.isConnected {
-            wirelessTransport.sendInputEvent(data)
-        }
+        sendInputEventToMac(data)
 
         hudViewModel.resetAutoHideTimer()
     }
@@ -243,6 +243,7 @@ final class SessionManager {
         case .disconnected:
             if state == .streaming {
                 state = .reconnecting
+                latencyProbeTimer?.invalidate()
                 scheduleReconnect()
             }
         case .idle:
@@ -298,22 +299,13 @@ final class SessionManager {
         // Extract payload (everything after the 24-byte header)
         let payload = data.subdata(in: MediaFrameHeader.size..<data.count)
 
-        // Check if this is a session handshake message
-        if !header.isHEVC && !header.isKeyframe && !header.isDelta {
-            // Could be a handshake or control message -- check msgType
-            if let handshake = SessionHandshakeMessage.parse(from: data) {
-                handleSessionHandshake(handshake)
-                return
-            }
-        }
-
         // Route to decoder based on flags
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
             guard let pixelBuffer = hevcDecoder.decode(data: payload, header: header) else {
                 return
             }
-            renderCVPixelBuffer(pixelBuffer, width: Int(header.payloadSize), height: 0)
+            renderCVPixelBuffer(pixelBuffer)
         } else {
             // LZ4 decode path (wired mode)
             guard let decompressor = lz4Decompressor else {
@@ -321,18 +313,18 @@ final class SessionManager {
                 return
             }
 
-            let frameBytes = displayWidth * displayHeight * 4
+            let frameBytes = macDisplayWidth * macDisplayHeight * 4
             guard let pixels = decompressor.decompress(data: payload,
                                                         header: header,
                                                         frameBytes: frameBytes) else {
                 return
             }
 
-            metalRenderer.updateFrame(pixels, width: displayWidth, height: displayHeight)
+            metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight)
         }
 
-        // Update frame counter for FPS
-        frameCount += 1
+        // Record frame timestamp for FPS calculation
+        recordFrameTimestamp()
 
         // Transition to streaming on first frame
         if state == .connecting || state == .reconnecting {
@@ -345,35 +337,42 @@ final class SessionManager {
     }
 
     /// Handle session handshake from Mac.
+    /// Configures viewport, decompressor, and HUD before first frame.
     private func handleSessionHandshake(_ handshake: SessionHandshakeMessage) {
         Self.log.info("Session handshake: \(handshake.displayWidth)x\(handshake.displayHeight)@\(handshake.scaleFactor)x, maxFps=\(handshake.maxFps)")
 
-        displayWidth = Int(handshake.displayWidth)
-        displayHeight = Int(handshake.displayHeight)
-        displayScaleFactor = handshake.scaleFactor
+        macDisplayWidth = Int(handshake.displayWidth)
+        macDisplayHeight = Int(handshake.displayHeight)
+        macScaleFactor = handshake.scaleFactor
 
         // Initialize LZ4 decompressor with frame size
-        let frameBytes = displayWidth * displayHeight * 4
+        let frameBytes = macDisplayWidth * macDisplayHeight * 4
         lz4Decompressor = LZ4Decompressor(frameBytes: frameBytes)
 
         // Configure renderer viewport
-        metalRenderer.setMacDisplaySize(width: displayWidth, height: displayHeight)
+        metalRenderer.setMacDisplaySize(width: macDisplayWidth, height: macDisplayHeight)
 
         // Update HUD with resolution info
         DispatchQueue.main.async {
             self.hudViewModel.updateResolution(
-                macWidth: self.displayWidth,
-                macHeight: self.displayHeight,
+                macWidth: self.macDisplayWidth,
+                macHeight: self.macDisplayHeight,
                 iPadWidth: Int(UIScreen.main.nativeBounds.width),
                 iPadHeight: Int(UIScreen.main.nativeBounds.height)
             )
         }
 
+        // Start latency probe timer
+        startLatencyProbeTimer()
+
+        // Start FPS update timer
+        startFPSUpdateTimer()
+
         state = .streaming
     }
 
     /// Render a CVPixelBuffer from HEVC decode to Metal.
-    private func renderCVPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) {
+    private func renderCVPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
@@ -387,30 +386,166 @@ final class SessionManager {
                                    height: actualHeight)
     }
 
-    /// Handle input data received from Mac (latency probes, control messages).
+    // MARK: - Private: Input Event Handling (from Mac)
+
+    /// Handle input data received from Mac (handshakes, latency probes, control messages).
     private func handleInputReceived(_ data: Data) {
+        // First check if it's a session handshake (different struct format)
+        if let handshake = SessionHandshakeMessage.parse(from: data) {
+            handleSessionHandshake(handshake)
+            return
+        }
+
+        // Parse as InputEventHeader
         guard let header = InputEventHeader.parse(from: data) else { return }
 
-        if header.type == InputEventType.latencyProbe.rawValue {
-            // Calculate round-trip latency
-            let now = UInt64(Date().timeIntervalSince1970 * 1_000_000)
-            let latencyUs = now - header.tsUs
-            let latencyMs = Int(latencyUs / 1000)
+        switch header.type {
+        case InputEventType.latencyProbe.rawValue:
+            handleLatencyProbeResponse(header)
 
-            DispatchQueue.main.async {
-                self.hudViewModel.updateLatency(latencyMs)
-            }
+        case InputEventType.modeChange.rawValue:
+            handleModeChangeFromMac(data)
+
+        case InputEventType.resMatchResponse.rawValue:
+            handleResolutionMatchResponse(data)
+
+        case InputEventType.geometryUpdate.rawValue:
+            handleGeometryUpdate(data)
+
+        default:
+            Self.log.debug("Unhandled input event type: 0x\(String(header.type, radix: 16))")
         }
     }
 
-    // MARK: - Private: FPS Timer
+    // MARK: - Private: Latency Probe
 
-    private func startFPSTimer() {
-        fpsTimer?.invalidate()
-        fpsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+    private func startLatencyProbeTimer() {
+        latencyProbeTimer?.invalidate()
+        latencyProbeTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.latencyProbeInterval,
+            repeats: true
+        ) { [weak self] _ in
+            self?.sendLatencyProbe()
+        }
+    }
+
+    /// Send a latency probe to Mac. Mac echoes it back immediately.
+    /// Round-trip time / 2 = one-way latency estimate.
+    private func sendLatencyProbe() {
+        guard state == .streaming else { return }
+
+        let timestamp = currentTimestampUs()
+        let header = InputEventHeader(type: InputEventType.latencyProbe.rawValue, tsUs: timestamp)
+        let data = header.serialize()
+        sendInputEventToMac(data)
+    }
+
+    /// Handle echoed latency probe from Mac.
+    private func handleLatencyProbeResponse(_ header: InputEventHeader) {
+        let now = currentTimestampUs()
+        let roundTripUs = now - header.tsUs
+        let oneWayMs = Int(roundTripUs / 2000)  // microseconds -> milliseconds, halved
+
+        DispatchQueue.main.async {
+            self.hudViewModel.updateLatency(oneWayMs)
+        }
+    }
+
+    // MARK: - Private: Mode Change from Mac
+
+    private func handleModeChangeFromMac(_ data: Data) {
+        Self.log.info("Received mode change notification from Mac")
+        // Transport change -- HUD flashes transport color
+        // The actual transport state is already updated via the FSM
+        // This notification is for informational HUD purposes
+    }
+
+    // MARK: - Private: Resolution Match Response
+
+    private func handleResolutionMatchResponse(_ data: Data) {
+        guard let response = ResolutionMatchResponse.parse(
+            from: data, offset: InputEventHeader.size
+        ) else {
+            Self.log.error("Failed to parse resolution match response")
+            return
+        }
+
+        let result = ResolutionMatchResult(rawValue: response.result)
+        switch result {
+        case .ok:
+            Self.log.info("Resolution match succeeded: \(response.newWidth)x\(response.newHeight)@\(response.newScale)x")
+        case .failed:
+            Self.log.error("Resolution match failed")
+        case .noMode:
+            Self.log.info("No suitable display mode found for iPad aspect ratio")
+        case .none:
+            Self.log.error("Unknown resolution match result: \(response.result)")
+        }
+    }
+
+    // MARK: - Private: Geometry Update
+
+    private func handleGeometryUpdate(_ data: Data) {
+        guard let geo = GeometryUpdatePayload.parse(
+            from: data, offset: InputEventHeader.size
+        ) else {
+            Self.log.error("Failed to parse geometry update")
+            return
+        }
+
+        Self.log.info("Geometry update: \(geo.displayWidth)x\(geo.displayHeight)@\(geo.scaleFactor)x")
+
+        macDisplayWidth = Int(geo.displayWidth)
+        macDisplayHeight = Int(geo.displayHeight)
+        macScaleFactor = geo.scaleFactor
+
+        // Reinitialize LZ4 decompressor with new frame size
+        let frameBytes = macDisplayWidth * macDisplayHeight * 4
+        lz4Decompressor = LZ4Decompressor(frameBytes: frameBytes)
+
+        // Recalculate MetalRenderer viewport
+        metalRenderer.setMacDisplaySize(width: macDisplayWidth, height: macDisplayHeight)
+
+        // Update HUD resolution display
+        DispatchQueue.main.async {
+            self.hudViewModel.updateResolution(
+                macWidth: self.macDisplayWidth,
+                macHeight: self.macDisplayHeight,
+                iPadWidth: Int(UIScreen.main.nativeBounds.width),
+                iPadHeight: Int(UIScreen.main.nativeBounds.height)
+            )
+        }
+    }
+
+    // MARK: - Private: FPS Counter (rolling window)
+
+    /// Record a frame arrival timestamp for rolling FPS calculation.
+    private func recordFrameTimestamp() {
+        let now = CFAbsoluteTimeGetCurrent()
+        frameTimestamps.append(now)
+
+        // Keep only the last N timestamps
+        if frameTimestamps.count > Self.fpsWindowSize {
+            frameTimestamps.removeFirst(frameTimestamps.count - Self.fpsWindowSize)
+        }
+    }
+
+    /// Compute current FPS from the rolling window of frame timestamps.
+    private func computeCurrentFPS() -> Int {
+        guard frameTimestamps.count >= 2 else { return 0 }
+        let oldest = frameTimestamps.first!
+        let newest = frameTimestamps.last!
+        let elapsed = newest - oldest
+        guard elapsed > 0 else { return 0 }
+        return Int(Double(frameTimestamps.count - 1) / elapsed)
+    }
+
+    /// Start a timer that updates the HUD FPS display every second.
+    private func startFPSUpdateTimer() {
+        fpsUpdateTimer?.invalidate()
+        fpsUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            let currentFPS = self.frameCount
-            self.frameCount = 0
+            let currentFPS = self.computeCurrentFPS()
             DispatchQueue.main.async {
                 self.hudViewModel.updateFPS(currentFPS)
             }
@@ -423,7 +558,7 @@ final class SessionManager {
         Self.log.info("Eco mode: \(isEco)")
 
         // Send eco mode change to Mac via TCP
-        let timestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000)
+        let timestamp = currentTimestampUs()
         let header = InputEventHeader(type: InputEventType.modeChange.rawValue, tsUs: timestamp)
         var data = header.serialize()
 
@@ -433,6 +568,12 @@ final class SessionManager {
         var enabled: UInt8 = isEco ? 1 : 0
         data.append(Data(bytes: &enabled, count: 1))
 
+        sendInputEventToMac(data)
+    }
+
+    // MARK: - Private: Transport Send Helpers
+
+    private func sendInputEventToMac(_ data: Data) {
         if usbTransport.isConnected {
             usbTransport.sendInputEvent(data)
         } else if wirelessTransport.isConnected {
@@ -460,8 +601,15 @@ final class SessionManager {
         }
     }
 
+    // MARK: - Private: Utilities
+
+    private func currentTimestampUs() -> UInt64 {
+        UInt64(Date().timeIntervalSince1970 * 1_000_000)
+    }
+
     deinit {
-        fpsTimer?.invalidate()
+        fpsUpdateTimer?.invalidate()
+        latencyProbeTimer?.invalidate()
         reconnectTimer?.invalidate()
     }
 }

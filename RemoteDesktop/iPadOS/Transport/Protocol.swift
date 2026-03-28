@@ -70,13 +70,16 @@ struct MediaFrameHeader {
 
 /// Input event type constants
 enum InputEventType: UInt8 {
-    case mouseMove    = 0x01
-    case click        = 0x02
-    case scroll       = 0x03
-    case key          = 0x10
-    case modeChange   = 0x20
-    case keepalive    = 0x30
-    case latencyProbe = 0xFF
+    case mouseMove          = 0x01
+    case click              = 0x02
+    case scroll             = 0x03
+    case key                = 0x10
+    case modeChange         = 0x20
+    case resMatchRequest    = 0x21  // iPad -> Mac: request resolution match
+    case resMatchResponse   = 0x22  // Mac -> iPad: resolution match result
+    case geometryUpdate     = 0x23  // Mac -> iPad: new display geometry
+    case keepalive          = 0x30
+    case latencyProbe       = 0xFF
 }
 
 /// Swift mirror of the C InputEventHeader struct (9 bytes packed).
@@ -148,5 +151,73 @@ struct SessionHandshakeMessage {
     func serialize() -> Data {
         var copy = self
         return Data(bytes: &copy, count: Self.size)
+    }
+}
+
+// MARK: - Resolution Match Payload (sent after InputEventHeader type=0x21)
+
+/// Payload for resolution match request (iPad -> Mac).
+struct ResolutionMatchPayload {
+    let iPadWidth: UInt32
+    let iPadHeight: UInt32
+
+    static var size: Int {
+        MemoryLayout<ResolutionMatchPayload>.size
+    }
+
+    func serialize() -> Data {
+        var copy = self
+        return Data(bytes: &copy, count: Self.size)
+    }
+}
+
+// MARK: - Resolution Match Response (parsed after InputEventHeader type=0x22)
+
+/// Result codes for resolution match response.
+enum ResolutionMatchResult: UInt8 {
+    case ok       = 0x00
+    case failed   = 0x01
+    case noMode   = 0x02
+}
+
+/// Payload for resolution match response (Mac -> iPad).
+struct ResolutionMatchResponse {
+    let result: UInt8
+    let newWidth: UInt32
+    let newHeight: UInt32
+    let newScale: Float
+
+    static var size: Int {
+        MemoryLayout<ResolutionMatchResponse>.size
+    }
+
+    static func parse(from data: Data, offset: Int) -> ResolutionMatchResponse? {
+        guard data.count >= offset + Self.size else { return nil }
+        return data.withUnsafeBytes { buffer -> ResolutionMatchResponse? in
+            guard let base = buffer.baseAddress else { return nil }
+            return (base + offset).assumingMemoryBound(to: ResolutionMatchResponse.self).pointee
+        }
+    }
+}
+
+// MARK: - Geometry Update Payload (parsed after InputEventHeader type=0x23)
+
+/// Payload for geometry update notification (Mac -> iPad).
+struct GeometryUpdatePayload {
+    let displayWidth: UInt32
+    let displayHeight: UInt32
+    let scaleFactor: Float
+    let aspectRatio: Float
+
+    static var size: Int {
+        MemoryLayout<GeometryUpdatePayload>.size
+    }
+
+    static func parse(from data: Data, offset: Int) -> GeometryUpdatePayload? {
+        guard data.count >= offset + Self.size else { return nil }
+        return data.withUnsafeBytes { buffer -> GeometryUpdatePayload? in
+            guard let base = buffer.baseAddress else { return nil }
+            return (base + offset).assumingMemoryBound(to: GeometryUpdatePayload.self).pointee
+        }
     }
 }
