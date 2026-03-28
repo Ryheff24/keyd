@@ -24,6 +24,7 @@
 		A1000030000000000000000A /* TransportFSM.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000030000000000000000F /* TransportFSM.c */; };
 		A1000032000000000000000A /* USBNetworkTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000032000000000000000F /* USBNetworkTransport.m */; };
 		A1000034000000000000000A /* WirelessTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000034000000000000000F /* WirelessTransport.m */; };
+		A1000040000000000000000A /* HEVCEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000040000000000000000F /* HEVCEncoder.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +57,8 @@
 		A1000033000000000000000F /* USBNetworkTransport.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = USBNetworkTransport.h; sourceTree = "<group>"; };
 		A1000034000000000000000F /* WirelessTransport.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WirelessTransport.m; sourceTree = "<group>"; };
 		A1000035000000000000000F /* WirelessTransport.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WirelessTransport.h; sourceTree = "<group>"; };
+		A1000040000000000000000F /* HEVCEncoder.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HEVCEncoder.m; sourceTree = "<group>"; };
+		A1000041000000000000000F /* HEVCEncoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HEVCEncoder.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,6 +97,7 @@
 				A1000001000000000000000F /* main.m */,
 				A10000E6000000000000000G /* Compress */,
 				A10000E7000000000000000G /* Capture */,
+				A10000E9000000000000000G /* Encode */,
 				A10000E8000000000000000G /* Transport */,
 				A10000E5000000000000000G /* Resources */,
 			);
@@ -129,6 +133,15 @@
 				A1000022000000000000000F /* ScreenCapture.m */,
 			);
 			path = Capture;
+			sourceTree = "<group>";
+		};
+		A10000E9000000000000000G /* Encode */ = {
+			isa = PBXGroup;
+			children = (
+				A1000041000000000000000F /* HEVCEncoder.h */,
+				A1000040000000000000000F /* HEVCEncoder.m */,
+			);
+			path = Encode;
 			sourceTree = "<group>";
 		};
 		A10000E5000000000000000G /* Resources */ = {
@@ -247,6 +260,7 @@
 				A1000030000000000000000A /* TransportFSM.c in Sources */,
 				A1000032000000000000000A /* USBNetworkTransport.m in Sources */,
 				A1000034000000000000000A /* WirelessTransport.m in Sources */,
+				A1000040000000000000000A /* HEVCEncoder.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -368,6 +382,7 @@
 					"$(SRCROOT)/../Shared",
 					"$(SRCROOT)/Compress",
 					"$(SRCROOT)/Capture",
+					"$(SRCROOT)/Encode",
 					"$(SRCROOT)/Transport",
 				);
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -387,6 +402,7 @@
 					"$(SRCROOT)/../Shared",
 					"$(SRCROOT)/Compress",
 					"$(SRCROOT)/Capture",
+					"$(SRCROOT)/Encode",
 					"$(SRCROOT)/Transport",
 				);
 				INFOPLIST_FILE = Resources/Info.plist;
