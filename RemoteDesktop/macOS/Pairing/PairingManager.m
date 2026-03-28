@@ -65,16 +65,14 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 #pragma mark - TLS Identity
 
 - (void)ensureTLSIdentity {
-    /* Try to load existing identity from Keychain first */
-    SecIdentityRef existingIdentity = [self loadTLSIdentityFromKeychain];
-    if (existingIdentity) {
-        os_log(pairing_log(), "Loaded existing TLS identity from Keychain");
-        if (_tlsIdentity) CFRelease(_tlsIdentity);
-        _tlsIdentity = existingIdentity;
-        return;
-    }
+    /* Always regenerate TLS identity to avoid Keychain ACL prompts
+     * from code signature changes between dev builds.
+     * Delete old items first (delete doesn't trigger prompts).
+     * Also reset pairing since shared secret was tied to old cert. */
+    [self deleteTLSIdentityFromKeychain];
+    [self resetPairing];
 
-    os_log(pairing_log(), "Generating new self-signed TLS identity");
+    os_log(pairing_log(), "Generating fresh self-signed TLS identity");
     [self generateAndStoreTLSIdentity];
 }
 
@@ -323,6 +321,22 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     uint8_t hash[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(data.bytes, (CC_LONG)data.length, hash);
     return [NSData dataWithBytes:hash length:CC_SHA256_DIGEST_LENGTH];
+}
+
+- (void)deleteTLSIdentityFromKeychain {
+    /* Delete private key by application tag */
+    NSDictionary *keyQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassKey,
+        (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
+    };
+    SecItemDelete((__bridge CFDictionaryRef)keyQuery);
+
+    /* Delete certificate by label */
+    NSDictionary *certQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassCertificate,
+        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+    };
+    SecItemDelete((__bridge CFDictionaryRef)certQuery);
 }
 
 - (SecIdentityRef)loadTLSIdentityFromKeychain {
