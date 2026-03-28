@@ -16,7 +16,7 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [ ] **RD-TRANS-05**: Connection automatically promotes from Wi-Fi/AWDL back to USB NCM when cable is re-plugged, within 2 seconds
 - [ ] **RD-TRANS-06**: Media stream uses UDP datagrams over the active transport
 - [ ] **RD-TRANS-07**: Input stream uses a separate TCP connection over the active transport (reliable, ordered)
-- [ ] **RD-TRANS-08**: Wire protocol uses binary framing (24-byte media header, 9-byte input header, packed C structs)
+- [x] **RD-TRANS-08**: Wire protocol uses binary framing (24-byte media header, 9-byte input header, packed C structs)
 - [ ] **RD-TRANS-09**: Both devices bind to USB NCM interface explicitly via `NWParameters.requiredInterface` with the specific `NWInterface` object (never hardcode interface name)
 - [ ] **RD-TRANS-10**: Bonjour service `_keydrd._tcp` used for wireless discovery (distinct from keyd's `_keyd._tcp`)
 
@@ -27,14 +27,14 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [ ] **RD-CAP-03**: Capture delivers IOSurface-backed CMSampleBuffer directly to compress pipeline (zero-copy: `IOSurfaceLock` → LZ4 compress → `IOSurfaceUnlock`)
 - [ ] **RD-CAP-04**: Capture CPU usage <1% in steady state
 - [ ] **RD-CAP-05**: Frame delivery watchdog detects silent capture stop (0 frames for >2s) and surfaces re-authorization prompt in menu bar (Sequoia monthly re-auth handling)
-- [ ] **RD-CAP-06**: Pixel format is `kCVPixelFormatType_32BGRA` throughout pipeline (matches Metal texture upload, no color conversion)
+- [x] **RD-CAP-06**: Pixel format is `kCVPixelFormatType_32BGRA` throughout pipeline (matches Metal texture upload, no color conversion)
 
 ### Compression
 
-- [ ] **RD-COMP-01**: Wired mode uses vendored LZ4 v1.10.0 block API (not Apple Compression.framework) on full keyframes
+- [x] **RD-COMP-01**: Wired mode uses vendored LZ4 v1.10.0 block API (not Apple Compression.framework) on full keyframes
 - [ ] **RD-COMP-02**: Wired mode uses XOR delta frames between keyframes, LZ4-compressed
 - [ ] **RD-COMP-03**: Keyframes sent every 1-2 seconds or when delta exceeds 60% of keyframe size
-- [ ] **RD-COMP-04**: Delta frame reference buffer uses double-buffer with `pthread_rwlock_t` to prevent XOR race condition
+- [x] **RD-COMP-04**: Delta frame reference buffer uses double-buffer with `pthread_rwlock_t` to prevent XOR race condition
 - [ ] **RD-COMP-05**: CMSampleBuffer retain held for entire duration of LZ4 compress (prevents IOSurface recycling corruption)
 - [ ] **RD-COMP-06**: Wireless mode uses VideoToolbox HEVC hardware encoder (`VTCompressionSession`, realtime, low-latency profile with `AverageBitRate` — NOT `ConstantBitRate`)
 - [ ] **RD-COMP-07**: Eco mode uses HEVC at reduced resolution (1080p or 720p) and framerate (30Hz), even over wired connection
@@ -93,18 +93,18 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [ ] **RD-PERF-04**: Mac agent RSS <50 MB during wired streaming
 - [ ] **RD-PERF-05**: Mac agent CPU usage <1% in eco mode
 - [ ] **RD-PERF-06**: Mac agent RSS <20 MB in eco mode
-- [ ] **RD-PERF-07**: Mac agent uses 0% GPU in all modes (no GPU work on Mac side)
+- [x] **RD-PERF-07**: Mac agent uses 0% GPU in all modes (no GPU work on Mac side)
 - [ ] **RD-PERF-08**: Input-to-screen latency <12ms (input event sent → result visible on iPad)
 
 ### Agent
 
 - [ ] **RD-AGENT-01**: macOS agent runs as menu bar app (no dock icon, `LSUIElement` / accessory activation policy)
-- [ ] **RD-AGENT-02**: macOS agent written in C + Objective-C only (no Swift runtime; target RSS <5 MB baseline)
+- [x] **RD-AGENT-02**: macOS agent written in C + Objective-C only (no Swift runtime; target RSS <5 MB baseline)
 - [ ] **RD-AGENT-03**: macOS agent starts at login via SMAppService
 - [ ] **RD-AGENT-04**: macOS agent prompts for Screen Recording permission via system alert; handles Sequoia re-auth with frame watchdog
 - [ ] **RD-AGENT-05**: macOS agent prompts for Accessibility permission (for CGEvent injection)
 - [ ] **RD-AGENT-06**: Menu bar shows connection state (USB/Wi-Fi/AWDL/disconnected) and current mode (quality/eco)
-- [ ] **RD-AGENT-07**: macOS minimum version: 14.2 (required for CoreAudio Tap API)
+- [x] **RD-AGENT-07**: macOS minimum version: 14.2 (required for CoreAudio Tap API)
 
 ### iPad App
 
@@ -113,7 +113,7 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [ ] **RD-APP-03**: iPad app provides mode toggle in HUD (full quality / eco)
 - [ ] **RD-APP-04**: iPad app supports landscape and portrait orientation (letterbox or scale-to-fit)
 - [ ] **RD-APP-05**: iPad app supports iPad Pro 11" and 13" screen sizes
-- [ ] **RD-APP-06**: iPadOS minimum version: 17.0 (required for `CAMetalDisplayLink`)
+- [x] **RD-APP-06**: iPadOS minimum version: 17.0 (required for `CAMetalDisplayLink`)
 - [ ] **RD-APP-07**: iPad system edge swipes are NOT intercepted (respected as system gestures)
 
 ### Testing
@@ -180,7 +180,7 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-TRANS-05 | Phase 2 | Pending |
 | RD-TRANS-06 | Phase 2 | Pending |
 | RD-TRANS-07 | Phase 2 | Pending |
-| RD-TRANS-08 | Phase 2 | Pending |
+| RD-TRANS-08 | Phase 2 | Complete |
 | RD-TRANS-09 | Phase 2 | Pending |
 | RD-TRANS-10 | Phase 2 | Pending |
 | RD-CAP-01 | Phase 2 | Pending |
@@ -188,11 +188,11 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-CAP-03 | Phase 2 | Pending |
 | RD-CAP-04 | Phase 2 | Pending |
 | RD-CAP-05 | Phase 2 | Pending |
-| RD-CAP-06 | Phase 2 | Pending |
-| RD-COMP-01 | Phase 2 | Pending |
+| RD-CAP-06 | Phase 2 | Complete |
+| RD-COMP-01 | Phase 2 | Complete |
 | RD-COMP-02 | Phase 2 | Pending |
 | RD-COMP-03 | Phase 2 | Pending |
-| RD-COMP-04 | Phase 2 | Pending |
+| RD-COMP-04 | Phase 2 | Complete |
 | RD-COMP-05 | Phase 2 | Pending |
 | RD-COMP-06 | Phase 2 | Pending |
 | RD-COMP-07 | Phase 2 | Pending |
@@ -208,24 +208,24 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-SEC-04 | Phase 2 | Pending |
 | RD-SEC-05 | Phase 2 | Pending |
 | RD-AGENT-01 | Phase 2 | Pending |
-| RD-AGENT-02 | Phase 2 | Pending |
+| RD-AGENT-02 | Phase 2 | Complete |
 | RD-AGENT-03 | Phase 2 | Pending |
 | RD-AGENT-04 | Phase 2 | Pending |
 | RD-AGENT-05 | Phase 2 | Pending |
 | RD-AGENT-06 | Phase 2 | Pending |
-| RD-AGENT-07 | Phase 2 | Pending |
+| RD-AGENT-07 | Phase 2 | Complete |
 | RD-APP-01 | Phase 2 | Pending |
 | RD-APP-02 | Phase 2 | Pending |
 | RD-APP-03 | Phase 2 | Pending |
 | RD-APP-04 | Phase 2 | Pending |
 | RD-APP-05 | Phase 2 | Pending |
-| RD-APP-06 | Phase 2 | Pending |
+| RD-APP-06 | Phase 2 | Complete |
 | RD-APP-07 | Phase 2 | Pending |
 | RD-PERF-01 | Phase 2 | Pending |
 | RD-PERF-02 | Phase 2 | Pending |
 | RD-PERF-03 | Phase 2 | Pending |
 | RD-PERF-04 | Phase 2 | Pending |
-| RD-PERF-07 | Phase 2 | Pending |
+| RD-PERF-07 | Phase 2 | Complete |
 | RD-INPUT-01 | Phase 3 | Pending |
 | RD-INPUT-02 | Phase 3 | Pending |
 | RD-INPUT-03 | Phase 3 | Pending |
