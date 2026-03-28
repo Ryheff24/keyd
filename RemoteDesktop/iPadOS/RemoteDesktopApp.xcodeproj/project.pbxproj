@@ -21,6 +21,8 @@
 		B2000021000000000000000A /* TransportFSM.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000000F /* TransportFSM.swift */; };
 		B2000022000000000000000A /* USBNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000022000000000000000F /* USBNetworkTransport.swift */; };
 		B2000023000000000000000A /* WirelessTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000023000000000000000F /* WirelessTransport.swift */; };
+		B2000030000000000000000A /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = B2000030000000000000000F /* Shaders.metal */; };
+		B2000031000000000000000A /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000031000000000000000F /* MetalRenderer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +47,8 @@
 		B2000021000000000000000F /* TransportFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportFSM.swift; sourceTree = "<group>"; };
 		B2000022000000000000000F /* USBNetworkTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBNetworkTransport.swift; sourceTree = "<group>"; };
 		B2000023000000000000000F /* WirelessTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessTransport.swift; sourceTree = "<group>"; };
+		B2000030000000000000000F /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
+		B2000031000000000000000F /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,10 +83,20 @@
 			isa = PBXGroup;
 			children = (
 				B20000E5000000000000000G /* App */,
+				B20000E8000000000000000G /* Render */,
 				B20000E7000000000000000G /* Transport */,
 				B20000E6000000000000000G /* Resources */,
 			);
 			path = .;
+			sourceTree = "<group>";
+		};
+		B20000E8000000000000000G /* Render */ = {
+			isa = PBXGroup;
+			children = (
+				B2000030000000000000000F /* Shaders.metal */,
+				B2000031000000000000000F /* MetalRenderer.swift */,
+			);
+			path = Render;
 			sourceTree = "<group>";
 		};
 		B20000E7000000000000000G /* Transport */ = {
@@ -217,6 +231,8 @@
 				B2000021000000000000000A /* TransportFSM.swift in Sources */,
 				B2000022000000000000000A /* USBNetworkTransport.swift in Sources */,
 				B2000023000000000000000A /* WirelessTransport.swift in Sources */,
+				B2000030000000000000000A /* Shaders.metal in Sources */,
+				B2000031000000000000000A /* MetalRenderer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
