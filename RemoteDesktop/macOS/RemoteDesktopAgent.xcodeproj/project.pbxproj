@@ -10,6 +10,8 @@
 		A1000001000000000000000A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000000F /* main.m */; };
 		A1000002000000000000000A /* lz4.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000000F /* lz4.c */; };
 		A1000003000000000000000A /* delta.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000003000000000000000F /* delta.c */; };
+		A1000020000000000000000A /* FrameCompressor.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000020000000000000000F /* FrameCompressor.c */; };
+		A1000022000000000000000A /* ScreenCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000022000000000000000F /* ScreenCapture.m */; };
 		A1000010000000000000000A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000010000000000000000F /* Cocoa.framework */; };
 		A1000011000000000000000A /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000011000000000000000F /* ScreenCaptureKit.framework */; };
 		A1000012000000000000000A /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000012000000000000000F /* VideoToolbox.framework */; };
@@ -18,6 +20,7 @@
 		A1000015000000000000000A /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000015000000000000000F /* IOSurface.framework */; };
 		A1000016000000000000000A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000016000000000000000F /* Network.framework */; };
 		A1000017000000000000000A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000017000000000000000F /* Security.framework */; };
+		A1000024000000000000000A /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000024000000000000000F /* libz.tbd */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +42,11 @@
 		A1000015000000000000000F /* IOSurface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOSurface.framework; path = System/Library/Frameworks/IOSurface.framework; sourceTree = SDKROOT; };
 		A1000016000000000000000F /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		A1000017000000000000000F /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		A1000020000000000000000F /* FrameCompressor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = FrameCompressor.c; sourceTree = "<group>"; };
+		A1000021000000000000000F /* FrameCompressor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FrameCompressor.h; sourceTree = "<group>"; };
+		A1000022000000000000000F /* ScreenCapture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ScreenCapture.m; sourceTree = "<group>"; };
+		A1000023000000000000000F /* ScreenCapture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScreenCapture.h; sourceTree = "<group>"; };
+		A1000024000000000000000F /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +62,7 @@
 				A1000015000000000000000A /* IOSurface.framework in Frameworks */,
 				A1000016000000000000000A /* Network.framework in Frameworks */,
 				A1000017000000000000000A /* Security.framework in Frameworks */,
+				A1000024000000000000000A /* libz.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -74,9 +83,29 @@
 			isa = PBXGroup;
 			children = (
 				A1000001000000000000000F /* main.m */,
+				A10000E6000000000000000G /* Compress */,
+				A10000E7000000000000000G /* Capture */,
 				A10000E5000000000000000G /* Resources */,
 			);
 			path = .;
+			sourceTree = "<group>";
+		};
+		A10000E6000000000000000G /* Compress */ = {
+			isa = PBXGroup;
+			children = (
+				A1000021000000000000000F /* FrameCompressor.h */,
+				A1000020000000000000000F /* FrameCompressor.c */,
+			);
+			path = Compress;
+			sourceTree = "<group>";
+		};
+		A10000E7000000000000000G /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				A1000023000000000000000F /* ScreenCapture.h */,
+				A1000022000000000000000F /* ScreenCapture.m */,
+			);
+			path = Capture;
 			sourceTree = "<group>";
 		};
 		A10000E5000000000000000G /* Resources */ = {
@@ -112,6 +141,7 @@
 				A1000015000000000000000F /* IOSurface.framework */,
 				A1000016000000000000000F /* Network.framework */,
 				A1000017000000000000000F /* Security.framework */,
+				A1000024000000000000000F /* libz.tbd */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -189,6 +219,8 @@
 				A1000001000000000000000A /* main.m in Sources */,
 				A1000002000000000000000A /* lz4.c in Sources */,
 				A1000003000000000000000A /* delta.c in Sources */,
+				A1000020000000000000000A /* FrameCompressor.c in Sources */,
+				A1000022000000000000000A /* ScreenCapture.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -306,7 +338,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../Shared";
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../Shared",
+					"$(SRCROOT)/Compress",
+					"$(SRCROOT)/Capture",
+				);
 				INFOPLIST_FILE = Resources/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -320,7 +356,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../Shared";
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../Shared",
+					"$(SRCROOT)/Compress",
+					"$(SRCROOT)/Capture",
+				);
 				INFOPLIST_FILE = Resources/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
 				PRODUCT_NAME = "$(TARGET_NAME)";
