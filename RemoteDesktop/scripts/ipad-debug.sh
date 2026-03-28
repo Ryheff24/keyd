@@ -10,7 +10,7 @@ set -euo pipefail
 
 LOCKFILE="/tmp/keyd-ipad-debug.lock"
 if [ -f "$LOCKFILE" ]; then
-  OLD_PID=$(cat "$LOCKFILE" 2>/dev/null)
+  OLD_PID=$(cat "$LOCKFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     echo "Killing previous ipad-debug.sh (PID $OLD_PID)"
     kill "$OLD_PID" 2>/dev/null || true
@@ -19,13 +19,19 @@ if [ -f "$LOCKFILE" ]; then
   rm -f "$LOCKFILE"
 fi
 echo $$ > "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"; kill $PID 2>/dev/null' EXIT
+
+LAUNCH_PID=""
+cleanup() {
+  [ -n "$LAUNCH_PID" ] && kill "$LAUNCH_PID" 2>/dev/null || true
+  [ -n "$LAUNCH_PID" ] && wait "$LAUNCH_PID" 2>/dev/null || true
+  rm -f "$LOCKFILE"
+}
+trap cleanup EXIT
 
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 SCHEME="RemoteDesktopApp"
 BUNDLE_ID="com.ryheff.keyd.remote.app"
 DEVICE_ID="00000000-0000-0000-0000-00000000000A"
-XCODE_DEVICE_ID="00000000-00000000000000A1"
 CONFIG="Debug"
 TIMEOUT="${1:-60}"
 DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
@@ -60,11 +66,8 @@ xcrun devicectl device process launch \
   --terminate-existing \
   --console \
   "$BUNDLE_ID" 2>&1 &
-PID=$!
+LAUNCH_PID=$!
 
 sleep "$TIMEOUT"
-kill $PID 2>/dev/null
-wait $PID 2>/dev/null
-
-echo ""
-echo "=== Done ==="
+# cleanup runs via trap
+exit 0

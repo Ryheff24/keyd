@@ -7,7 +7,7 @@ set -euo pipefail
 
 LOCKFILE="/tmp/keyd-mac-debug.lock"
 if [ -f "$LOCKFILE" ]; then
-  OLD_PID=$(cat "$LOCKFILE" 2>/dev/null)
+  OLD_PID=$(cat "$LOCKFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     echo "Killing previous mac-debug.sh (PID $OLD_PID)"
     kill "$OLD_PID" 2>/dev/null || true
@@ -16,7 +16,17 @@ if [ -f "$LOCKFILE" ]; then
   rm -f "$LOCKFILE"
 fi
 echo $$ > "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"; kill $APP_PID 2>/dev/null; kill $LOG_PID 2>/dev/null' EXIT
+
+APP_PID=""
+LOG_PID=""
+cleanup() {
+  [ -n "$LOG_PID" ] && kill "$LOG_PID" 2>/dev/null || true
+  [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null || true
+  [ -n "$LOG_PID" ] && wait "$LOG_PID" 2>/dev/null || true
+  [ -n "$APP_PID" ] && wait "$APP_PID" 2>/dev/null || true
+  rm -f "$LOCKFILE"
+}
+trap cleanup EXIT
 
 PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
 SCHEME="RemoteDesktopAgent"
@@ -61,10 +71,5 @@ log stream --predicate "subsystem == '$SUBSYSTEM'" --style compact &
 LOG_PID=$!
 
 sleep "$TIMEOUT"
-kill $LOG_PID 2>/dev/null
-kill $APP_PID 2>/dev/null
-wait $LOG_PID 2>/dev/null
-wait $APP_PID 2>/dev/null
-
-echo ""
-echo "=== Done ==="
+# cleanup runs via trap
+exit 0
