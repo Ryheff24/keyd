@@ -81,6 +81,22 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)resetPairing;
 
 /**
+ * Start a TLS listener for incoming pairing connections on KEYDRD_INPUT_PORT.
+ * Call before showing the QR code. Calls handlePairingConnection: when iPad connects.
+ */
+- (void)startPairingListener;
+
+/**
+ * Stop the pairing listener.
+ */
+- (void)stopPairingListener;
+
+/**
+ * Callback fired when pairing completes (ECDH done, secret stored).
+ */
+@property (nonatomic, copy, nullable) void (^onPairingComplete)(void);
+
+/**
  * Load stored peer certificate fingerprint for cert pinning on subsequent connections.
  */
 - (nullable NSData *)loadStoredPeerCertificate;

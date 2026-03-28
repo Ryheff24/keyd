@@ -6,6 +6,8 @@
 #import <CommonCrypto/CommonHMAC.h>
 #import <Security/Security.h>
 #import <AppKit/AppKit.h>
+#import <ifaddrs.h>
+#import <arpa/inet.h>
 
 static os_log_t pairing_log(void) {
     static os_log_t log;
@@ -31,6 +33,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 @property (nonatomic, readwrite, nullable) NSData *sharedSecret;
 @property (nonatomic, readwrite, nullable) SecIdentityRef tlsIdentity;
 @property (nonatomic, nullable) SecKeyRef ecdhPrivateKey;
+@property (nonatomic, nullable) nw_listener_t pairingListener;
 @end
 
 @implementation PairingManager
@@ -433,9 +436,17 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         scaleFactor = mainScreen.backingScaleFactor;
     }
 
+    /* Get routable IP address for QR payload */
+    NSString *hostIP = [self bestRoutableIPv4Address];
+    if (!hostIP) {
+        os_log_error(pairing_log(), "Cannot generate QR payload: no routable IPv4 address found");
+        CFRelease(pubKeyData);
+        return nil;
+    }
+
     /* Build JSON payload */
     NSString *pubKeyBase64 = [(__bridge_transfer NSData *)pubKeyData base64EncodedStringWithOptions:0];
-    NSDictionary *payload = @{
+    NSMutableDictionary *payload = [@{
         @"certFingerprint": hexFingerprint,
         @"publicKey": pubKeyBase64,
         @"displayWidth": @((int)(screenWidth * scaleFactor)),
@@ -444,20 +455,21 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         @"protocolVersion": @1,
         @"service": @KEYDRD_SERVICE,
         @"port": @(KEYDRD_INPUT_PORT),
-    };
+        @"host": hostIP,
+    } mutableCopy];
 
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingPrettyPrinted error:nil];
     if (!jsonData) return nil;
 
     NSString *jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
-    os_log(pairing_log(), "Generated QR payload with cert fingerprint and ECDH public key");
+    os_log(pairing_log(), "Generated QR payload with host=%{public}@, port=%d", hostIP, KEYDRD_INPUT_PORT);
     return jsonString;
 }
 
 #pragma mark - Pairing Connection Handler
 
 - (void)handlePairingConnection:(nw_connection_t)conn {
-    os_log(pairing_log(), "Handling pairing connection from iPad");
+    os_log(pairing_log(), "handlePairingConnection: ENTERED -- connection from iPad received");
 
     nw_connection_set_queue(conn, dispatch_get_main_queue());
 
@@ -496,10 +508,17 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                             nw_connection_send(conn, sendData,
                                 NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                                 true, ^(nw_error_t _Nullable sendError) {
+                                PairingManager *self3 = weakSelf;
                                 if (sendError) {
                                     os_log_error(pairing_log(), "Failed to send Mac public key: %{public}@", sendError);
                                 } else {
                                     os_log(pairing_log(), "Pairing complete -- shared secret derived and stored");
+                                    [self3 stopPairingListener];
+                                    if (self3.onPairingComplete) {
+                                        dispatch_async(dispatch_get_main_queue(), ^{
+                                            self3.onPairingComplete();
+                                        });
+                                    }
                                 }
                             });
                         }
@@ -663,6 +682,122 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrAccount: account,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
+}
+
+#pragma mark - IP Address
+
+- (nullable NSString *)bestRoutableIPv4Address {
+    struct ifaddrs *ifaddrs = NULL;
+    if (getifaddrs(&ifaddrs) != 0) {
+        os_log_error(pairing_log(), "getifaddrs failed: %{errno}d", errno);
+        return nil;
+    }
+
+    NSString *en0IP = nil;
+    NSString *fallbackIP = nil;
+
+    for (struct ifaddrs *ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+        /* Skip loopback */
+        NSString *name = [NSString stringWithUTF8String:ifa->ifa_name];
+        if ([name isEqualToString:@"lo0"]) continue;
+
+        struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+        char ipStr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &addr->sin_addr, ipStr, sizeof(ipStr));
+        NSString *ip = [NSString stringWithUTF8String:ipStr];
+
+        os_log(pairing_log(), "Found interface %{public}@: %{public}@", name, ip);
+
+        if ([name isEqualToString:@"en0"]) {
+            en0IP = ip;
+        } else if (!fallbackIP) {
+            fallbackIP = ip;
+        }
+    }
+
+    freeifaddrs(ifaddrs);
+
+    NSString *result = en0IP ?: fallbackIP;
+    if (result) {
+        os_log(pairing_log(), "Best routable IPv4: %{public}@", result);
+    }
+    return result;
+}
+
+#pragma mark - Pairing Listener
+
+- (void)startPairingListener {
+    if (!_tlsIdentity) {
+        os_log_error(pairing_log(), "Cannot start pairing listener: no TLS identity");
+        return;
+    }
+
+    [self stopPairingListener];
+
+    /* Create TLS parameters using our self-signed identity */
+    nw_protocol_options_t tlsOptions = nw_tls_create_options();
+    sec_protocol_options_t secOptions = nw_tls_copy_sec_protocol_options(tlsOptions);
+    sec_identity_t identity = sec_identity_create(_tlsIdentity);
+    sec_protocol_options_set_local_identity(secOptions, identity);
+    sec_protocol_options_set_min_tls_protocol_version(secOptions, tls_protocol_version_TLSv13);
+
+    nw_parameters_t params = nw_parameters_create_secure_tcp(
+        ^(nw_protocol_options_t _Nonnull options) {
+            sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(options);
+            sec_protocol_options_set_local_identity(sec, identity);
+            sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+        },
+        NW_PARAMETERS_DEFAULT_CONFIGURATION
+    );
+
+    /* Bind to pairing port */
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%d", KEYDRD_INPUT_PORT);
+    nw_endpoint_t localEndpoint = nw_endpoint_create_host("::", portStr);
+    nw_parameters_set_local_endpoint(params, localEndpoint);
+
+    nw_listener_t listener = nw_listener_create(params);
+    _pairingListener = listener;
+
+    __weak PairingManager *weakSelf = self;
+
+    nw_listener_set_state_changed_handler(listener, ^(nw_listener_state_t state, nw_error_t _Nullable error) {
+        switch (state) {
+            case nw_listener_state_ready:
+                os_log(pairing_log(), "Pairing listener ready on port %d", KEYDRD_INPUT_PORT);
+                break;
+            case nw_listener_state_failed:
+                os_log_error(pairing_log(), "Pairing listener failed: %{public}@", error);
+                break;
+            case nw_listener_state_cancelled:
+                os_log(pairing_log(), "Pairing listener cancelled");
+                break;
+            default:
+                break;
+        }
+    });
+
+    nw_listener_set_new_connection_handler(listener, ^(nw_connection_t conn) {
+        PairingManager *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        os_log(pairing_log(), "Pairing listener: incoming connection from iPad");
+        [strongSelf handlePairingConnection:conn];
+    });
+
+    nw_listener_set_queue(listener, dispatch_get_main_queue());
+    nw_listener_start(listener);
+    os_log(pairing_log(), "Starting pairing listener on port %d", KEYDRD_INPUT_PORT);
+}
+
+- (void)stopPairingListener {
+    if (_pairingListener) {
+        nw_listener_cancel(_pairingListener);
+        _pairingListener = nil;
+        os_log(pairing_log(), "Pairing listener stopped");
+    }
 }
 
 @end

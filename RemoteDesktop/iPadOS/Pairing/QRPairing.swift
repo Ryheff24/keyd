@@ -15,6 +15,7 @@ struct QRPayload {
     let protocolVersion: Int       // Protocol version (1)
     let service: String            // Bonjour service type (_keydrd._tcp)
     let port: UInt16               // TCP pairing port
+    let host: String               // Mac's routable IP address
 
     /// Parse a QR payload from a JSON string.
     static func parse(from jsonString: String) -> QRPayload? {
@@ -27,7 +28,8 @@ struct QRPayload {
               let scaleFactor = json["scaleFactor"] as? Double,
               let protocolVersion = json["protocolVersion"] as? Int,
               let service = json["service"] as? String,
-              let port = json["port"] as? Int
+              let port = json["port"] as? Int,
+              let host = json["host"] as? String
         else { return nil }
 
         guard let certFingerprint = Data(hexString: certFingerprintHex),
@@ -43,7 +45,8 @@ struct QRPayload {
             scaleFactor: scaleFactor,
             protocolVersion: protocolVersion,
             service: service,
-            port: UInt16(port)
+            port: UInt16(port),
+            host: host
         )
     }
 }
@@ -98,34 +101,110 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     /// Callback fired when a QR code is detected (before pairing attempt).
     var onQRDetected: ((QRPayload) -> Void)?
 
+    /// Callback fired when the capture session starts running (main thread).
+    var onSessionStarted: (() -> Void)?
+
+    /// Whether the capture session is currently running.
+    var isSessionRunning: Bool { captureSession?.isRunning ?? false }
+
     // MARK: - Private
 
     private var captureSession: AVCaptureSession?
     private let keychainService = "com.ryheff.keyd.remote.app"
 
+    /// Guard against re-entrant metadataOutput calls while pairing is in progress.
+    private var isPairingInProgress = false
+
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "QRPairing")
+
+    // MARK: - Notification Observers
+
+    private var notificationObservers: [NSObjectProtocol] = []
+
+    /// Register observers for all AVCaptureSession notifications on a given session.
+    private func registerSessionNotificationObservers(for session: AVCaptureSession) {
+        // Remove any previous observers
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        notificationObservers.removeAll()
+
+        let center = NotificationCenter.default
+
+        let didStart = center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: session, queue: nil) { [weak self] notification in
+            self?.log.info("[QRPairing] NOTIFICATION: AVCaptureSessionDidStartRunning fired, object=\(String(describing: notification.object)), thread=\(Thread.isMainThread ? "main" : "background")")
+            DispatchQueue.main.async {
+                print("[CONSOLE] NOTIFICATION: didStartRunning -> calling onSessionStarted on main thread")
+                self?.log.info("[QRPairing] calling onSessionStarted callback on main thread")
+                self?.onSessionStarted?()
+            }
+        }
+        notificationObservers.append(didStart)
+
+        let didStop = center.addObserver(forName: .AVCaptureSessionDidStopRunning, object: session, queue: nil) { [weak self] notification in
+            self?.log.warning("[QRPairing] NOTIFICATION: AVCaptureSessionDidStopRunning fired, object=\(String(describing: notification.object))")
+        }
+        notificationObservers.append(didStop)
+
+        let runtimeError = center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { [weak self] notification in
+            let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError
+            self?.log.error("[QRPairing] NOTIFICATION: AVCaptureSessionRuntimeError fired, error=\(String(describing: error)), userInfo=\(String(describing: notification.userInfo))")
+        }
+        notificationObservers.append(runtimeError)
+
+        let wasInterrupted = center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { [weak self] notification in
+            let reason = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int
+            self?.log.warning("[QRPairing] NOTIFICATION: AVCaptureSessionWasInterrupted fired, reason=\(String(describing: reason))")
+        }
+        notificationObservers.append(wasInterrupted)
+
+        // Also register a wildcard observer (object: nil) to catch if notification fires with wrong object
+        let wildcardDidStart = center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: nil, queue: nil) { [weak self] notification in
+            self?.log.info("[QRPairing] NOTIFICATION (wildcard): AVCaptureSessionDidStartRunning fired, object=\(String(describing: notification.object)), objectType=\(type(of: notification.object)), thread=\(Thread.isMainThread ? "main" : "background")")
+            if let notifSession = notification.object as? AVCaptureSession {
+                let isSameSession = notifSession === session
+                self?.log.info("[QRPairing] NOTIFICATION (wildcard): isSameSession=\(isSameSession), notifSession.isRunning=\(notifSession.isRunning)")
+            }
+        }
+        notificationObservers.append(wildcardDidStart)
+
+        log.info("[QRPairing] registered 5 notification observers for session \(String(describing: session))")
+    }
 
     // MARK: - QR Scanning
 
     /// Start the camera session for QR code scanning.
     /// The caller should add `captureSession.previewLayer` to their view.
     func startScanning() -> AVCaptureSession? {
+        log.info("[QRPairing] startScanning() entry")
+        print("[CONSOLE] startScanning() entry")
+
+        // Log camera authorization status
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        log.info("[QRPairing] camera authorization status: \(authStatus.rawValue) (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
+
         guard let device = AVCaptureDevice.default(for: .video) else {
-            log.error("No video capture device available")
+            log.error("[QRPairing] No video capture device available")
             onPairingFailed?("No camera available")
             return nil
         }
+        log.info("[QRPairing] got capture device: \(device.localizedName), uniqueID=\(device.uniqueID), position=\(device.position.rawValue)")
 
         let session = AVCaptureSession()
         captureSession = session
+        log.info("[QRPairing] created AVCaptureSession: \(String(describing: session))")
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
+            log.info("[QRPairing] created AVCaptureDeviceInput successfully")
             if session.canAddInput(input) {
                 session.addInput(input)
+                log.info("[QRPairing] added input to session")
+            } else {
+                log.error("[QRPairing] session.canAddInput returned false")
             }
         } catch {
-            log.error("Failed to create camera input: \(error)")
+            log.error("[QRPairing] Failed to create camera input: \(error)")
             onPairingFailed?("Camera access denied")
             return nil
         }
@@ -135,18 +214,53 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             session.addOutput(metadataOutput)
             metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
             metadataOutput.metadataObjectTypes = [.qr]
+            log.info("[QRPairing] added metadata output with QR type, delegate set")
+        } else {
+            log.error("[QRPairing] session.canAddOutput returned false for metadata output")
         }
 
-        session.startRunning()
-        log.info("QR scanner started")
+        log.info("[QRPairing] session configuration complete. inputs=\(session.inputs.count), outputs=\(session.outputs.count)")
+        log.info("[QRPairing] session.isRunning=\(session.isRunning) before startRunning dispatch")
+
+        // Register notification observers BEFORE starting the session
+        registerSessionNotificationObservers(for: session)
+
+        // NOTE: Do NOT call startRunning() here. The caller must assign the session
+        // to a preview layer first, then call beginRunning(). Starting here races with
+        // the preview layer assignment which triggers internal beginConfiguration/commitConfiguration.
+        log.info("[QRPairing] startScanning() returning configured (not yet running) session")
         return session
+    }
+
+    /// Start the capture session on a background thread.
+    /// Call AFTER assigning the session to the preview layer.
+    func beginRunning() {
+        guard let session = captureSession else {
+            log.error("[QRPairing] beginRunning() called but captureSession is nil")
+            return
+        }
+        log.info("[QRPairing] beginRunning() dispatching startRunning to background thread")
+        print("[CONSOLE] beginRunning() dispatching startRunning")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            print("[CONSOLE] about to call session.startRunning()")
+            self?.log.info("[QRPairing] about to call session.startRunning() on background thread")
+            session.startRunning()
+            print("[CONSOLE] session.startRunning() returned, isRunning=\(session.isRunning)")
+            self?.log.info("[QRPairing] session.startRunning() returned, session.isRunning=\(session.isRunning)")
+        }
     }
 
     /// Stop the camera session.
     func stopScanning() {
+        log.info("[QRPairing] stopScanning() called, session=\(String(describing: self.captureSession)), isRunning=\(self.captureSession?.isRunning ?? false)")
         captureSession?.stopRunning()
         captureSession = nil
-        log.info("QR scanner stopped")
+        // Remove notification observers
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        notificationObservers.removeAll()
+        log.info("[QRPairing] QR scanner stopped, observers removed")
     }
 
     // MARK: - AVCaptureMetadataOutputObjectsDelegate
@@ -154,31 +268,58 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     func metadataOutput(_ output: AVCaptureMetadataOutput,
                         didOutput metadataObjects: [AVMetadataObject],
                         from connection: AVCaptureConnection) {
+        log.info("[QRPairing] metadataOutput delegate called, metadataObjects.count=\(metadataObjects.count)")
+
+        /* Re-entry guard: prevent multiple completePairing() calls while camera drains */
+        guard !isPairingInProgress else {
+            print("[CONSOLE] metadataOutput: SKIPPING -- isPairingInProgress=true")
+            log.info("[QRPairing] metadataOutput: skipping, pairing already in progress")
+            return
+        }
+
         guard let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               metadataObject.type == .qr,
               let stringValue = metadataObject.stringValue else {
+            log.info("[QRPairing] metadataOutput: no valid QR code in objects")
             return
         }
+
+        log.info("[QRPairing] metadataOutput: QR string detected (length=\(stringValue.count))")
+        print("[CONSOLE] QR string detected, length=\(stringValue.count)")
 
         guard let payload = QRPayload.parse(from: stringValue) else {
-            log.warning("QR code detected but payload format invalid")
+            log.warning("[QRPairing] QR code detected but payload format invalid")
+            print("[CONSOLE] QR payload parse FAILED -- invalid format")
             return
         }
 
-        log.info("QR code parsed: protocol v\(payload.protocolVersion), \(payload.displayWidth)x\(payload.displayHeight)@\(payload.scaleFactor)x")
+        log.info("[QRPairing] QR code parsed: protocol v\(payload.protocolVersion), \(payload.displayWidth)x\(payload.displayHeight)@\(payload.scaleFactor)x")
+        print("[CONSOLE] QR parsed OK: v\(payload.protocolVersion), \(payload.displayWidth)x\(payload.displayHeight)@\(payload.scaleFactor)x, port=\(payload.port)")
+
+        /* Lock out further delegate calls */
+        isPairingInProgress = true
 
         /* Store display geometry for rendering */
         displayWidth = payload.displayWidth
         displayHeight = payload.displayHeight
         scaleFactor = payload.scaleFactor
 
-        /* Stop scanning -- only one pairing at a time */
-        stopScanning()
+        /* Stop scanning -- only one pairing at a time.
+         * Must dispatch off main thread: stopRunning() blocks, and we're inside
+         * the metadataOutput delegate which runs on main queue. Calling stopRunning()
+         * synchronously here deadlocks. */
+        print("[CONSOLE] QR detected, dispatching stopScanning to background")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.stopScanning()
+            print("[CONSOLE] stopScanning completed")
+        }
 
         onQRDetected?(payload)
 
         /* Initiate cert-pinned TLS connection and ECDH key exchange */
+        print("[CONSOLE] starting completePairing")
         completePairing(qrPayload: payload)
+        print("[CONSOLE] completePairing returned (async connection started)")
     }
 
     // MARK: - Pairing Connection
@@ -194,6 +335,7 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     func completePairing(qrPayload: QRPayload) {
         let expectedFingerprint = qrPayload.certFingerprint
 
+        print("[CONSOLE] completePairing: entry, port=\(qrPayload.port), thread=\(Thread.isMainThread ? "main" : "bg")")
         log.info("Starting cert-pinned TLS connection to Mac for pairing")
 
         /* Create TLS parameters with fingerprint-pinned verify block */
@@ -204,15 +346,19 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
             { [weak self] metadata, trust, complete in
                 guard let self = self else {
+                    print("[CONSOLE] TLS verify block: self is nil, rejecting")
                     complete(false)
                     return
                 }
+
+                print("[CONSOLE] TLS verify block: entered, checking server cert fingerprint")
 
                 /* Extract server certificate and compare fingerprint against QR value */
                 let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
                 guard let certChain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate],
                       let serverCert = certChain.first else {
                     self.log.error("Pairing verify: no server certificate")
+                    print("[CONSOLE] TLS verify block: no server cert in chain")
                     complete(false)
                     return
                 }
@@ -224,45 +370,75 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 let trusted = serverFingerprint == expectedFingerprint
                 if trusted {
                     self.log.info("Pairing verify: server cert fingerprint matches QR -- trusted")
+                    print("[CONSOLE] TLS verify block: fingerprint MATCHES -- trusted")
                 } else {
                     self.log.error("Pairing verify: server cert fingerprint MISMATCH -- rejecting (MITM?)")
+                    print("[CONSOLE] TLS verify block: fingerprint MISMATCH -- REJECTING")
                 }
                 complete(trusted)
             }, DispatchQueue.global())
 
         let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
 
-        /* Connect to Mac's input/pairing port */
-        let host = NWEndpoint.Host("::")
+        let host = NWEndpoint.Host(qrPayload.host)
         let port = NWEndpoint.Port(rawValue: qrPayload.port)!
         let endpoint = NWEndpoint.hostPort(host: host, port: port)
+
+        print("[CONSOLE] completePairing: connecting to endpoint=\(endpoint) (host=\(qrPayload.host))")
+        log.info("[QRPairing] completePairing: connecting to \(String(describing: endpoint))")
 
         let connection = NWConnection(to: endpoint, using: tcpParams)
         let pairingQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.pairing")
 
         connection.stateUpdateHandler = { [weak self] state in
             guard let self = self else { return }
+            print("[CONSOLE] pairing connection state: \(state)")
 
             switch state {
             case .ready:
+                print("[CONSOLE] TLS connection ready, starting ECDH exchange")
                 self.log.info("Cert-pinned TLS connection to Mac ready for ECDH")
                 self.performECDHExchange(connection: connection,
                                          macPublicKey: qrPayload.publicKey,
                                          macCertFingerprint: qrPayload.certFingerprint)
 
             case .failed(let error):
+                print("[CONSOLE] pairing TLS connection FAILED: \(error)")
                 self.log.error("Pairing TLS connection failed: \(error)")
+                self.isPairingInProgress = false
                 self.onPairingFailed?("Connection to Mac failed: \(error)")
 
             case .cancelled:
+                print("[CONSOLE] pairing connection cancelled")
                 self.log.info("Pairing connection cancelled")
+                self.isPairingInProgress = false
+
+            case .preparing:
+                print("[CONSOLE] pairing connection state: preparing (waiting for TCP handshake + TLS)")
+
+            case .waiting(let error):
+                print("[CONSOLE] pairing connection state: waiting -- error=\(error)")
 
             default:
-                break
+                print("[CONSOLE] pairing connection state: \(state)")
             }
         }
 
+        print("[CONSOLE] starting pairing connection to \(endpoint)")
         connection.start(queue: pairingQueue)
+        print("[CONSOLE] connection.start() returned (async)")
+
+        /* Timeout: cancel if connection doesn't reach .ready in 10s */
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10.0) { [weak self] in
+            guard let self = self, self.isPairingInProgress else { return }
+            print("[CONSOLE] pairing connection TIMEOUT after 10s")
+            self.log.error("[QRPairing] pairing connection timed out after 10 seconds")
+            connection.cancel()
+            self.isPairingInProgress = false
+            DispatchQueue.main.async {
+                self.onPairingFailed?("Connection to Mac timed out")
+            }
+        }
     }
 
     // MARK: - ECDH Key Exchange
@@ -371,11 +547,13 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
 
+                print("[CONSOLE] PAIRING COMPLETE -- shared secret stored in Keychain")
                 self.log.info("Pairing complete -- shared secret and Mac cert fingerprint stored")
 
                 connection.cancel()
 
                 DispatchQueue.main.async {
+                    print("[CONSOLE] calling onPairingComplete callback on main thread")
                     self.onPairingComplete?()
                 }
             }

@@ -9,6 +9,15 @@
 
 #import <os/log.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreImage/CoreImage.h>
+#import <AppKit/AppKit.h>
+
+/* NSWindow subclass that closes on Escape key */
+@interface QRWindow : NSWindow
+@end
+@implementation QRWindow
+- (void)cancelOperation:(id)sender { [self close]; }
+@end
 
 static os_log_t sLog;
 
@@ -59,6 +68,9 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
 /* Latency probe */
 @property (nonatomic, strong, nullable) NSTimer *latencyProbeTimer;
+
+/* QR code display window */
+@property (nonatomic, strong, nullable) NSWindow *qrWindow;
 
 @end
 
@@ -150,6 +162,11 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     NSDictionary *options = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
     BOOL accessibilityGranted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
 
+    /* Notify UI of initial permission state */
+    if (self.onPermissionStatusChanged) {
+        self.onPermissionStatusChanged(screenGranted, accessibilityGranted);
+    }
+
     if (screenGranted && accessibilityGranted) {
         os_log(sLog, "Both permissions already granted");
         [self onPermissionsGranted];
@@ -174,6 +191,15 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
         BOOL screen = CGPreflightScreenCaptureAccess();
         BOOL accessibility = AXIsProcessTrustedWithOptions(NULL);
 
+        os_log(sLog, "Permission poll: Screen Recording=%{public}s, Accessibility=%{public}s",
+               screen ? "granted" : "pending",
+               accessibility ? "granted" : "pending");
+
+        /* Update the menu bar UI on every poll */
+        if (strongSelf.onPermissionStatusChanged) {
+            strongSelf.onPermissionStatusChanged(screen, accessibility);
+        }
+
         if (screen && accessibility) {
             os_log(sLog, "Both permissions now granted");
             [timer invalidate];
@@ -193,6 +219,8 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
     if (_pairing.isPaired) {
         os_log(sLog, "Already paired -- proceeding to connect");
+        [_qrWindow close];
+        _qrWindow = nil;
         [self transitionTo:SESSION_CONNECTING];
         [self startTransportMonitoring];
     } else {
@@ -205,14 +233,89 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
 - (void)showPairingQR {
     NSString *payload = [_pairing generateQRPayload];
-    if (payload) {
-        os_log(sLog, "QR pairing payload generated (length=%lu)", (unsigned long)payload.length);
-        /* QR display will be implemented in a later plan.
-         * For now, log the payload for development/debugging. */
-        os_log_debug(sLog, "QR payload: %{public}@", payload);
-    } else {
+    if (!payload) {
         os_log_error(sLog, "Failed to generate QR payload -- TLS identity missing?");
+        return;
     }
+
+    os_log(sLog, "QR pairing payload generated (length=%lu)", (unsigned long)payload.length);
+    os_log_debug(sLog, "QR payload: %{public}@", payload);
+
+    /* Generate QR code image using CIFilter */
+    NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    CIFilter *qrFilter = [CIFilter filterWithName:@"CIQRCodeGenerator"];
+    [qrFilter setValue:payloadData forKey:@"inputMessage"];
+    [qrFilter setValue:@"M" forKey:@"inputCorrectionLevel"];
+
+    CIImage *ciImage = qrFilter.outputImage;
+    if (!ciImage) {
+        os_log_error(sLog, "CIQRCodeGenerator produced nil image");
+        return;
+    }
+
+    /* Scale QR to reasonable display size (each module -> 8px) */
+    CGFloat scale = 8.0;
+    CIImage *scaled = [ciImage imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
+    NSCIImageRep *rep = [NSCIImageRep imageRepWithCIImage:scaled];
+    NSImage *qrImage = [[NSImage alloc] initWithSize:rep.size];
+    [qrImage addRepresentation:rep];
+
+    CGFloat imageSize = rep.size.width;
+    CGFloat padding = 32;
+    CGFloat labelHeight = 40;
+    CGFloat windowWidth = imageSize + padding * 2;
+    CGFloat windowHeight = imageSize + padding * 2 + labelHeight;
+
+    /* Close existing QR window if open */
+    [_qrWindow close];
+
+    NSRect frame = NSMakeRect(0, 0, windowWidth, windowHeight);
+    _qrWindow = [[QRWindow alloc] initWithContentRect:frame
+                                            styleMask:(NSWindowStyleMaskTitled |
+                                                       NSWindowStyleMaskClosable)
+                                              backing:NSBackingStoreBuffered
+                                                defer:NO];
+    _qrWindow.title = @"Scan with iPad";
+    _qrWindow.level = NSFloatingWindowLevel;
+    _qrWindow.releasedWhenClosed = NO;
+
+    NSView *contentView = _qrWindow.contentView;
+    contentView.wantsLayer = YES;
+    contentView.layer.backgroundColor = NSColor.whiteColor.CGColor;
+
+    /* QR image view */
+    NSImageView *imageView = [[NSImageView alloc] initWithFrame:
+        NSMakeRect(padding, labelHeight + padding / 2, imageSize, imageSize)];
+    imageView.image = qrImage;
+    imageView.imageScaling = NSImageScaleNone;
+    [contentView addSubview:imageView];
+
+    /* Label */
+    NSTextField *label = [NSTextField labelWithString:@"Scan this QR code with the RemoteDesktop iPad app"];
+    label.frame = NSMakeRect(0, 8, windowWidth, 24);
+    label.alignment = NSTextAlignmentCenter;
+    label.font = [NSFont systemFontOfSize:13];
+    label.textColor = NSColor.secondaryLabelColor;
+    [contentView addSubview:label];
+
+    [_qrWindow center];
+    [_qrWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+
+    /* Wire pairing completion callback */
+    __weak SessionManager *weakSelf = self;
+    _pairing.onPairingComplete = ^{
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        os_log(sLog, "Pairing complete -- closing QR window and starting transport");
+        [strongSelf.qrWindow close];
+        strongSelf.qrWindow = nil;
+        [strongSelf transitionTo:SESSION_CONNECTING];
+        [strongSelf startTransportMonitoring];
+    };
+
+    /* Start TLS listener so iPad can connect after scanning */
+    [_pairing startPairingListener];
 }
 
 - (void)resetPairing {
