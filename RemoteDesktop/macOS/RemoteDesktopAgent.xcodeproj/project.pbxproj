@@ -25,6 +25,7 @@
 		A1000032000000000000000A /* USBNetworkTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000032000000000000000F /* USBNetworkTransport.m */; };
 		A1000034000000000000000A /* WirelessTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000034000000000000000F /* WirelessTransport.m */; };
 		A1000040000000000000000A /* HEVCEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000040000000000000000F /* HEVCEncoder.m */; };
+		A1000050000000000000000A /* PairingManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000050000000000000000F /* PairingManager.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +60,8 @@
 		A1000035000000000000000F /* WirelessTransport.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WirelessTransport.h; sourceTree = "<group>"; };
 		A1000040000000000000000F /* HEVCEncoder.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HEVCEncoder.m; sourceTree = "<group>"; };
 		A1000041000000000000000F /* HEVCEncoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HEVCEncoder.h; sourceTree = "<group>"; };
+		A1000050000000000000000F /* PairingManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PairingManager.m; sourceTree = "<group>"; };
+		A1000051000000000000000F /* PairingManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PairingManager.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,9 +102,19 @@
 				A10000E7000000000000000G /* Capture */,
 				A10000E9000000000000000G /* Encode */,
 				A10000E8000000000000000G /* Transport */,
+				A10000EA000000000000000G /* Pairing */,
 				A10000E5000000000000000G /* Resources */,
 			);
 			path = .;
+			sourceTree = "<group>";
+		};
+		A10000EA000000000000000G /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				A1000051000000000000000F /* PairingManager.h */,
+				A1000050000000000000000F /* PairingManager.m */,
+			);
+			path = Pairing;
 			sourceTree = "<group>";
 		};
 		A10000E8000000000000000G /* Transport */ = {
@@ -261,6 +274,7 @@
 				A1000032000000000000000A /* USBNetworkTransport.m in Sources */,
 				A1000034000000000000000A /* WirelessTransport.m in Sources */,
 				A1000040000000000000000A /* HEVCEncoder.m in Sources */,
+				A1000050000000000000000A /* PairingManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -384,6 +398,7 @@
 					"$(SRCROOT)/Capture",
 					"$(SRCROOT)/Encode",
 					"$(SRCROOT)/Transport",
+					"$(SRCROOT)/Pairing",
 				);
 				INFOPLIST_FILE = Resources/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
@@ -404,6 +419,7 @@
 					"$(SRCROOT)/Capture",
 					"$(SRCROOT)/Encode",
 					"$(SRCROOT)/Transport",
+					"$(SRCROOT)/Pairing",
 				);
 				INFOPLIST_FILE = Resources/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";

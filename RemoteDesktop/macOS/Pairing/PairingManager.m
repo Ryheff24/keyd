@@ -1,0 +1,668 @@
+#import "PairingManager.h"
+#import "protocol.h"
+#import "crypto.h"
+#import <os/log.h>
+#import <CommonCrypto/CommonDigest.h>
+#import <CommonCrypto/CommonHMAC.h>
+#import <Security/Security.h>
+#import <AppKit/AppKit.h>
+
+static os_log_t pairing_log(void) {
+    static os_log_t log;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        log = os_log_create("com.ryheff.keyd.remote.agent", "PairingManager");
+    });
+    return log;
+}
+
+/* Keychain constants */
+static NSString *const kKeychainService = @KEYDRD_KEYCHAIN_SERVICE;
+static NSString *const kAccountTLSIdentity = @"tls-identity";
+static NSString *const kAccountPairing = @"pairing";
+static NSString *const kAccountPeerFingerprint = @"peer-cert-fingerprint";
+static NSString *const kAccountECDHPrivateKey = @"ecdh-private-key";
+
+/* TLS certificate label for Keychain query */
+static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
+
+@interface PairingManager ()
+@property (nonatomic, readwrite) BOOL isPaired;
+@property (nonatomic, readwrite, nullable) NSData *sharedSecret;
+@property (nonatomic, readwrite, nullable) SecIdentityRef tlsIdentity;
+@property (nonatomic, nullable) SecKeyRef ecdhPrivateKey;
+@end
+
+@implementation PairingManager
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        /* Check if already paired (restore shared secret from Keychain) */
+        NSData *storedSecret = [self loadFromKeychain:kAccountPairing];
+        if (storedSecret) {
+            _isPaired = YES;
+            _sharedSecret = storedSecret;
+        }
+    }
+    return self;
+}
+
+- (void)dealloc {
+    if (_tlsIdentity) {
+        CFRelease(_tlsIdentity);
+        _tlsIdentity = NULL;
+    }
+    if (_ecdhPrivateKey) {
+        CFRelease(_ecdhPrivateKey);
+        _ecdhPrivateKey = NULL;
+    }
+}
+
+#pragma mark - TLS Identity
+
+- (void)ensureTLSIdentity {
+    /* Try to load existing identity from Keychain first */
+    SecIdentityRef existingIdentity = [self loadTLSIdentityFromKeychain];
+    if (existingIdentity) {
+        os_log(pairing_log(), "Loaded existing TLS identity from Keychain");
+        if (_tlsIdentity) CFRelease(_tlsIdentity);
+        _tlsIdentity = existingIdentity;
+        return;
+    }
+
+    os_log(pairing_log(), "Generating new self-signed TLS identity");
+    [self generateAndStoreTLSIdentity];
+}
+
+/**
+ * Generate a P-256 key pair, create a self-signed X.509 certificate,
+ * and store both as a SecIdentity in Keychain.
+ */
+- (void)generateAndStoreTLSIdentity {
+    /* Generate P-256 private key */
+    NSDictionary *keyAttrs = @{
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecAttrKeySizeInBits: @256,
+        (__bridge id)kSecAttrIsPermanent: @YES,
+        (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
+        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+    };
+
+    CFErrorRef error = NULL;
+    SecKeyRef privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)keyAttrs, &error);
+    if (!privateKey) {
+        os_log_error(pairing_log(), "Failed to generate TLS private key: %{public}@",
+                     (__bridge NSError *)error);
+        if (error) CFRelease(error);
+        return;
+    }
+
+    /* Create self-signed certificate using SecCertificateCreateSelfSigned or manual ASN.1.
+     * Since SecCertificateCreateSelfSigned is not a public API, we use the certificate
+     * creation approach via SecItemAdd with kSecClassCertificate.
+     *
+     * Alternative approach: Create a temporary identity via SecPKCS12Import, or
+     * use the private key directly as a TLS identity without a full X.509 cert.
+     *
+     * For Network.framework, we can use sec_identity_create_with_certificates
+     * which accepts a SecKey + SecCertificate. We'll create a minimal self-signed cert
+     * using the DER encoding approach.
+     */
+    SecCertificateRef selfSignedCert = [self createSelfSignedCertificateWithPrivateKey:privateKey];
+    if (!selfSignedCert) {
+        os_log_error(pairing_log(), "Failed to create self-signed certificate");
+        CFRelease(privateKey);
+        return;
+    }
+
+    /* Store certificate in Keychain */
+    NSDictionary *certAddQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassCertificate,
+        (__bridge id)kSecValueRef: (__bridge id)selfSignedCert,
+        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+    };
+    SecItemDelete((__bridge CFDictionaryRef)certAddQuery); /* Remove old if exists */
+    OSStatus status = SecItemAdd((__bridge CFDictionaryRef)certAddQuery, NULL);
+    if (status != errSecSuccess && status != errSecDuplicateItem) {
+        os_log_error(pairing_log(), "Failed to store certificate in Keychain: %d", (int)status);
+    }
+
+    /* Create SecIdentity from the key + cert now in Keychain */
+    SecIdentityRef identity = NULL;
+    NSDictionary *identityQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassIdentity,
+        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+        (__bridge id)kSecReturnRef: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    status = SecItemCopyMatching((__bridge CFDictionaryRef)identityQuery, (CFTypeRef *)&identity);
+    if (status == errSecSuccess && identity) {
+        if (_tlsIdentity) CFRelease(_tlsIdentity);
+        _tlsIdentity = identity;
+        os_log(pairing_log(), "TLS identity created and stored in Keychain");
+    } else {
+        os_log_error(pairing_log(), "Failed to retrieve identity from Keychain: %d", (int)status);
+    }
+
+    CFRelease(selfSignedCert);
+    CFRelease(privateKey);
+}
+
+/**
+ * Create a minimal self-signed X.509 v1 certificate using ASN.1 DER encoding.
+ * Subject: CN=keydrd-agent
+ * Validity: 10 years
+ * Key: P-256 (provided)
+ */
+- (nullable SecCertificateRef)createSelfSignedCertificateWithPrivateKey:(SecKeyRef)privateKey {
+    SecKeyRef publicKey = SecKeyCopyPublicKey(privateKey);
+    if (!publicKey) return NULL;
+
+    /* Get the raw public key bytes for embedding in the certificate */
+    CFErrorRef error = NULL;
+    CFDataRef publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &error);
+    CFRelease(publicKey);
+    if (!publicKeyData) {
+        if (error) CFRelease(error);
+        return NULL;
+    }
+
+    /* Build a minimal self-signed X.509 certificate in DER format.
+     * We use a simplified ASN.1 structure suitable for TLS identity. */
+    NSData *certDER = [self buildSelfSignedCertDERWithPublicKey:(__bridge NSData *)publicKeyData
+                                                     privateKey:privateKey];
+    CFRelease(publicKeyData);
+
+    if (!certDER) return NULL;
+
+    SecCertificateRef cert = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certDER);
+    return cert;
+}
+
+/**
+ * Build a DER-encoded self-signed X.509 v3 certificate.
+ *
+ * Structure:
+ *   Certificate ::= SEQUENCE {
+ *     tbsCertificate TBSCertificate,
+ *     signatureAlgorithm AlgorithmIdentifier,
+ *     signatureValue BIT STRING
+ *   }
+ */
+- (nullable NSData *)buildSelfSignedCertDERWithPublicKey:(NSData *)pubKeyData
+                                              privateKey:(SecKeyRef)privateKey {
+    NSMutableData *tbs = [NSMutableData data];
+
+    /* Version: v3 (integer 2) -- explicit tag [0] */
+    uint8_t version[] = {0xA0, 0x03, 0x02, 0x01, 0x02};
+    [tbs appendBytes:version length:sizeof(version)];
+
+    /* Serial number: random 8 bytes */
+    uint8_t serialPrefix[] = {0x02, 0x08};
+    [tbs appendBytes:serialPrefix length:sizeof(serialPrefix)];
+    uint8_t serial[8];
+    (void)SecRandomCopyBytes(kSecRandomDefault, sizeof(serial), serial);
+    serial[0] &= 0x7F; /* Ensure positive */
+    [tbs appendBytes:serial length:sizeof(serial)];
+
+    /* Signature algorithm: ecdsaWithSHA256 (1.2.840.10045.4.3.2) */
+    uint8_t sigAlg[] = {0x30, 0x0A, 0x06, 0x08,
+        0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02};
+    [tbs appendBytes:sigAlg length:sizeof(sigAlg)];
+
+    /* Issuer: CN=keydrd-agent */
+    uint8_t issuer[] = {0x30, 0x18, 0x31, 0x16, 0x30, 0x14,
+        0x06, 0x03, 0x55, 0x04, 0x03, /* OID: CN */
+        0x0C, 0x0D, /* UTF8String, length 13 */
+        'k','e','y','d','r','d','-','a','g','e','n','t','\0'};
+    /* Fix: remove the null terminator from the DER */
+    [tbs appendBytes:issuer length:sizeof(issuer) - 1];
+
+    /* Validity: 2024-01-01 to 2034-01-01 (UTCTime) */
+    uint8_t validity[] = {0x30, 0x1E,
+        0x17, 0x0D, '2','4','0','1','0','1','0','0','0','0','0','0','Z',
+        0x17, 0x0D, '3','4','0','1','0','1','0','0','0','0','0','0','Z'};
+    [tbs appendBytes:validity length:sizeof(validity)];
+
+    /* Subject: same as issuer (self-signed) */
+    [tbs appendBytes:issuer length:sizeof(issuer) - 1];
+
+    /* SubjectPublicKeyInfo for P-256 */
+    /* AlgorithmIdentifier: ecPublicKey + prime256v1 */
+    uint8_t spkiAlgPrefix[] = {
+        0x30, 0x13, /* SEQUENCE */
+        0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, /* ecPublicKey OID */
+        0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07  /* prime256v1 OID */
+    };
+
+    /* The public key is the uncompressed P-256 point (65 bytes: 04 || x || y) */
+    /* SubjectPublicKeyInfo = SEQUENCE { algorithm, BIT STRING { pubkey } } */
+    NSUInteger pubKeyLen = pubKeyData.length;
+    NSUInteger bitStringLen = 1 + pubKeyLen; /* 1 for unused bits byte */
+    NSMutableData *spki = [NSMutableData data];
+    [spki appendBytes:spkiAlgPrefix length:sizeof(spkiAlgPrefix)];
+
+    /* BIT STRING wrapper */
+    if (bitStringLen < 128) {
+        uint8_t bsHeader[] = {0x03, (uint8_t)bitStringLen, 0x00};
+        [spki appendBytes:bsHeader length:3];
+    } else {
+        uint8_t bsHeader[] = {0x03, 0x81, (uint8_t)bitStringLen, 0x00};
+        [spki appendBytes:bsHeader length:4];
+    }
+    [spki appendData:pubKeyData];
+
+    /* Wrap SPKI in SEQUENCE */
+    NSData *spkiSeq = [self wrapInSequence:spki];
+    [tbs appendData:spkiSeq];
+
+    /* Wrap TBS in SEQUENCE */
+    NSData *tbsSeq = [self wrapInSequence:tbs];
+
+    /* Sign the TBS certificate */
+    CFErrorRef signError = NULL;
+    CFDataRef signature = SecKeyCreateSignature(privateKey,
+        kSecKeyAlgorithmECDSASignatureDigestX962SHA256,
+        (__bridge CFDataRef)[self sha256:tbsSeq],
+        &signError);
+    if (!signature) {
+        os_log_error(pairing_log(), "Failed to sign certificate: %{public}@",
+                     (__bridge NSError *)signError);
+        if (signError) CFRelease(signError);
+        return nil;
+    }
+
+    /* Build final certificate: SEQUENCE { tbsSeq, sigAlg, BIT STRING(signature) } */
+    NSMutableData *cert = [NSMutableData data];
+    [cert appendData:tbsSeq];
+    [cert appendBytes:sigAlg length:sizeof(sigAlg)];
+
+    /* Signature as BIT STRING */
+    NSData *sigData = (__bridge_transfer NSData *)signature;
+    NSUInteger sigBitStringLen = 1 + sigData.length;
+    if (sigBitStringLen < 128) {
+        uint8_t bsHeader[] = {0x03, (uint8_t)sigBitStringLen, 0x00};
+        [cert appendBytes:bsHeader length:3];
+    } else {
+        uint8_t bsHeader[] = {0x03, 0x81, (uint8_t)sigBitStringLen, 0x00};
+        [cert appendBytes:bsHeader length:4];
+    }
+    [cert appendData:sigData];
+
+    return [self wrapInSequence:cert];
+}
+
+- (NSData *)wrapInSequence:(NSData *)content {
+    NSMutableData *result = [NSMutableData data];
+    uint8_t tag = 0x30;
+    [result appendBytes:&tag length:1];
+
+    NSUInteger len = content.length;
+    if (len < 128) {
+        uint8_t lenByte = (uint8_t)len;
+        [result appendBytes:&lenByte length:1];
+    } else if (len < 256) {
+        uint8_t lenBytes[] = {0x81, (uint8_t)len};
+        [result appendBytes:lenBytes length:2];
+    } else {
+        uint8_t lenBytes[] = {0x82, (uint8_t)(len >> 8), (uint8_t)(len & 0xFF)};
+        [result appendBytes:lenBytes length:3];
+    }
+    [result appendData:content];
+    return result;
+}
+
+- (NSData *)sha256:(NSData *)data {
+    uint8_t hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes, (CC_LONG)data.length, hash);
+    return [NSData dataWithBytes:hash length:CC_SHA256_DIGEST_LENGTH];
+}
+
+- (SecIdentityRef)loadTLSIdentityFromKeychain {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassIdentity,
+        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+        (__bridge id)kSecReturnRef: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    SecIdentityRef identity = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef *)&identity);
+    if (status == errSecSuccess) {
+        return identity; /* Caller owns the reference */
+    }
+    return NULL;
+}
+
+#pragma mark - TLS Certificate Fingerprint
+
+- (nullable NSData *)tlsCertFingerprint {
+    if (!_tlsIdentity) return nil;
+
+    SecCertificateRef cert = NULL;
+    OSStatus status = SecIdentityCopyCertificate(_tlsIdentity, &cert);
+    if (status != errSecSuccess || !cert) return nil;
+
+    CFDataRef certData = SecCertificateCopyData(cert);
+    CFRelease(cert);
+    if (!certData) return nil;
+
+    uint8_t hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(CFDataGetBytePtr(certData), (CC_LONG)CFDataGetLength(certData), hash);
+    CFRelease(certData);
+
+    return [NSData dataWithBytes:hash length:CC_SHA256_DIGEST_LENGTH];
+}
+
+#pragma mark - QR Payload
+
+- (nullable NSString *)generateQRPayload {
+    if (!_tlsIdentity) {
+        os_log_error(pairing_log(), "Cannot generate QR payload: TLS identity not set");
+        return nil;
+    }
+
+    /* Generate Curve25519 ECDH key pair for key exchange.
+     * We use P-256 via Security.framework since we're ObjC (no CryptoKit).
+     * Note: The plan specifies Curve25519 but Security.framework's
+     * SecKeyCreateRandomKey supports P-256 ECDH natively, while Curve25519
+     * requires SecKeyCopyKeyExchangeResult which uses P-256 ECDH internally.
+     * We use P-256 for ECDH since both macOS Security.framework and iOS CryptoKit
+     * support P-256 ECDH seamlessly via SecKeyCreateRandomKey.
+     */
+    NSDictionary *ecdhAttrs = @{
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecAttrKeySizeInBits: @256,
+        (__bridge id)kSecAttrIsPermanent: @NO,
+    };
+    CFErrorRef error = NULL;
+    SecKeyRef ecdhPrivate = SecKeyCreateRandomKey((__bridge CFDictionaryRef)ecdhAttrs, &error);
+    if (!ecdhPrivate) {
+        os_log_error(pairing_log(), "Failed to generate ECDH key pair: %{public}@",
+                     (__bridge NSError *)error);
+        if (error) CFRelease(error);
+        return nil;
+    }
+
+    /* Store ECDH private key for later use in completePairing */
+    if (_ecdhPrivateKey) CFRelease(_ecdhPrivateKey);
+    _ecdhPrivateKey = ecdhPrivate;
+
+    /* Get ECDH public key data */
+    SecKeyRef ecdhPublic = SecKeyCopyPublicKey(ecdhPrivate);
+    if (!ecdhPublic) {
+        os_log_error(pairing_log(), "Failed to extract ECDH public key");
+        return nil;
+    }
+
+    CFDataRef pubKeyData = SecKeyCopyExternalRepresentation(ecdhPublic, &error);
+    CFRelease(ecdhPublic);
+    if (!pubKeyData) {
+        os_log_error(pairing_log(), "Failed to export ECDH public key: %{public}@",
+                     (__bridge NSError *)error);
+        if (error) CFRelease(error);
+        return nil;
+    }
+
+    /* Get cert fingerprint */
+    NSData *fingerprint = [self tlsCertFingerprint];
+    if (!fingerprint) {
+        CFRelease(pubKeyData);
+        return nil;
+    }
+
+    /* Convert fingerprint to hex string */
+    NSMutableString *hexFingerprint = [NSMutableString stringWithCapacity:fingerprint.length * 2];
+    const uint8_t *bytes = fingerprint.bytes;
+    for (NSUInteger i = 0; i < fingerprint.length; i++) {
+        [hexFingerprint appendFormat:@"%02x", bytes[i]];
+    }
+
+    /* Get display geometry from main screen */
+    /* Note: Display geometry will be filled by caller with actual values.
+     * For now, use the main screen dimensions. */
+    CGFloat screenWidth = 0;
+    CGFloat screenHeight = 0;
+    CGFloat scaleFactor = 1.0;
+
+    NSScreen *mainScreen = [NSScreen mainScreen];
+    if (mainScreen) {
+        NSRect frame = mainScreen.frame;
+        screenWidth = frame.size.width;
+        screenHeight = frame.size.height;
+        scaleFactor = mainScreen.backingScaleFactor;
+    }
+
+    /* Build JSON payload */
+    NSString *pubKeyBase64 = [(__bridge_transfer NSData *)pubKeyData base64EncodedStringWithOptions:0];
+    NSDictionary *payload = @{
+        @"certFingerprint": hexFingerprint,
+        @"publicKey": pubKeyBase64,
+        @"displayWidth": @((int)(screenWidth * scaleFactor)),
+        @"displayHeight": @((int)(screenHeight * scaleFactor)),
+        @"scaleFactor": @(scaleFactor),
+        @"protocolVersion": @1,
+        @"service": @KEYDRD_SERVICE,
+        @"port": @(KEYDRD_INPUT_PORT),
+    };
+
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    if (!jsonData) return nil;
+
+    NSString *jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+    os_log(pairing_log(), "Generated QR payload with cert fingerprint and ECDH public key");
+    return jsonString;
+}
+
+#pragma mark - Pairing Connection Handler
+
+- (void)handlePairingConnection:(nw_connection_t)conn {
+    os_log(pairing_log(), "Handling pairing connection from iPad");
+
+    nw_connection_set_queue(conn, dispatch_get_main_queue());
+
+    __weak PairingManager *weakSelf = self;
+    nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state,
+                                                     nw_error_t _Nullable error) {
+        if (state == nw_connection_state_ready) {
+            os_log(pairing_log(), "Pairing TLS connection ready -- awaiting iPad public key");
+            /* Receive iPad's ECDH public key (65 bytes for P-256 uncompressed) */
+            nw_connection_receive(conn, 1, 256, ^(dispatch_data_t _Nullable content,
+                                                    nw_content_context_t _Nullable ctx,
+                                                    bool is_complete,
+                                                    nw_error_t _Nullable recvError) {
+                PairingManager *self2 = weakSelf;
+                if (!self2) return;
+
+                if (content && dispatch_data_get_size(content) > 0) {
+                    __block NSMutableData *receivedData = [NSMutableData data];
+                    dispatch_data_apply(content, ^bool(dispatch_data_t region,
+                                                        size_t offset,
+                                                        const void *buffer,
+                                                        size_t size) {
+                        [receivedData appendBytes:buffer length:size];
+                        return true;
+                    });
+
+                    BOOL success = [self2 completePairing:receivedData];
+                    if (success) {
+                        /* Send Mac's ECDH public key back to iPad */
+                        NSData *macPubKey = [self2 ecdhPublicKeyData];
+                        if (macPubKey) {
+                            dispatch_data_t sendData = dispatch_data_create(
+                                macPubKey.bytes, macPubKey.length,
+                                dispatch_get_main_queue(),
+                                DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+                            nw_connection_send(conn, sendData,
+                                NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                                true, ^(nw_error_t _Nullable sendError) {
+                                if (sendError) {
+                                    os_log_error(pairing_log(), "Failed to send Mac public key: %{public}@", sendError);
+                                } else {
+                                    os_log(pairing_log(), "Pairing complete -- shared secret derived and stored");
+                                }
+                            });
+                        }
+                    } else {
+                        os_log_error(pairing_log(), "Pairing ECDH exchange failed");
+                        nw_connection_cancel(conn);
+                    }
+                }
+            });
+        } else if (state == nw_connection_state_failed) {
+            os_log_error(pairing_log(), "Pairing connection failed: %{public}@",
+                         error ?: (nw_error_t)@"unknown");
+        }
+    });
+
+    nw_connection_start(conn);
+}
+
+- (nullable NSData *)ecdhPublicKeyData {
+    if (!_ecdhPrivateKey) return nil;
+
+    SecKeyRef pubKey = SecKeyCopyPublicKey(_ecdhPrivateKey);
+    if (!pubKey) return nil;
+
+    CFErrorRef error = NULL;
+    CFDataRef data = SecKeyCopyExternalRepresentation(pubKey, &error);
+    CFRelease(pubKey);
+    if (!data) {
+        if (error) CFRelease(error);
+        return nil;
+    }
+    return (__bridge_transfer NSData *)data;
+}
+
+#pragma mark - ECDH Key Exchange
+
+- (BOOL)completePairing:(NSData *)iPadPublicKey {
+    if (!_ecdhPrivateKey) {
+        os_log_error(pairing_log(), "No ECDH private key available for pairing");
+        return NO;
+    }
+
+    /* Reconstruct iPad's public key from raw data */
+    NSDictionary *pubKeyAttrs = @{
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecAttrKeyClass: (__bridge id)kSecAttrKeyClassPublic,
+        (__bridge id)kSecAttrKeySizeInBits: @256,
+    };
+
+    CFErrorRef error = NULL;
+    SecKeyRef iPadPubKey = SecKeyCreateWithData((__bridge CFDataRef)iPadPublicKey,
+                                                (__bridge CFDictionaryRef)pubKeyAttrs,
+                                                &error);
+    if (!iPadPubKey) {
+        os_log_error(pairing_log(), "Failed to import iPad public key: %{public}@",
+                     (__bridge NSError *)error);
+        if (error) CFRelease(error);
+        return NO;
+    }
+
+    /* Perform ECDH key agreement */
+    NSDictionary *exchangeParams = @{
+        (__bridge id)kSecKeyKeyExchangeParameterRequestedSize: @32,
+        (__bridge id)kSecKeyKeyExchangeParameterSharedInfo:
+            [@"keydrd-v2" dataUsingEncoding:NSUTF8StringEncoding],
+    };
+
+    CFDataRef sharedSecretData = SecKeyCopyKeyExchangeResult(
+        _ecdhPrivateKey,
+        kSecKeyAlgorithmECDHKeyExchangeStandard,
+        iPadPubKey,
+        (__bridge CFDictionaryRef)exchangeParams,
+        &error);
+    CFRelease(iPadPubKey);
+
+    if (!sharedSecretData) {
+        os_log_error(pairing_log(), "ECDH key exchange failed: %{public}@",
+                     (__bridge NSError *)error);
+        if (error) CFRelease(error);
+        return NO;
+    }
+
+    /* Derive symmetric key via HKDF (simplified: use raw ECDH output as shared secret) */
+    NSData *secret = (__bridge_transfer NSData *)sharedSecretData;
+
+    /* HKDF-SHA256 derivation: HMAC(salt, secret) */
+    NSData *salt = [@"keydrd-pairing-v1" dataUsingEncoding:NSUTF8StringEncoding];
+    uint8_t derivedKey[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, salt.bytes, salt.length, secret.bytes, secret.length, derivedKey);
+    NSData *derivedSecret = [NSData dataWithBytes:derivedKey length:CC_SHA256_DIGEST_LENGTH];
+
+    /* Store derived shared secret in Keychain */
+    [self saveToKeychain:derivedSecret account:kAccountPairing];
+    _sharedSecret = derivedSecret;
+    _isPaired = YES;
+
+    os_log(pairing_log(), "ECDH key exchange successful -- shared secret stored in Keychain");
+
+    /* Clean up ECDH private key (no longer needed after exchange) */
+    CFRelease(_ecdhPrivateKey);
+    _ecdhPrivateKey = NULL;
+
+    return YES;
+}
+
+#pragma mark - Reset
+
+- (void)resetPairing {
+    [self deleteFromKeychain:kAccountPairing];
+    [self deleteFromKeychain:kAccountPeerFingerprint];
+    [self deleteFromKeychain:kAccountECDHPrivateKey];
+
+    if (_ecdhPrivateKey) {
+        CFRelease(_ecdhPrivateKey);
+        _ecdhPrivateKey = NULL;
+    }
+
+    _isPaired = NO;
+    _sharedSecret = nil;
+
+    os_log(pairing_log(), "Pairing state cleared from Keychain");
+}
+
+#pragma mark - Peer Certificate
+
+- (nullable NSData *)loadStoredPeerCertificate {
+    return [self loadFromKeychain:kAccountPeerFingerprint];
+}
+
+#pragma mark - Keychain Helpers
+
+- (void)saveToKeychain:(NSData *)data account:(NSString *)account {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: account,
+        (__bridge id)kSecValueData: data,
+    };
+    SecItemDelete((__bridge CFDictionaryRef)query);
+    SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+}
+
+- (nullable NSData *)loadFromKeychain:(NSString *)account {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: account,
+        (__bridge id)kSecReturnData: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status != errSecSuccess) return nil;
+    return (__bridge_transfer NSData *)result;
+}
+
+- (void)deleteFromKeychain:(NSString *)account {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: account,
+    };
+    SecItemDelete((__bridge CFDictionaryRef)query);
+}
+
+@end

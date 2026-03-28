@@ -25,6 +25,7 @@
 		B2000031000000000000000A /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000031000000000000000F /* MetalRenderer.swift */; };
 		B2000040000000000000000A /* HEVCDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000040000000000000000F /* HEVCDecoder.swift */; };
 		B2000041000000000000000A /* LZ4Decompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000041000000000000000F /* LZ4Decompressor.swift */; };
+		B2000050000000000000000A /* QRPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000050000000000000000F /* QRPairing.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +54,7 @@
 		B2000031000000000000000F /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 		B2000040000000000000000F /* HEVCDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCDecoder.swift; sourceTree = "<group>"; };
 		B2000041000000000000000F /* LZ4Decompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LZ4Decompressor.swift; sourceTree = "<group>"; };
+		B2000050000000000000000F /* QRPairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRPairing.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,9 +92,18 @@
 				B20000E9000000000000000G /* Decode */,
 				B20000E8000000000000000G /* Render */,
 				B20000E7000000000000000G /* Transport */,
+				B20000EA000000000000000G /* Pairing */,
 				B20000E6000000000000000G /* Resources */,
 			);
 			path = .;
+			sourceTree = "<group>";
+		};
+		B20000EA000000000000000G /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				B2000050000000000000000F /* QRPairing.swift */,
+			);
+			path = Pairing;
 			sourceTree = "<group>";
 		};
 		B20000E9000000000000000G /* Decode */ = {
@@ -249,6 +260,7 @@
 				B2000031000000000000000A /* MetalRenderer.swift in Sources */,
 				B2000040000000000000000A /* HEVCDecoder.swift in Sources */,
 				B2000041000000000000000A /* LZ4Decompressor.swift in Sources */,
+				B2000050000000000000000A /* QRPairing.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
