@@ -90,7 +90,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrIsPermanent: @YES,
         (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
 
     CFErrorRef error = NULL;
@@ -125,7 +125,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecClass: (__bridge id)kSecClassCertificate,
         (__bridge id)kSecValueRef: (__bridge id)selfSignedCert,
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
     SecItemDelete((__bridge CFDictionaryRef)certAddQuery); /* Remove old if exists */
     OSStatus status = SecItemAdd((__bridge CFDictionaryRef)certAddQuery, NULL);
@@ -140,7 +140,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
         (__bridge id)kSecReturnRef: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
     status = SecItemCopyMatching((__bridge CFDictionaryRef)identityQuery, (CFTypeRef *)&identity);
     if (status == errSecSuccess && identity) {
@@ -331,7 +331,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
         (__bridge id)kSecReturnRef: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
     SecIdentityRef identity = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef *)&identity);
@@ -661,7 +661,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecValueData: data,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
     SecItemAdd((__bridge CFDictionaryRef)query, NULL);
@@ -674,7 +674,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecReturnData: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
     CFTypeRef result = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -687,7 +687,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: account,
-        (__bridge id)kSecUseDataProtectionKeychain: @YES,
+
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
 }
