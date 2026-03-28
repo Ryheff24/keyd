@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Remote Desktop
 status: executing
-stopped_at: Completed 02-06-PLAN.md
-last_updated: "2026-03-28T17:10:11.097Z"
-last_activity: 2026-03-28 — Completed plan 02-06 (Metal renderer)
+stopped_at: Completed 02-05-PLAN.md
+last_updated: "2026-03-28T17:10:32Z"
+last_activity: 2026-03-28 — Completed plan 02-05 (HEVC codecs + LZ4 decompressor)
 progress:
   total_phases: 6
   completed_phases: 2
@@ -47,7 +47,7 @@ Progress: [████████░░] 81%
 | 02-02 | 6min | 2 tasks | 5 files |
 | 02-03 | 10min | 2 tasks | 12 files |
 | 02-04 | 4min | 2 tasks | 4 files |
-| 02-05 | 4min | 2 tasks | 5 files |
+| 02-05 | 6min | 2 tasks | 6 files |
 | 02-06 | 4min | 2 tasks | 3 files |
 
 *Updated after each plan completion*
@@ -76,6 +76,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Listener port set via nw_parameters_set_local_endpoint -- nw_listener_set_port does not exist
 - [Phase 02]: ObjC blocks use explicit class type (ClassName *weakSelf) not typeof(self) in C11 mode
 - [Phase 02]: No UIKit import needed in MetalRenderer -- all types come from Metal/MetalKit/QuartzCore
+- [Phase 02]: HEVC encoder uses EnableLowLatencyRateControl in encoder spec dict at session creation time
+- [Phase 02]: HEVCDecoder parses both Annex-B start codes and 4-byte length-prefixed NAL units for VPS/SPS/PPS
+- [Phase 02]: LZ4Decompressor updates keyframe reference after both keyframe and delta decode for correct delta base
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-28T17:08:39Z
-Stopped at: Completed 02-06-PLAN.md
+Last session: 2026-03-28T17:10:32Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None

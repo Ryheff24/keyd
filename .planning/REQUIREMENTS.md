@@ -36,8 +36,8 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [x] **RD-COMP-03**: Keyframes sent every 1-2 seconds or when delta exceeds 60% of keyframe size
 - [x] **RD-COMP-04**: Delta frame reference buffer uses double-buffer with `pthread_rwlock_t` to prevent XOR race condition
 - [x] **RD-COMP-05**: CMSampleBuffer retain held for entire duration of LZ4 compress (prevents IOSurface recycling corruption)
-- [ ] **RD-COMP-06**: Wireless mode uses VideoToolbox HEVC hardware encoder (`VTCompressionSession`, realtime, low-latency profile with `AverageBitRate` — NOT `ConstantBitRate`)
-- [ ] **RD-COMP-07**: Eco mode uses HEVC at reduced resolution (1080p or 720p) and framerate (30Hz), even over wired connection
+- [x] **RD-COMP-06**: Wireless mode uses VideoToolbox HEVC hardware encoder (`VTCompressionSession`, realtime, low-latency profile with `AverageBitRate` — NOT `ConstantBitRate`)
+- [x] **RD-COMP-07**: Eco mode uses HEVC at reduced resolution (1080p or 720p) and framerate (30Hz), even over wired connection
 - [x] **RD-COMP-08**: LZ4 compress completes in <1ms per 4K BGRA frame
 - [x] **RD-COMP-09**: Mode switching (LZ4 ↔ HEVC) triggered automatically by transport change or manually by user via HUD
 
@@ -46,7 +46,7 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [x] **RD-REND-01**: iPad renders frames via Metal (`MTKView` with `CAMetalDisplayLink` render loop, not built-in timer)
 - [x] **RD-REND-02**: Rendering supports P3 wide color gamut (iPad Pro display)
 - [x] **RD-REND-03**: Rendering supports ProMotion 120Hz (`CADisableMinimumFrameDuration = YES` in Info.plist, triple buffering with 3 drawables)
-- [ ] **RD-REND-04**: LZ4 decompression + delta apply + Metal render completes in <3ms per frame on iPad
+- [x] **RD-REND-04**: LZ4 decompression + delta apply + Metal render completes in <3ms per frame on iPad
 - [ ] **RD-REND-05**: Cursor position rendered as Metal overlay on iPad (Mac sends cursor position as lightweight TCP event)
 
 ### Input
@@ -194,14 +194,14 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-COMP-03 | Phase 2 | Complete |
 | RD-COMP-04 | Phase 2 | Complete |
 | RD-COMP-05 | Phase 2 | Complete |
-| RD-COMP-06 | Phase 2 | Pending |
-| RD-COMP-07 | Phase 2 | Pending |
+| RD-COMP-06 | Phase 2 | Complete |
+| RD-COMP-07 | Phase 2 | Complete |
 | RD-COMP-08 | Phase 2 | Complete |
 | RD-COMP-09 | Phase 2 | Complete |
 | RD-REND-01 | Phase 2 | Complete |
 | RD-REND-02 | Phase 2 | Complete |
 | RD-REND-03 | Phase 2 | Complete |
-| RD-REND-04 | Phase 2 | Pending |
+| RD-REND-04 | Phase 2 | Complete |
 | RD-SEC-01 | Phase 2 | Pending |
 | RD-SEC-02 | Phase 2 | Pending |
 | RD-SEC-03 | Phase 2 | Pending |
