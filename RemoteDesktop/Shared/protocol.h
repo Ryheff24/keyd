@@ -36,13 +36,16 @@ _Static_assert(sizeof(MediaFrameHeader) == 24,
                "MediaFrameHeader must be exactly 24 bytes");
 
 /* ---- InputEventHeader type values ---- */
-#define KEYDRD_INPUT_MOUSE_MOVE    0x01
-#define KEYDRD_INPUT_CLICK         0x02
-#define KEYDRD_INPUT_SCROLL        0x03
-#define KEYDRD_INPUT_KEY           0x10
-#define KEYDRD_INPUT_MODE_CHANGE   0x20
-#define KEYDRD_INPUT_KEEPALIVE     0x30
-#define KEYDRD_INPUT_LATENCY_PROBE 0xFF
+#define KEYDRD_INPUT_MOUSE_MOVE           0x01
+#define KEYDRD_INPUT_CLICK                0x02
+#define KEYDRD_INPUT_SCROLL               0x03
+#define KEYDRD_INPUT_KEY                  0x10
+#define KEYDRD_INPUT_MODE_CHANGE          0x20
+#define KEYDRD_INPUT_RES_MATCH_REQUEST    0x21  /* iPad -> Mac: match iPad resolution */
+#define KEYDRD_INPUT_RES_MATCH_RESPONSE   0x22  /* Mac -> iPad: resolution match result */
+#define KEYDRD_INPUT_GEOMETRY_UPDATE      0x23  /* Mac -> iPad: new display geometry */
+#define KEYDRD_INPUT_KEEPALIVE            0x30
+#define KEYDRD_INPUT_LATENCY_PROBE        0xFF
 
 /* ---- InputEventHeader (9 bytes, packed) ---- */
 typedef struct __attribute__((packed)) {
@@ -73,3 +76,29 @@ typedef struct __attribute__((packed)) {
     uint8_t  agent_version;  /* protocol version for compatibility */
     uint32_t reserved;       /* future use, set to 0 */
 } SessionHandshakeMessage;
+
+/* ---- Resolution Match Request Payload (sent after InputEventHeader type=0x21) ---- */
+typedef struct __attribute__((packed)) {
+    uint32_t ipad_width;     /* iPad screen width in pixels */
+    uint32_t ipad_height;    /* iPad screen height in pixels */
+} ResolutionMatchPayload;
+
+/* ---- Resolution Match Response Payload (sent after InputEventHeader type=0x22) ---- */
+#define KEYDRD_RES_MATCH_OK      0x00
+#define KEYDRD_RES_MATCH_FAILED  0x01
+#define KEYDRD_RES_MATCH_NO_MODE 0x02
+
+typedef struct __attribute__((packed)) {
+    uint8_t  result;         /* KEYDRD_RES_MATCH_* */
+    uint32_t new_width;      /* new display width (0 if failed) */
+    uint32_t new_height;     /* new display height (0 if failed) */
+    float    new_scale;      /* new display scale (0 if failed) */
+} ResolutionMatchResponse;
+
+/* ---- Geometry Update Payload (sent after InputEventHeader type=0x23) ---- */
+typedef struct __attribute__((packed)) {
+    uint32_t display_width;  /* new display width in pixels */
+    uint32_t display_height; /* new display height in pixels */
+    float    scale_factor;   /* new display scale */
+    float    aspect_ratio;   /* width / height */
+} GeometryUpdatePayload;

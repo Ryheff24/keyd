@@ -73,6 +73,12 @@ typedef NS_ENUM(NSInteger, SessionState) {
  */
 - (void)resetPairing;
 
+/**
+ * Handle a received input event from iPad (via TCP).
+ * Routes resolution match requests, eco mode changes, latency probes, etc.
+ */
+- (void)handleReceivedInputEvent:(const void *)data length:(size_t)length;
+
 @end
 
 NS_ASSUME_NONNULL_END
