@@ -90,6 +90,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrIsPermanent: @YES,
         (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
 
     CFErrorRef error = NULL;
@@ -124,6 +125,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecClass: (__bridge id)kSecClassCertificate,
         (__bridge id)kSecValueRef: (__bridge id)selfSignedCert,
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     SecItemDelete((__bridge CFDictionaryRef)certAddQuery); /* Remove old if exists */
     OSStatus status = SecItemAdd((__bridge CFDictionaryRef)certAddQuery, NULL);
@@ -138,6 +140,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
         (__bridge id)kSecReturnRef: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     status = SecItemCopyMatching((__bridge CFDictionaryRef)identityQuery, (CFTypeRef *)&identity);
     if (status == errSecSuccess && identity) {
@@ -328,6 +331,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
         (__bridge id)kSecReturnRef: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     SecIdentityRef identity = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef *)&identity);
@@ -471,7 +475,8 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 - (void)handlePairingConnection:(nw_connection_t)conn {
     os_log(pairing_log(), "handlePairingConnection: ENTERED -- connection from iPad received");
 
-    nw_connection_set_queue(conn, dispatch_get_main_queue());
+    dispatch_queue_t pairingQueue = dispatch_queue_create("com.keydrd.pairing", DISPATCH_QUEUE_SERIAL);
+    nw_connection_set_queue(conn, pairingQueue);
 
     __weak PairingManager *weakSelf = self;
     nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state,
@@ -656,6 +661,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecValueData: data,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
     SecItemAdd((__bridge CFDictionaryRef)query, NULL);
@@ -668,6 +674,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecReturnData: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     CFTypeRef result = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -680,6 +687,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: account,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
 }
