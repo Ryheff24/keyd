@@ -1,0 +1,78 @@
+#pragma once
+
+#import <Foundation/Foundation.h>
+#import "TransportFSM.h"
+
+@class ScreenCapture;
+@class HEVCEncoder;
+@class USBNetworkTransport;
+@class WirelessTransport;
+@class PairingManager;
+
+NS_ASSUME_NONNULL_BEGIN
+
+/* ---- Session States ---- */
+typedef NS_ENUM(NSInteger, SessionState) {
+    SESSION_AWAITING_PERMISSIONS,
+    SESSION_AWAITING_PAIRING,
+    SESSION_CONNECTING,
+    SESSION_STREAMING,
+    SESSION_RECONNECTING,
+    SESSION_STOPPED
+};
+
+/**
+ * SessionManager orchestrates the entire remote desktop session lifecycle:
+ *   permissions -> pairing -> connecting -> streaming
+ *
+ * Owns all pipeline components (capture, compress, encode, transport, pairing).
+ * Feeds transport events through the FSM and switches encode mode accordingly.
+ */
+@interface SessionManager : NSObject
+
+/** Current session state. */
+@property (nonatomic, assign, readonly) SessionState sessionState;
+
+/** Current transport state from the FSM. */
+@property (nonatomic, assign, readonly) TransportState transportState;
+
+/** Whether running in test mode (skips permissions, no real capture). */
+@property (nonatomic, assign, readonly) BOOL testMode;
+
+/* ---- Callbacks to StatusBarController ---- */
+@property (nonatomic, copy, nullable) void (^onTransportStateChanged)(TransportState state);
+@property (nonatomic, copy, nullable) void (^onModeChanged)(BOOL isEco);
+@property (nonatomic, copy, nullable) void (^onResolutionChanged)(uint32_t width, uint32_t height);
+@property (nonatomic, copy, nullable) void (^onSessionStateChanged)(SessionState state);
+
+- (instancetype)initWithTestMode:(BOOL)testMode;
+
+/**
+ * Start the session lifecycle.
+ * Checks permissions, then proceeds to pairing/connecting/streaming.
+ */
+- (void)start;
+
+/**
+ * Stop all streaming and tear down transport connections.
+ */
+- (void)stop;
+
+/**
+ * Handle a transport event — feeds through the FSM and executes effects.
+ */
+- (void)handleTransportEvent:(TransportEvent)event;
+
+/**
+ * Generate and display QR code for iPad pairing.
+ */
+- (void)showPairingQR;
+
+/**
+ * Reset pairing state (delete from Keychain).
+ */
+- (void)resetPairing;
+
+@end
+
+NS_ASSUME_NONNULL_END
