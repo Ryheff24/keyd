@@ -1,169 +1,187 @@
-# Requirements: keyd
+# Requirements: keyd-rd
 
-**Defined:** 2026-02-27
-**Core Value:** The iPhone becomes a full-featured keyboard that controls macOS text entry in real time over a direct USB/AWDL link — no Bluetooth, no infrastructure Wi-Fi, no internet required.
+**Defined:** 2026-03-28
+**Core Value:** The iPad becomes a zero-latency remote desktop for macOS over a direct USB-C cable — full resolution, full input (mouse + keyboard), hardware-accelerated, with near-zero Mac CPU cost.
 
-## v1 Requirements
+## v2.0 Requirements
+
+Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Transport
 
-- [x] **TRANS-01**: iOS app connects to macOS agent over USB via usbmuxd TCP tunnel
-- [x] **TRANS-02**: iOS app connects to macOS agent over AWDL via Bonjour service discovery (`_keyd._tcp`)
-- [x] **TRANS-03**: Connection automatically falls back from USB to AWDL when USB cable is unplugged
-- [x] **TRANS-04**: AWDL transport is pre-warmed while USB is active (no delay on unplug fallback)
-- [ ] **TRANS-05**: Transport protocol is bidirectional (iOS→Mac and Mac→iOS message types defined in Phase 1, even if Mac→iOS unused until Phase 2)
-- [ ] **TRANS-06**: Wire protocol uses length-prefixed binary framing (4-byte big-endian length + payload)
-- [x] **TRANS-07**: USB connection retries with backoff on failure (device takes 2–5s to become available after plug-in)
+- [ ] **RD-TRANS-01**: iPad connects to Mac over USB NCM network interface (not usbmuxd) detected via NWPathMonitor `.wiredEthernet`
+- [ ] **RD-TRANS-02**: iPad connects to Mac over infrastructure Wi-Fi (same network) as first wireless fallback
+- [ ] **RD-TRANS-03**: iPad connects to Mac over AWDL as last-resort wireless fallback when no shared Wi-Fi network exists
+- [ ] **RD-TRANS-04**: Connection automatically falls back from USB NCM to Wi-Fi/AWDL when cable is unplugged, within 2 seconds
+- [ ] **RD-TRANS-05**: Connection automatically promotes from Wi-Fi/AWDL back to USB NCM when cable is re-plugged, within 2 seconds
+- [ ] **RD-TRANS-06**: Media stream uses UDP datagrams over the active transport
+- [ ] **RD-TRANS-07**: Input stream uses a separate TCP connection over the active transport (reliable, ordered)
+- [ ] **RD-TRANS-08**: Wire protocol uses binary framing (24-byte media header, 9-byte input header, packed C structs)
+- [ ] **RD-TRANS-09**: Both devices bind to USB NCM interface explicitly via `NWParameters.requiredInterface` with the specific `NWInterface` object (never hardcode interface name)
+- [ ] **RD-TRANS-10**: Bonjour service `_keydrd._tcp` used for wireless discovery (distinct from keyd's `_keyd._tcp`)
 
-Phase 1 transport is implemented, but 01-05 device validation is still open for AWDL fallback timing and reconnect reliability on hardware.
+### Screen Capture
 
-### Keyboard
+- [ ] **RD-CAP-01**: macOS agent captures full display via ScreenCaptureKit (`SCStream`) at Retina resolution
+- [ ] **RD-CAP-02**: Capture supports up to 120fps (`minimumFrameInterval = CMTimeMake(1, 120)`)
+- [ ] **RD-CAP-03**: Capture delivers IOSurface-backed CMSampleBuffer directly to compress pipeline (zero-copy: `IOSurfaceLock` → LZ4 compress → `IOSurfaceUnlock`)
+- [ ] **RD-CAP-04**: Capture CPU usage <1% in steady state
+- [ ] **RD-CAP-05**: Frame delivery watchdog detects silent capture stop (0 frames for >2s) and surfaces re-authorization prompt in menu bar (Sequoia monthly re-auth handling)
+- [ ] **RD-CAP-06**: Pixel format is `kCVPixelFormatType_32BGRA` throughout pipeline (matches Metal texture upload, no color conversion)
 
-- [x] **KEY-01**: User can type characters into the currently focused macOS text field from the iOS keyboard
-- [x] **KEY-02**: User can send Backspace, Return, Escape, and Tab from iOS (Tab may come from the hotkey panel when the stock keyboard does not expose it)
-- [x] **KEY-03**: iOS keyboard displays as standard full-width keyboard layout at bottom of screen
-- [x] **KEY-04**: iOS app is a foreground UIViewController-based app (NOT a UIInputViewController keyboard extension)
-- [x] **KEY-05**: iOS screen does not auto-lock while keyboard is connected
+### Compression
 
-### Shortcuts
+- [ ] **RD-COMP-01**: Wired mode uses vendored LZ4 v1.10.0 block API (not Apple Compression.framework) on full keyframes
+- [ ] **RD-COMP-02**: Wired mode uses XOR delta frames between keyframes, LZ4-compressed
+- [ ] **RD-COMP-03**: Keyframes sent every 1-2 seconds or when delta exceeds 60% of keyframe size
+- [ ] **RD-COMP-04**: Delta frame reference buffer uses double-buffer with `pthread_rwlock_t` to prevent XOR race condition
+- [ ] **RD-COMP-05**: CMSampleBuffer retain held for entire duration of LZ4 compress (prevents IOSurface recycling corruption)
+- [ ] **RD-COMP-06**: Wireless mode uses VideoToolbox HEVC hardware encoder (`VTCompressionSession`, realtime, low-latency profile with `AverageBitRate` — NOT `ConstantBitRate`)
+- [ ] **RD-COMP-07**: Eco mode uses HEVC at reduced resolution (1080p or 720p) and framerate (30Hz), even over wired connection
+- [ ] **RD-COMP-08**: LZ4 compress completes in <1ms per 4K BGRA frame
+- [ ] **RD-COMP-09**: Mode switching (LZ4 ↔ HEVC) triggered automatically by transport change or manually by user via HUD
 
-- [x] **SHORT-01**: User can send Command-C (copy) from iOS hotkey panel
-- [x] **SHORT-02**: User can send Command-X (cut) from iOS hotkey panel
-- [x] **SHORT-03**: User can send Command-V (paste) from iOS hotkey panel
-- [x] **SHORT-04**: User can send Command-Z (undo) from iOS hotkey panel
-- [x] **SHORT-05**: User can send Command-Shift-Z (redo) from iOS hotkey panel
-- [x] **SHORT-06**: User can send Command-A (select all) from iOS hotkey panel
-- [x] **SHORT-07**: User can send Command-Q (quit) from iOS hotkey panel
-- [x] **SHORT-08**: User can send Option-Delete (delete word left) from iOS hotkey panel
-- [x] **SHORT-09**: User can send Command-Delete (line-delete / line-clear behavior, app-dependent) from iOS hotkey panel
-- [x] **SHORT-10**: User can send Command-Shift-4 (screenshot) from iOS hotkey panel
-- [x] **SHORT-11**: Modifier key-up events are always sent, even if connection drops mid-sequence (prevents stuck Cmd key)
+### Rendering
 
-### Editing (Phase 2)
+- [ ] **RD-REND-01**: iPad renders frames via Metal (`MTKView` with `CAMetalDisplayLink` render loop, not built-in timer)
+- [ ] **RD-REND-02**: Rendering supports P3 wide color gamut (iPad Pro display)
+- [ ] **RD-REND-03**: Rendering supports ProMotion 120Hz (`CADisableMinimumFrameDuration = YES` in Info.plist, triple buffering with 3 drawables)
+- [ ] **RD-REND-04**: LZ4 decompression + delta apply + Metal render completes in <3ms per frame on iPad
+- [ ] **RD-REND-05**: Cursor position rendered as Metal overlay on iPad (Mac sends cursor position as lightweight TCP event)
 
-- [ ] **EDIT-01**: User can move cursor left/right/up/down from iOS controls; cursor moves in frontmost macOS field
-- [ ] **EDIT-02**: User can select text in the macOS field using iOS selection controls
-- [ ] **EDIT-03**: User can delete selected text in the macOS field from iOS
-- [ ] **EDIT-04**: User can move cursor to an arbitrary position in the macOS field and type or delete there
-- [ ] **EDIT-05**: iOS predictive text (QuickType) suggestions are context-aware based on current macOS field content
-- [ ] **EDIT-06**: iOS app shows a real-time text preview mirroring the content and selection state of the focused macOS field
-- [ ] **EDIT-07**: iOS cut/copy/paste editing menu operations are reflected in the macOS focused field
+### Input
 
-### App Awareness (Phase 3)
+- [ ] **RD-INPUT-01**: Touch gestures on iPad translate to mouse move events on Mac (direct touch mode: tap = click at absolute position)
+- [ ] **RD-INPUT-02**: Single tap translates to left click; two-finger tap or long press (~0.5s) translates to right click
+- [ ] **RD-INPUT-03**: Two-finger pan translates to scroll events (vertical + horizontal)
+- [ ] **RD-INPUT-04**: Single tap + drag translates to left-button held + mouse move
+- [ ] **RD-INPUT-05**: Physical keyboard connected to iPad passes keystrokes to Mac via CGEvent
+- [ ] **RD-INPUT-06**: On-screen iPad keyboard passes keystrokes to Mac (UITextInput with autocorrect suppressed, raw keystrokes forwarded)
+- [ ] **RD-INPUT-07**: Input events polled at 120Hz minimum, batched and sent every ~4ms; clicks and key events never dropped
+- [ ] **RD-INPUT-08**: Mac injects all input via CGEvent (mouse move, click, scroll, key up/down)
+- [ ] **RD-INPUT-09**: iPad touch coordinates map to absolute Mac screen coordinates (affine transform accounting for Retina scaling + aspect ratio letterboxing; Mac display geometry exchanged in session handshake)
+- [ ] **RD-INPUT-10**: Pinch-to-zoom adjusts viewport/resolution on iPad (Metal scale transform, does not affect Mac resolution)
 
-- [ ] **APP-01**: macOS agent detects the frontmost application and sends its bundle ID to the iOS app
-- [ ] **APP-02**: iOS hotkey panel displays app-specific shortcuts when Safari is frontmost
-- [ ] **APP-03**: iOS hotkey panel displays app-specific shortcuts when Firefox is frontmost
-- [ ] **APP-04**: iOS hotkey panel displays app-specific shortcuts when Messages is frontmost
-- [ ] **APP-05**: iOS hotkey panel falls back to default shortcut set for unrecognized apps
-- [ ] **APP-06**: iOS hotkey panel animates transition (fade/slide) when switching between app shortcut sets
+### Audio
 
-### macOS Agent
+- [ ] **RD-AUDIO-01**: macOS agent captures system audio via CoreAudio Tap API (`AudioHardwareCreateProcessTap`, macOS 14.2+)
+- [ ] **RD-AUDIO-02**: Audio encoded as AAC-LC (128 kbps stereo, 44.1 kHz) via `AudioConverter` — not Opus
+- [ ] **RD-AUDIO-03**: Encoded audio streamed to iPad over UDP on a separate channel from video
+- [ ] **RD-AUDIO-04**: iPad decodes and plays audio via `AVAudioEngine` with <30ms audio latency
+- [ ] **RD-AUDIO-05**: Audio stream synchronized with video stream (timestamp-based, not frame-locked)
 
-- [x] **AGENT-01**: macOS helper registers as a Login Item (SMAppService) and starts at login
-- [x] **AGENT-02**: macOS helper displays connection status (USB / AWDL / disconnected) in the menu bar
-- [x] **AGENT-03**: macOS helper checks for Accessibility permission at every launch and surfaces a menu-driven recovery path if missing
-- [x] **AGENT-04**: macOS helper checks for Input Monitoring permission at every launch and surfaces a menu-driven recovery path if missing
-- [x] **AGENT-05**: macOS helper is built WITHOUT App Sandbox (required for CGEventPost and AX operations)
-- [x] **AGENT-06**: macOS helper detects secure input mode (password fields) and sends "keyboard paused" indicator to iOS
+### Clipboard
 
-### UX / Design
+- [ ] **RD-CLIP-01**: Mac → iPad clipboard sync: macOS agent monitors `NSPasteboard.general` change count, sends text content to iPad over TCP control channel
+- [ ] **RD-CLIP-02**: iPad → Mac clipboard sync: iPad monitors `UIPasteboard.changedNotification`, sends text content to Mac over TCP control channel
+- [ ] **RD-CLIP-03**: Clipboard sync is text-only for v2.0 (images and RTF deferred to v2.1)
+- [ ] **RD-CLIP-04**: iOS "App pasted from clipboard" privacy banner is expected behavior and documented in first-run UX
 
-- [x] **UX-01**: iOS app uses Liquid Glass (Glassmorphism) visual style throughout, using SwiftUI `.ultraThinMaterial` as foundation
-- [x] **UX-02**: iOS app displays connection status indicator (USB / AWDL / disconnected) with color coding, always visible
-- [x] **UX-03**: iOS keyboard layout: standard keyboard on bottom, macOS hotkey row above it (Phase 1)
-- [ ] **UX-04**: iOS keyboard layout in Phase 2: adds predictive text bar above keyboard and text preview box above that
+### Security
 
-## v2 Requirements
+- [ ] **RD-SEC-01**: TCP channels encrypted with TLS 1.3 via Network.framework
+- [ ] **RD-SEC-02**: UDP media channel encrypted with DTLS via Network.framework
+- [ ] **RD-SEC-03**: Initial pairing via QR code (Mac displays, iPad scans) with ECDH key exchange (reuse keyd v1.0 pattern with new bundle IDs)
+- [ ] **RD-SEC-04**: Certificate pinning after initial pairing (reject unknown certs)
+- [ ] **RD-SEC-05**: No cleartext mode — encryption mandatory even over USB
 
-### Extended Transport
+### Performance
 
-- **TRANS-EXT-01**: Connection indicator shows latency/signal quality
-- **TRANS-EXT-02**: Manual reconnect button when disconnected
+- [ ] **RD-PERF-01**: Glass-to-glass latency <8ms over wired (LZ4+delta path)
+- [ ] **RD-PERF-02**: Glass-to-glass latency <25ms over wireless (HEVC path)
+- [ ] **RD-PERF-03**: Mac agent CPU usage <3% during wired streaming
+- [ ] **RD-PERF-04**: Mac agent RSS <50 MB during wired streaming
+- [ ] **RD-PERF-05**: Mac agent CPU usage <1% in eco mode
+- [ ] **RD-PERF-06**: Mac agent RSS <20 MB in eco mode
+- [ ] **RD-PERF-07**: Mac agent uses 0% GPU in all modes (no GPU work on Mac side)
+- [ ] **RD-PERF-08**: Input-to-screen latency <12ms (input event sent → result visible on iPad)
 
-### Extended Shortcuts
+### Agent
 
-- **SHORT-EXT-01**: User can define custom shortcut buttons beyond the built-in set
-- **SHORT-EXT-02**: Option-Command-Escape (Force Quit) shortcut
+- [ ] **RD-AGENT-01**: macOS agent runs as menu bar app (no dock icon, `LSUIElement` / accessory activation policy)
+- [ ] **RD-AGENT-02**: macOS agent written in C + Objective-C only (no Swift runtime; target RSS <5 MB baseline)
+- [ ] **RD-AGENT-03**: macOS agent starts at login via SMAppService
+- [ ] **RD-AGENT-04**: macOS agent prompts for Screen Recording permission via system alert; handles Sequoia re-auth with frame watchdog
+- [ ] **RD-AGENT-05**: macOS agent prompts for Accessibility permission (for CGEvent injection)
+- [ ] **RD-AGENT-06**: Menu bar shows connection state (USB/Wi-Fi/AWDL/disconnected) and current mode (quality/eco)
+- [ ] **RD-AGENT-07**: macOS minimum version: 14.2 (required for CoreAudio Tap API)
 
-### Extended App Awareness
+### iPad App
 
-- **APP-EXT-01**: User can customize the shortcut set for each app
-- **APP-EXT-02**: App awareness expanded to additional apps beyond Safari, Firefox, Messages
+- [ ] **RD-APP-01**: iPad app displays remote Mac screen at full Retina resolution with P3 color
+- [ ] **RD-APP-02**: iPad app shows connection status HUD (transport mode icon, latency ms, FPS counter; togglable)
+- [ ] **RD-APP-03**: iPad app provides mode toggle in HUD (full quality / eco)
+- [ ] **RD-APP-04**: iPad app supports landscape and portrait orientation (letterbox or scale-to-fit)
+- [ ] **RD-APP-05**: iPad app supports iPad Pro 11" and 13" screen sizes
+- [ ] **RD-APP-06**: iPadOS minimum version: 17.0 (required for `CAMetalDisplayLink`)
+- [ ] **RD-APP-07**: iPad system edge swipes are NOT intercepted (respected as system gestures)
+
+### Testing
+
+- [ ] **RD-TEST-01**: Protocol-level unit tests: known bytes in → framed → deframed → bitwise verify (pure C, no device needed)
+- [ ] **RD-TEST-02**: Compression roundtrip tests: synthetic frames → LZ4 compress → decompress → bitwise identical; delta XOR → apply → identical (pure C)
+- [ ] **RD-TEST-03**: Throughput benchmarks: measure actual Gbps over each transport (USB NCM, Wi-Fi), report P50/P99
+- [ ] **RD-TEST-04**: Latency benchmarks: timestamped ping-pong over each transport, report P50/P99/P999 RTT
+- [ ] **RD-TEST-05**: Loopback tests run on single machine (`lo0`) for CI — no hardware required
+- [ ] **RD-TEST-06**: E2E device tests: full pipeline (capture → compress → send → recv → decompress → render) with deterministic synthetic frames across 2 physical devices
+- [ ] **RD-TEST-07**: Failover tests: kill USB mid-stream → verify seamless Wi-Fi takeover within 2 seconds
+- [ ] **RD-TEST-08**: Input roundtrip tests: send known input → verify CGEvent injection → verify ack
+- [ ] **RD-TEST-09**: Both devices use same PRNG seed for deterministic payloads — each side knows exactly what the other should send and receive
+- [ ] **RD-TEST-10**: Benchmark results saved to JSON for regression tracking across runs
+
+## v2.1 Requirements
+
+Deferred to next milestone. Tracked but not in current roadmap.
+
+### Input (deferred)
+
+- **RD-INPUT-11**: Trackpad input mode (relative mouse movement as alternative to direct touch, toggle via HUD button)
+
+### Display (deferred)
+
+- **RD-DISP-01**: Multi-monitor support — user selects which Mac display to capture
+- **RD-DISP-02**: Pinch-to-zoom viewport with persistent zoom level
+
+### Clipboard (deferred)
+
+- **RD-CLIP-05**: Clipboard sync supports images (PNG, JPEG)
+- **RD-CLIP-06**: Clipboard sync supports RTF formatted text
+
+### Audio (deferred)
+
+- **RD-AUDIO-06**: Audio routing from iPad microphone to Mac input
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Bluetooth transport | Explicitly excluded by design constraint |
-| Infrastructure Wi-Fi transport | Explicitly excluded by design constraint |
-| App Store distribution | Personal use only; self-signed |
-| Terminal / coding workflow support | Explicitly excluded (non-goal) |
-| Mouse / trackpad control | Not in scope; keyboard only |
-| Multi-Mac support | Personal use; single Mac target |
-| Cloud sync / server-side components | Local-only by design |
-| UIInputViewController keyboard extension | Must be regular app — extensions cannot initiate network connections |
-| AX text value writes in production | Silently fails in Safari/Firefox; CGEvent is the only reliable write path |
-| Multipeer Connectivity framework | Cannot enforce AWDL-only; opaque fallback to Bluetooth |
+| Bluetooth transport | 3 Mbps insufficient for 4K screen streaming |
+| Cloud relay / internet remote access | Different product category; requires server infrastructure |
+| App Store distribution | Personal use, self-signed only |
+| File drag-and-drop | Requires virtual filesystem protocol; clipboard covers most transfer needs |
+| iPad C client rewrite | Separate milestone (v2.2) after Swift V1 is proven |
+| HEVC over wired non-eco | Adds latency vs LZ4; HEVC reserved for wireless and eco |
+| On-screen virtual joystick | Obstructs remote screen; direct touch is the correct iPad approach |
+| Gesture customization panel | Industry-standard mapping is well-established; settings complexity for no gain |
+| Virtual audio driver | CoreAudio Tap API eliminates the need for system extensions |
+| Opus audio codec | iPadOS lacks native Opus playback; AAC-LC has native hw encode/decode |
+| WebRTC | Cloud-oriented framework; unnecessary complexity for direct cable connection |
+| usbmuxd for video transport | TCP-only, tunneled; USB NCM gives native UDP at full link speed |
+| JSON in data path | ~50x slower than binary framing for the hot path |
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
+Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRANS-01 | Phase 1 | Complete |
-| TRANS-02 | Phase 1 | Complete |
-| TRANS-03 | Phase 1 | Complete |
-| TRANS-04 | Phase 1 | Complete |
-| TRANS-05 | Phase 1 | Pending |
-| TRANS-06 | Phase 1 | Pending |
-| TRANS-07 | Phase 1 | Complete |
-| KEY-01 | Phase 1 | Complete |
-| KEY-02 | Phase 1 | Complete |
-| KEY-03 | Phase 1 | Complete |
-| KEY-04 | Phase 1 | Complete |
-| KEY-05 | Phase 1 | Complete |
-| SHORT-01 | Phase 1 | Complete |
-| SHORT-02 | Phase 1 | Complete |
-| SHORT-03 | Phase 1 | Complete |
-| SHORT-04 | Phase 1 | Complete |
-| SHORT-05 | Phase 1 | Complete |
-| SHORT-06 | Phase 1 | Complete |
-| SHORT-07 | Phase 1 | Complete |
-| SHORT-08 | Phase 1 | Complete |
-| SHORT-09 | Phase 1 | Complete |
-| SHORT-10 | Phase 1 | Complete |
-| SHORT-11 | Phase 1 | Complete |
-| AGENT-01 | Phase 1 | Complete |
-| AGENT-02 | Phase 1 | Complete |
-| AGENT-03 | Phase 1 | Complete |
-| AGENT-04 | Phase 1 | Complete |
-| AGENT-05 | Phase 1 | Complete |
-| AGENT-06 | Phase 1 | Complete |
-| UX-01 | Phase 1 | Complete |
-| UX-02 | Phase 1 | Complete |
-| UX-03 | Phase 1 | Complete |
-| EDIT-01 | Phase 2 | Pending |
-| EDIT-02 | Phase 2 | Pending |
-| EDIT-03 | Phase 2 | Pending |
-| EDIT-04 | Phase 2 | Pending |
-| EDIT-05 | Phase 2 | Pending |
-| EDIT-06 | Phase 2 | Pending |
-| EDIT-07 | Phase 2 | Pending |
-| UX-04 | Phase 2 | Pending |
-| APP-01 | Phase 3 | Pending |
-| APP-02 | Phase 3 | Pending |
-| APP-03 | Phase 3 | Pending |
-| APP-04 | Phase 3 | Pending |
-| APP-05 | Phase 3 | Pending |
-| APP-06 | Phase 3 | Pending |
+| (populated by roadmapper) | | |
 
 **Coverage:**
-- v1 requirements: 44 total
-- Mapped to phases: 44
-- Unmapped: 0 ✓
+- v2.0 requirements: 62 total
+- Mapped to phases: 0
+- Unmapped: 62
 
 ---
-*Requirements defined: 2026-02-27*
-*Last updated: 2026-02-28 after Phase 1 doc reconciliation*
+*Requirements defined: 2026-03-28*
+*Last updated: 2026-03-28 after research synthesis*
