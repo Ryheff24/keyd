@@ -78,7 +78,7 @@ Plans:
   3. User re-plugs the cable and the connection promotes back to USB NCM within 2 seconds
   4. Mac agent CPU usage stays below 3% during wired streaming and the agent uses 0% GPU at all times
   5. Glass-to-glass latency is below 8ms over wired (LZ4+delta) and below 25ms over wireless (HEVC)
-**Plans**: 10 plans
+**Plans**: 11 plans
 
 Plans:
 - [ ] 02-01-PLAN.md — Project scaffold (Xcode projects, shared C headers, LZ4, delta module)
@@ -91,6 +91,7 @@ Plans:
 - [ ] 02-08-PLAN.md — iPad app shell: ContentView, HUD overlay, session flow
 - [ ] 02-09-PLAN.md — End-to-end wiring: session handshake, frame pipeline, failover integration
 - [ ] 02-10-PLAN.md — End-to-end verification on physical devices
+- [ ] 02-11-PLAN.md — Gap closure: fix QR pairing (add Mac IP to payload, pairing TLS listener)
 
 ### Phase 3: Input
 **Goal**: The iPad is a fully functional remote input device — touch controls the Mac cursor (tap, scroll, right-click, drag), physical and on-screen keyboards send keystrokes to the Mac, the cursor position is visible as an overlay on the iPad, and eco mode lets the Mac stay below 1% CPU for LLM-concurrent use
@@ -134,7 +135,7 @@ v2.0 phases execute in numeric order: 2 → 3 → 4 → 5
 |-------|-----------|----------------|--------|-----------|
 | 1. Transport and Core Keyboard | v1.0 | 7/7 | Complete | 2026-03-01 |
 | 1.1. Connected Integration Test Suite | v1.0 | 4/4 | Complete | 2026-03-01 |
-| 2. Foundation | 6/10 | In Progress|  | - |
+| 2. Foundation | 6/11 | In Progress|  | - |
 | 3. Input | v2.0 | 0/TBD | Not started | - |
 | 4. Testing and Wi-Fi Quality | v2.0 | 0/TBD | Not started | - |
 | 5. Audio and Clipboard | v2.0 | 0/TBD | Not started | - |
