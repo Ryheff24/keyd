@@ -9,16 +9,16 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Transport
 
-- [ ] **RD-TRANS-01**: iPad connects to Mac over USB NCM network interface (not usbmuxd) detected via NWPathMonitor `.wiredEthernet`
-- [ ] **RD-TRANS-02**: iPad connects to Mac over infrastructure Wi-Fi (same network) as first wireless fallback
-- [ ] **RD-TRANS-03**: iPad connects to Mac over AWDL as last-resort wireless fallback when no shared Wi-Fi network exists
-- [ ] **RD-TRANS-04**: Connection automatically falls back from USB NCM to Wi-Fi/AWDL when cable is unplugged, within 2 seconds
-- [ ] **RD-TRANS-05**: Connection automatically promotes from Wi-Fi/AWDL back to USB NCM when cable is re-plugged, within 2 seconds
-- [ ] **RD-TRANS-06**: Media stream uses UDP datagrams over the active transport
-- [ ] **RD-TRANS-07**: Input stream uses a separate TCP connection over the active transport (reliable, ordered)
+- [x] **RD-TRANS-01**: iPad connects to Mac over USB NCM network interface (not usbmuxd) detected via NWPathMonitor `.wiredEthernet`
+- [x] **RD-TRANS-02**: iPad connects to Mac over infrastructure Wi-Fi (same network) as first wireless fallback
+- [x] **RD-TRANS-03**: iPad connects to Mac over AWDL as last-resort wireless fallback when no shared Wi-Fi network exists
+- [x] **RD-TRANS-04**: Connection automatically falls back from USB NCM to Wi-Fi/AWDL when cable is unplugged, within 2 seconds
+- [x] **RD-TRANS-05**: Connection automatically promotes from Wi-Fi/AWDL back to USB NCM when cable is re-plugged, within 2 seconds
+- [x] **RD-TRANS-06**: Media stream uses UDP datagrams over the active transport
+- [x] **RD-TRANS-07**: Input stream uses a separate TCP connection over the active transport (reliable, ordered)
 - [x] **RD-TRANS-08**: Wire protocol uses binary framing (24-byte media header, 9-byte input header, packed C structs)
-- [ ] **RD-TRANS-09**: Both devices bind to USB NCM interface explicitly via `NWParameters.requiredInterface` with the specific `NWInterface` object (never hardcode interface name)
-- [ ] **RD-TRANS-10**: Bonjour service `_keydrd._tcp` used for wireless discovery (distinct from keyd's `_keyd._tcp`)
+- [x] **RD-TRANS-09**: Both devices bind to USB NCM interface explicitly via `NWParameters.requiredInterface` with the specific `NWInterface` object (never hardcode interface name)
+- [x] **RD-TRANS-10**: Bonjour service `_keydrd._tcp` used for wireless discovery (distinct from keyd's `_keyd._tcp`)
 
 ### Screen Capture
 
@@ -39,7 +39,7 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [ ] **RD-COMP-06**: Wireless mode uses VideoToolbox HEVC hardware encoder (`VTCompressionSession`, realtime, low-latency profile with `AverageBitRate` — NOT `ConstantBitRate`)
 - [ ] **RD-COMP-07**: Eco mode uses HEVC at reduced resolution (1080p or 720p) and framerate (30Hz), even over wired connection
 - [x] **RD-COMP-08**: LZ4 compress completes in <1ms per 4K BGRA frame
-- [ ] **RD-COMP-09**: Mode switching (LZ4 ↔ HEVC) triggered automatically by transport change or manually by user via HUD
+- [x] **RD-COMP-09**: Mode switching (LZ4 ↔ HEVC) triggered automatically by transport change or manually by user via HUD
 
 ### Rendering
 
@@ -87,8 +87,8 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Performance
 
-- [ ] **RD-PERF-01**: Glass-to-glass latency <8ms over wired (LZ4+delta path)
-- [ ] **RD-PERF-02**: Glass-to-glass latency <25ms over wireless (HEVC path)
+- [x] **RD-PERF-01**: Glass-to-glass latency <8ms over wired (LZ4+delta path)
+- [x] **RD-PERF-02**: Glass-to-glass latency <25ms over wireless (HEVC path)
 - [x] **RD-PERF-03**: Mac agent CPU usage <3% during wired streaming
 - [ ] **RD-PERF-04**: Mac agent RSS <50 MB during wired streaming
 - [ ] **RD-PERF-05**: Mac agent CPU usage <1% in eco mode
@@ -173,16 +173,16 @@ Deferred to next milestone. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RD-TRANS-01 | Phase 2 | Pending |
-| RD-TRANS-02 | Phase 2 | Pending |
-| RD-TRANS-03 | Phase 2 | Pending |
-| RD-TRANS-04 | Phase 2 | Pending |
-| RD-TRANS-05 | Phase 2 | Pending |
-| RD-TRANS-06 | Phase 2 | Pending |
-| RD-TRANS-07 | Phase 2 | Pending |
+| RD-TRANS-01 | Phase 2 | Complete |
+| RD-TRANS-02 | Phase 2 | Complete |
+| RD-TRANS-03 | Phase 2 | Complete |
+| RD-TRANS-04 | Phase 2 | Complete |
+| RD-TRANS-05 | Phase 2 | Complete |
+| RD-TRANS-06 | Phase 2 | Complete |
+| RD-TRANS-07 | Phase 2 | Complete |
 | RD-TRANS-08 | Phase 2 | Complete |
-| RD-TRANS-09 | Phase 2 | Pending |
-| RD-TRANS-10 | Phase 2 | Pending |
+| RD-TRANS-09 | Phase 2 | Complete |
+| RD-TRANS-10 | Phase 2 | Complete |
 | RD-CAP-01 | Phase 2 | Complete |
 | RD-CAP-02 | Phase 2 | Complete |
 | RD-CAP-03 | Phase 2 | Complete |
@@ -197,7 +197,7 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-COMP-06 | Phase 2 | Pending |
 | RD-COMP-07 | Phase 2 | Pending |
 | RD-COMP-08 | Phase 2 | Complete |
-| RD-COMP-09 | Phase 2 | Pending |
+| RD-COMP-09 | Phase 2 | Complete |
 | RD-REND-01 | Phase 2 | Pending |
 | RD-REND-02 | Phase 2 | Pending |
 | RD-REND-03 | Phase 2 | Pending |
@@ -221,8 +221,8 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-APP-05 | Phase 2 | Pending |
 | RD-APP-06 | Phase 2 | Complete |
 | RD-APP-07 | Phase 2 | Pending |
-| RD-PERF-01 | Phase 2 | Pending |
-| RD-PERF-02 | Phase 2 | Pending |
+| RD-PERF-01 | Phase 2 | Complete |
+| RD-PERF-02 | Phase 2 | Complete |
 | RD-PERF-03 | Phase 2 | Complete |
 | RD-PERF-04 | Phase 2 | Pending |
 | RD-PERF-07 | Phase 2 | Complete |
