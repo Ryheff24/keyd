@@ -17,6 +17,10 @@
 		B2000014000000000000000A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2000014000000000000000F /* Network.framework */; };
 		B2000015000000000000000A /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2000015000000000000000F /* AVFoundation.framework */; };
 		B2000016000000000000000A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2000016000000000000000F /* Security.framework */; };
+		B2000020000000000000000A /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000020000000000000000F /* Protocol.swift */; };
+		B2000021000000000000000A /* TransportFSM.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000000F /* TransportFSM.swift */; };
+		B2000022000000000000000A /* USBNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000022000000000000000F /* USBNetworkTransport.swift */; };
+		B2000023000000000000000A /* WirelessTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000023000000000000000F /* WirelessTransport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +41,10 @@
 		B2000014000000000000000F /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		B2000015000000000000000F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		B2000016000000000000000F /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		B2000020000000000000000F /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol.swift; sourceTree = "<group>"; };
+		B2000021000000000000000F /* TransportFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportFSM.swift; sourceTree = "<group>"; };
+		B2000022000000000000000F /* USBNetworkTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBNetworkTransport.swift; sourceTree = "<group>"; };
+		B2000023000000000000000F /* WirelessTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessTransport.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -71,9 +79,21 @@
 			isa = PBXGroup;
 			children = (
 				B20000E5000000000000000G /* App */,
+				B20000E7000000000000000G /* Transport */,
 				B20000E6000000000000000G /* Resources */,
 			);
 			path = .;
+			sourceTree = "<group>";
+		};
+		B20000E7000000000000000G /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				B2000020000000000000000F /* Protocol.swift */,
+				B2000021000000000000000F /* TransportFSM.swift */,
+				B2000022000000000000000F /* USBNetworkTransport.swift */,
+				B2000023000000000000000F /* WirelessTransport.swift */,
+			);
+			path = Transport;
 			sourceTree = "<group>";
 		};
 		B20000E5000000000000000G /* App */ = {
@@ -193,6 +213,10 @@
 				B2000001000000000000000A /* RemoteDesktopApp.swift in Sources */,
 				B2000002000000000000000A /* lz4.c in Sources */,
 				B2000003000000000000000A /* delta.c in Sources */,
+				B2000020000000000000000A /* Protocol.swift in Sources */,
+				B2000021000000000000000A /* TransportFSM.swift in Sources */,
+				B2000022000000000000000A /* USBNetworkTransport.swift in Sources */,
+				B2000023000000000000000A /* WirelessTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
