@@ -43,9 +43,9 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Rendering
 
-- [ ] **RD-REND-01**: iPad renders frames via Metal (`MTKView` with `CAMetalDisplayLink` render loop, not built-in timer)
-- [ ] **RD-REND-02**: Rendering supports P3 wide color gamut (iPad Pro display)
-- [ ] **RD-REND-03**: Rendering supports ProMotion 120Hz (`CADisableMinimumFrameDuration = YES` in Info.plist, triple buffering with 3 drawables)
+- [x] **RD-REND-01**: iPad renders frames via Metal (`MTKView` with `CAMetalDisplayLink` render loop, not built-in timer)
+- [x] **RD-REND-02**: Rendering supports P3 wide color gamut (iPad Pro display)
+- [x] **RD-REND-03**: Rendering supports ProMotion 120Hz (`CADisableMinimumFrameDuration = YES` in Info.plist, triple buffering with 3 drawables)
 - [ ] **RD-REND-04**: LZ4 decompression + delta apply + Metal render completes in <3ms per frame on iPad
 - [ ] **RD-REND-05**: Cursor position rendered as Metal overlay on iPad (Mac sends cursor position as lightweight TCP event)
 
@@ -108,11 +108,11 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### iPad App
 
-- [ ] **RD-APP-01**: iPad app displays remote Mac screen at full Retina resolution with P3 color
+- [x] **RD-APP-01**: iPad app displays remote Mac screen at full Retina resolution with P3 color
 - [ ] **RD-APP-02**: iPad app shows connection status HUD (transport mode icon, latency ms, FPS counter; togglable)
 - [ ] **RD-APP-03**: iPad app provides mode toggle in HUD (full quality / eco)
-- [ ] **RD-APP-04**: iPad app supports landscape and portrait orientation (letterbox or scale-to-fit)
-- [ ] **RD-APP-05**: iPad app supports iPad Pro 11" and 13" screen sizes
+- [x] **RD-APP-04**: iPad app supports landscape and portrait orientation (letterbox or scale-to-fit)
+- [x] **RD-APP-05**: iPad app supports iPad Pro 11" and 13" screen sizes
 - [x] **RD-APP-06**: iPadOS minimum version: 17.0 (required for `CAMetalDisplayLink`)
 - [ ] **RD-APP-07**: iPad system edge swipes are NOT intercepted (respected as system gestures)
 
@@ -198,9 +198,9 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-COMP-07 | Phase 2 | Pending |
 | RD-COMP-08 | Phase 2 | Complete |
 | RD-COMP-09 | Phase 2 | Complete |
-| RD-REND-01 | Phase 2 | Pending |
-| RD-REND-02 | Phase 2 | Pending |
-| RD-REND-03 | Phase 2 | Pending |
+| RD-REND-01 | Phase 2 | Complete |
+| RD-REND-02 | Phase 2 | Complete |
+| RD-REND-03 | Phase 2 | Complete |
 | RD-REND-04 | Phase 2 | Pending |
 | RD-SEC-01 | Phase 2 | Pending |
 | RD-SEC-02 | Phase 2 | Pending |
@@ -214,11 +214,11 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-AGENT-05 | Phase 2 | Pending |
 | RD-AGENT-06 | Phase 2 | Pending |
 | RD-AGENT-07 | Phase 2 | Complete |
-| RD-APP-01 | Phase 2 | Pending |
+| RD-APP-01 | Phase 2 | Complete |
 | RD-APP-02 | Phase 2 | Pending |
 | RD-APP-03 | Phase 2 | Pending |
-| RD-APP-04 | Phase 2 | Pending |
-| RD-APP-05 | Phase 2 | Pending |
+| RD-APP-04 | Phase 2 | Complete |
+| RD-APP-05 | Phase 2 | Complete |
 | RD-APP-06 | Phase 2 | Complete |
 | RD-APP-07 | Phase 2 | Pending |
 | RD-PERF-01 | Phase 2 | Complete |
