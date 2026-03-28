@@ -118,46 +118,41 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     SecAccessRef access = NULL;
     SecAccessCreate(CFSTR("keydrd-agent-tls"), NULL, &access);
 
+    /* Use a unique tag per launch to avoid colliding with old keys
+     * whose ACL doesn't match the current code signature.
+     * SecItemDelete fails silently on ACL mismatch, leaving old keys. */
+    NSString *uniqueTag = [NSString stringWithFormat:@"com.ryheff.keyd.remote.agent.tls-key.%@",
+                           [[NSUUID UUID] UUIDString]];
+
     /* Store private key in Keychain with unrestricted access */
     NSMutableDictionary *keyAddQuery = [@{
         (__bridge id)kSecClass: (__bridge id)kSecClassKey,
         (__bridge id)kSecValueRef: (__bridge id)privateKey,
         (__bridge id)kSecAttrLabel: kTLSCertLabel,
-        (__bridge id)kSecAttrApplicationTag: [@"com.ryheff.keyd.remote.agent.tls-key" dataUsingEncoding:NSUTF8StringEncoding],
+        (__bridge id)kSecAttrApplicationTag: [uniqueTag dataUsingEncoding:NSUTF8StringEncoding],
         (__bridge id)kSecAttrIsPermanent: @YES,
     } mutableCopy];
     if (access) keyAddQuery[(__bridge id)kSecAttrAccess] = (__bridge id)access;
-    SecItemDelete((__bridge CFDictionaryRef)keyAddQuery);
     OSStatus status = SecItemAdd((__bridge CFDictionaryRef)keyAddQuery, NULL);
-    if (status != errSecSuccess && status != errSecDuplicateItem) {
-        os_log_error(pairing_log(), "Failed to store private key in Keychain: %d", (int)status);
-    }
+    os_log(pairing_log(), "SecItemAdd key status: %d (0=success)", (int)status);
 
-    /* Store certificate in Keychain with unrestricted access */
+    /* Store certificate in Keychain with unrestricted access + unique label */
+    NSString *uniqueCertLabel = [NSString stringWithFormat:@"%@.%@",
+                                  kTLSCertLabel, [[NSUUID UUID] UUIDString]];
     NSMutableDictionary *certAddQuery = [@{
         (__bridge id)kSecClass: (__bridge id)kSecClassCertificate,
         (__bridge id)kSecValueRef: (__bridge id)selfSignedCert,
-        (__bridge id)kSecAttrLabel: kTLSCertLabel,
+        (__bridge id)kSecAttrLabel: uniqueCertLabel,
     } mutableCopy];
     if (access) certAddQuery[(__bridge id)kSecAttrAccess] = (__bridge id)access;
-    SecItemDelete((__bridge CFDictionaryRef)certAddQuery);
     status = SecItemAdd((__bridge CFDictionaryRef)certAddQuery, NULL);
-    if (status != errSecSuccess && status != errSecDuplicateItem) {
-        os_log_error(pairing_log(), "Failed to store certificate in Keychain: %d", (int)status);
-    }
+    os_log(pairing_log(), "SecItemAdd cert status: %d (0=success)", (int)status);
 
     if (access) CFRelease(access);
 
     /* Create SecIdentity from the key + cert now in Keychain */
     SecIdentityRef identity = NULL;
-    NSDictionary *identityQuery = @{
-        (__bridge id)kSecClass: (__bridge id)kSecClassIdentity,
-        (__bridge id)kSecAttrLabel: kTLSCertLabel,
-        (__bridge id)kSecReturnRef: @YES,
-        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
-
-    };
-    status = SecItemCopyMatching((__bridge CFDictionaryRef)identityQuery, (CFTypeRef *)&identity);
+    status = SecIdentityCreateWithCertificate(NULL, selfSignedCert, &identity);
     if (status == errSecSuccess && identity) {
         if (_tlsIdentity) CFRelease(_tlsIdentity);
         _tlsIdentity = identity;
