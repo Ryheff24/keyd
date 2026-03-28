@@ -1,0 +1,355 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000001000000000000000A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000000F /* main.m */; };
+		A1000002000000000000000A /* lz4.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000000F /* lz4.c */; };
+		A1000003000000000000000A /* delta.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000003000000000000000F /* delta.c */; };
+		A1000010000000000000000A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000010000000000000000F /* Cocoa.framework */; };
+		A1000011000000000000000A /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000011000000000000000F /* ScreenCaptureKit.framework */; };
+		A1000012000000000000000A /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000012000000000000000F /* VideoToolbox.framework */; };
+		A1000013000000000000000A /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000013000000000000000F /* CoreMedia.framework */; };
+		A1000014000000000000000A /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000014000000000000000F /* CoreVideo.framework */; };
+		A1000015000000000000000A /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000015000000000000000F /* IOSurface.framework */; };
+		A1000016000000000000000A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000016000000000000000F /* Network.framework */; };
+		A1000017000000000000000A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000017000000000000000F /* Security.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000FF000000000000000F /* RemoteDesktopAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemoteDesktopAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000001000000000000000F /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		A1000002000000000000000F /* lz4.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = lz4.c; path = ../Shared/lz4.c; sourceTree = "<group>"; };
+		A1000004000000000000000F /* lz4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = lz4.h; path = ../Shared/lz4.h; sourceTree = "<group>"; };
+		A1000003000000000000000F /* delta.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = delta.c; path = ../Shared/delta.c; sourceTree = "<group>"; };
+		A1000005000000000000000F /* delta.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = delta.h; path = ../Shared/delta.h; sourceTree = "<group>"; };
+		A1000006000000000000000F /* protocol.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = protocol.h; path = ../Shared/protocol.h; sourceTree = "<group>"; };
+		A1000007000000000000000F /* crypto.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = crypto.h; path = ../Shared/crypto.h; sourceTree = "<group>"; };
+		A1000008000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000009000000000000000F /* RemoteDesktopAgent.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RemoteDesktopAgent.entitlements; sourceTree = "<group>"; };
+		A1000010000000000000000F /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
+		A1000011000000000000000F /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
+		A1000012000000000000000F /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		A1000013000000000000000F /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+		A1000014000000000000000F /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
+		A1000015000000000000000F /* IOSurface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOSurface.framework; path = System/Library/Frameworks/IOSurface.framework; sourceTree = SDKROOT; };
+		A1000016000000000000000F /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		A1000017000000000000000F /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000F1000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000010000000000000000A /* Cocoa.framework in Frameworks */,
+				A1000011000000000000000A /* ScreenCaptureKit.framework in Frameworks */,
+				A1000012000000000000000A /* VideoToolbox.framework in Frameworks */,
+				A1000013000000000000000A /* CoreMedia.framework in Frameworks */,
+				A1000014000000000000000A /* CoreVideo.framework in Frameworks */,
+				A1000015000000000000000A /* IOSurface.framework in Frameworks */,
+				A1000016000000000000000A /* Network.framework in Frameworks */,
+				A1000017000000000000000A /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000E0000000000000000G /* = root = */ = {
+			isa = PBXGroup;
+			children = (
+				A10000E1000000000000000G /* RemoteDesktopAgent */,
+				A10000E2000000000000000G /* Shared */,
+				A10000E3000000000000000G /* Frameworks */,
+				A10000E4000000000000000G /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000E1000000000000000G /* RemoteDesktopAgent */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001000000000000000F /* main.m */,
+				A10000E5000000000000000G /* Resources */,
+			);
+			path = .;
+			sourceTree = "<group>";
+		};
+		A10000E5000000000000000G /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A1000008000000000000000F /* Info.plist */,
+				A1000009000000000000000F /* RemoteDesktopAgent.entitlements */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A10000E2000000000000000G /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				A1000006000000000000000F /* protocol.h */,
+				A1000007000000000000000F /* crypto.h */,
+				A1000002000000000000000F /* lz4.c */,
+				A1000004000000000000000F /* lz4.h */,
+				A1000003000000000000000F /* delta.c */,
+				A1000005000000000000000F /* delta.h */,
+			);
+			name = Shared;
+			sourceTree = "<group>";
+		};
+		A10000E3000000000000000G /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A1000010000000000000000F /* Cocoa.framework */,
+				A1000011000000000000000F /* ScreenCaptureKit.framework */,
+				A1000012000000000000000F /* VideoToolbox.framework */,
+				A1000013000000000000000F /* CoreMedia.framework */,
+				A1000014000000000000000F /* CoreVideo.framework */,
+				A1000015000000000000000F /* IOSurface.framework */,
+				A1000016000000000000000F /* Network.framework */,
+				A1000017000000000000000F /* Security.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A10000E4000000000000000G /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000FF000000000000000F /* RemoteDesktopAgent.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000FE000000000000000T /* RemoteDesktopAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopAgent" */;
+			buildPhases = (
+				A10000F0000000000000000B /* Sources */,
+				A10000F1000000000000000B /* Frameworks */,
+				A10000F2000000000000000B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RemoteDesktopAgent;
+			productName = RemoteDesktopAgent;
+			productReference = A10000FF000000000000000F /* RemoteDesktopAgent.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000FD000000000000000P /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = A10000FB000000000000000C /* Build configuration list for PBXProject "RemoteDesktopAgent" */;
+			compatibilityVersion = "Xcode 13.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000E0000000000000000G /* = root = */;
+			productRefGroup = A10000E4000000000000000G /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000FE000000000000000T /* RemoteDesktopAgent */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000F2000000000000000B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000F0000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000001000000000000000A /* main.m in Sources */,
+				A1000002000000000000000A /* lz4.c in Sources */,
+				A1000003000000000000000A /* delta.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A10000D1000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = c11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		A10000D2000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = c11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		A10000D3000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Resources/RemoteDesktopAgent.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../Shared";
+				INFOPLIST_FILE = Resources/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		A10000D4000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Resources/RemoteDesktopAgent.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../Shared";
+				INFOPLIST_FILE = Resources/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000FB000000000000000C /* Build configuration list for PBXProject "RemoteDesktopAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000D1000000000000000D /* Debug */,
+				A10000D2000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000D3000000000000000D /* Debug */,
+				A10000D4000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = A10000FD000000000000000P /* Project object */;
+}
