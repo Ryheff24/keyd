@@ -1,5 +1,7 @@
 import Foundation
 import Network
+import Security
+import CryptoKit
 import os.log
 
 /// Wireless transport for the iPadOS app (Wi-Fi + AWDL).
@@ -7,6 +9,9 @@ import os.log
 /// Uses NWBrowser to discover the Mac's `_keydrd._tcp` Bonjour service over
 /// Wi-Fi or AWDL (with peer-to-peer enabled). When discovered, creates
 /// connections to the Mac.
+///
+/// All connections use TLS 1.3 (TCP) and DTLS (UDP) with certificate pinning.
+/// No cleartext fallback exists.
 ///
 /// iPad is the CONNECTOR side -- it discovers and connects to the Mac.
 final class WirelessTransport {
@@ -35,6 +40,97 @@ final class WirelessTransport {
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "WirelessTransport")
 
+    private let keychainService = "com.ryheff.keyd.remote.app"
+
+    // MARK: - Certificate Pinning
+
+    /// Verify peer certificate against stored Mac cert fingerprint from Keychain.
+    private func verifyPeerCertificate(_ trust: sec_trust_t) -> Bool {
+        let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
+
+        guard let certChain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate],
+              let peerCert = certChain.first else {
+            log.error("Certificate verify: no peer certificate")
+            return false
+        }
+
+        let peerCertData = SecCertificateCopyData(peerCert) as Data
+        let fingerprint = SHA256.hash(data: peerCertData)
+        let peerFingerprint = Data(fingerprint)
+
+        guard let storedFingerprint = loadStoredPeerFingerprint() else {
+            log.error("Certificate verify: no stored peer fingerprint (not paired)")
+            return false
+        }
+
+        let match = peerFingerprint == storedFingerprint
+        if !match {
+            log.error("Certificate verify: peer cert fingerprint MISMATCH -- rejecting")
+        } else {
+            log.info("Certificate verify: peer cert fingerprint matches stored -- trusted")
+        }
+        return match
+    }
+
+    /// Load stored Mac cert fingerprint from Keychain.
+    private func loadStoredPeerFingerprint() -> Data? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: "peer-cert-fingerprint",
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else { return nil }
+        return result as? Data
+    }
+
+    // MARK: - TLS/DTLS Parameter Configuration
+
+    /// Create TLS 1.3 parameters for TCP connections with certificate pinning.
+    private func createSecureTCPParameters() -> NWParameters {
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            tlsOptions.securityProtocolOptions, .TLSv13)
+
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
+            { [weak self] metadata, trust, complete in
+                guard let self = self else {
+                    complete(false)
+                    return
+                }
+                let trusted = self.verifyPeerCertificate(trust)
+                complete(trusted)
+            }, DispatchQueue.global())
+
+        let params = NWParameters(tls: tlsOptions, tcp: .init())
+        params.includePeerToPeer = true
+        return params
+    }
+
+    /// Create DTLS parameters for UDP connections with certificate pinning.
+    private func createSecureUDPParameters() -> NWParameters {
+        let dtlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            dtlsOptions.securityProtocolOptions, .TLSv13)
+
+        sec_protocol_options_set_verify_block(dtlsOptions.securityProtocolOptions,
+            { [weak self] metadata, trust, complete in
+                guard let self = self else {
+                    complete(false)
+                    return
+                }
+                let trusted = self.verifyPeerCertificate(trust)
+                complete(trusted)
+            }, DispatchQueue.global())
+
+        let params = NWParameters(dtls: dtlsOptions, udp: .init())
+        params.includePeerToPeer = true
+        return params
+    }
+
     // MARK: - Public API
 
     /// Start browsing for the Mac's Bonjour service.
@@ -42,7 +138,7 @@ final class WirelessTransport {
     func startBrowsing() {
         guard browser == nil else { return }
 
-        log.info("Starting Bonjour browse for \(keydrdService)")
+        log.info("Starting Bonjour browse for \(keydrdService) (TLS/DTLS enabled)")
 
         let params = NWParameters()
         params.includePeerToPeer = true
@@ -117,11 +213,10 @@ final class WirelessTransport {
     private func connectToService(endpoint: NWEndpoint) {
         tearDownConnections()
 
-        log.info("Connecting to discovered Mac service: \(endpoint.debugDescription)")
+        log.info("Connecting with TLS to discovered Mac service: \(endpoint.debugDescription)")
 
-        // TCP connection for input -- connect to the discovered Bonjour endpoint
-        let tcpParams = NWParameters(tls: nil, tcp: .init())
-        tcpParams.includePeerToPeer = true
+        // TLS 1.3-encrypted TCP connection for input
+        let tcpParams = createSecureTCPParameters()
 
         let inputConn = NWConnection(to: endpoint, using: tcpParams)
         inputConnection = inputConn
@@ -131,7 +226,7 @@ final class WirelessTransport {
 
             switch state {
             case .ready:
-                self.log.info("Wireless TCP connection ready")
+                self.log.info("TLS wireless TCP connection ready")
 
                 // Determine if AWDL or Wi-Fi via connection path interface type
                 let detectedAWDL = self.detectAWDL(connection: inputConn)
@@ -145,7 +240,7 @@ final class WirelessTransport {
                 self.establishMediaConnection(from: inputConn)
 
             case .failed(let error):
-                self.log.error("Wireless TCP connection failed: \(error)")
+                self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
                 self.isConnected = false
                 self.onConnectionChanged?(false, self.isAWDL)
@@ -165,10 +260,10 @@ final class WirelessTransport {
     }
 
     private func establishMediaConnection(from tcpConnection: NWConnection) {
-        // Extract the remote host from the TCP connection to create a UDP media path
+        // Extract the remote host from the TCP connection to create a DTLS-encrypted UDP media path
         guard let path = tcpConnection.currentPath,
               let remoteEndpoint = path.remoteEndpoint else {
-            log.warning("Cannot establish media connection: no remote endpoint")
+            log.warning("Cannot establish DTLS media connection: no remote endpoint")
             return
         }
 
@@ -180,13 +275,11 @@ final class WirelessTransport {
         case .hostPort(let h, _):
             host = h
         default:
-            // For Bonjour-resolved endpoints, use the same endpoint pattern
             log.warning("Cannot extract host from endpoint: \(remoteEndpoint.debugDescription)")
             return
         }
 
-        let udpParams = NWParameters(dtls: nil, udp: .init())
-        udpParams.includePeerToPeer = true
+        let udpParams = createSecureUDPParameters()
 
         // Bind to the same interface as the TCP connection
         if let pathInterface = path.availableInterfaces.first {
@@ -201,10 +294,10 @@ final class WirelessTransport {
             guard let self = self else { return }
             switch state {
             case .ready:
-                self.log.info("Wireless media UDP connection ready")
+                self.log.info("DTLS wireless media UDP connection ready")
                 self.scheduleMediaReceive(mediaConn)
             case .failed(let error):
-                self.log.error("Wireless media UDP connection failed: \(error)")
+                self.log.error("DTLS wireless media UDP connection failed: \(error)")
             default:
                 break
             }

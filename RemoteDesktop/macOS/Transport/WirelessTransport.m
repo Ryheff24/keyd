@@ -1,6 +1,9 @@
 #import "WirelessTransport.h"
 #import "protocol.h"
+#import "crypto.h"
 #import <os/log.h>
+#import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 
 static os_log_t wireless_log(void) {
     static os_log_t log;
@@ -37,6 +40,154 @@ static const char *kInputPortStr = "14568";
 
 - (void)dealloc {
     [self stopAdvertising];
+    if (_tlsIdentity) {
+        CFRelease(_tlsIdentity);
+        _tlsIdentity = NULL;
+    }
+}
+
+#pragma mark - TLS Identity
+
+- (void)setTlsIdentity:(SecIdentityRef)tlsIdentity {
+    if (_tlsIdentity) {
+        CFRelease(_tlsIdentity);
+    }
+    _tlsIdentity = tlsIdentity;
+    if (_tlsIdentity) {
+        CFRetain(_tlsIdentity);
+    }
+}
+
+#pragma mark - Certificate Pinning
+
+/**
+ * Verify peer certificate against stored paired certificate from Keychain.
+ * Returns YES if the peer cert matches, NO otherwise.
+ */
+- (BOOL)verifyPeerCertificate:(sec_trust_t)trust {
+    SecTrustRef secTrust = sec_trust_copy_ref(trust);
+    if (!secTrust) {
+        os_log_error(wireless_log(), "Certificate verify: no trust ref");
+        return NO;
+    }
+
+    CFArrayRef certChain = SecTrustCopyCertificateChain(secTrust);
+    CFRelease(secTrust);
+    if (!certChain || CFArrayGetCount(certChain) == 0) {
+        os_log_error(wireless_log(), "Certificate verify: no peer certificate chain");
+        if (certChain) CFRelease(certChain);
+        return NO;
+    }
+    SecCertificateRef peerCert = (SecCertificateRef)CFArrayGetValueAtIndex(certChain, 0);
+
+    CFDataRef peerCertData = SecCertificateCopyData(peerCert);
+    CFRelease(certChain);
+    if (!peerCertData) {
+        os_log_error(wireless_log(), "Certificate verify: cannot get cert data");
+        return NO;
+    }
+
+    uint8_t peerHash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(CFDataGetBytePtr(peerCertData), (CC_LONG)CFDataGetLength(peerCertData), peerHash);
+    CFRelease(peerCertData);
+
+    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
+    if (!storedFingerprint || storedFingerprint.length != CC_SHA256_DIGEST_LENGTH) {
+        os_log_error(wireless_log(), "Certificate verify: no stored peer fingerprint (not paired)");
+        return NO;
+    }
+
+    BOOL match = (memcmp(peerHash, storedFingerprint.bytes, CC_SHA256_DIGEST_LENGTH) == 0);
+    if (!match) {
+        os_log_error(wireless_log(), "Certificate verify: peer cert fingerprint MISMATCH -- rejecting");
+    } else {
+        os_log(wireless_log(), "Certificate verify: peer cert fingerprint matches stored -- trusted");
+    }
+    return match;
+}
+
+- (NSData *)loadStoredPeerFingerprint {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @KEYDRD_KEYCHAIN_SERVICE,
+        (__bridge id)kSecAttrAccount: @"peer-cert-fingerprint",
+        (__bridge id)kSecReturnData: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne
+    };
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status != errSecSuccess) return nil;
+    return (__bridge_transfer NSData *)result;
+}
+
+#pragma mark - TLS/DTLS Parameter Configuration
+
+- (nw_parameters_t)createSecureTCPParameters {
+    __weak WirelessTransport *weakSelf = self;
+    SecIdentityRef identity = _tlsIdentity;
+
+    nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
+        ^(nw_protocol_options_t tls_options) {
+            sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(tls_options);
+            sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+
+            if (identity) {
+                sec_identity_t secIdentity = sec_identity_create(identity);
+                if (secIdentity) {
+                    sec_protocol_options_set_local_identity(sec, secIdentity);
+                }
+            }
+
+            sec_protocol_options_set_verify_block(sec,
+                ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
+                  sec_protocol_verify_complete_t complete) {
+                    WirelessTransport *self2 = weakSelf;
+                    if (!self2) {
+                        complete(false);
+                        return;
+                    }
+                    BOOL trusted = [self2 verifyPeerCertificate:trust];
+                    complete(trusted);
+                },
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        },
+        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+
+    return tcpParams;
+}
+
+- (nw_parameters_t)createSecureUDPParameters {
+    __weak WirelessTransport *weakSelf = self;
+    SecIdentityRef identity = _tlsIdentity;
+
+    nw_parameters_t udpParams = nw_parameters_create_secure_udp(
+        ^(nw_protocol_options_t dtls_options) {
+            sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(dtls_options);
+            sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+
+            if (identity) {
+                sec_identity_t secIdentity = sec_identity_create(identity);
+                if (secIdentity) {
+                    sec_protocol_options_set_local_identity(sec, secIdentity);
+                }
+            }
+
+            sec_protocol_options_set_verify_block(sec,
+                ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
+                  sec_protocol_verify_complete_t complete) {
+                    WirelessTransport *self2 = weakSelf;
+                    if (!self2) {
+                        complete(false);
+                        return;
+                    }
+                    BOOL trusted = [self2 verifyPeerCertificate:trust];
+                    complete(trusted);
+                },
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        },
+        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+
+    return udpParams;
 }
 
 #pragma mark - Public API
@@ -44,16 +195,19 @@ static const char *kInputPortStr = "14568";
 - (void)startAdvertising {
     if (_bonjourListener) return;
 
-    os_log(wireless_log(), "Starting Bonjour advertisement for %{public}s", KEYDRD_SERVICE);
+    if (!_tlsIdentity) {
+        os_log_error(wireless_log(), "Cannot start advertising: tlsIdentity not set");
+        return;
+    }
+
+    os_log(wireless_log(), "Starting Bonjour advertisement for %{public}s (TLS/DTLS enabled)", KEYDRD_SERVICE);
 
     /*
-     * Create TCP listener with Bonjour advertisement.
-     * We use TCP for the Bonjour listener since it handles the service
-     * discovery. Once connected, we establish a separate UDP path for media.
+     * Create TCP listener with Bonjour advertisement and TLS 1.3.
+     * Handles service discovery. Once connected, we establish a separate
+     * DTLS-encrypted UDP path for media.
      */
-    nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
-        NW_PARAMETERS_DISABLE_PROTOCOL, /* No TLS yet -- added in crypto plan */
-        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    nw_parameters_t tcpParams = [self createSecureTCPParameters];
 
     /* Enable peer-to-peer for AWDL support (RD-TRANS-03) */
     nw_parameters_set_include_peer_to_peer(tcpParams, true);
@@ -79,14 +233,14 @@ static const char *kInputPortStr = "14568";
                                                                nw_error_t _Nullable error) {
         switch (state) {
         case nw_listener_state_ready:
-            os_log(wireless_log(), "Bonjour listener ready (advertising %{public}s)", KEYDRD_SERVICE);
+            os_log(wireless_log(), "TLS Bonjour listener ready (advertising %{public}s)", KEYDRD_SERVICE);
             break;
         case nw_listener_state_failed:
-            os_log_error(wireless_log(), "Bonjour listener failed: %{public}@",
+            os_log_error(wireless_log(), "TLS Bonjour listener failed: %{public}@",
                          error ?: (nw_error_t)@"unknown");
             break;
         case nw_listener_state_cancelled:
-            os_log(wireless_log(), "Bonjour listener cancelled");
+            os_log(wireless_log(), "TLS Bonjour listener cancelled");
             break;
         default:
             break;
@@ -142,7 +296,7 @@ static const char *kInputPortStr = "14568";
 #pragma mark - Private: Connection Handling
 
 - (void)handleNewConnection:(nw_connection_t)connection {
-    os_log(wireless_log(), "Wireless connection accepted from iPad");
+    os_log(wireless_log(), "TLS wireless connection accepted from iPad");
 
     /* Replace existing input connection */
     if (_inputConnection) {
@@ -184,7 +338,7 @@ static const char *kInputPortStr = "14568";
 
             self2.isAWDL = detectedAWDL;
             self2.isConnected = YES;
-            os_log(wireless_log(), "Wireless connection ready (AWDL=%d)", detectedAWDL);
+            os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
 
             if (self2.onConnectionChanged) {
                 self2.onConnectionChanged(YES, detectedAWDL);
@@ -193,13 +347,13 @@ static const char *kInputPortStr = "14568";
             /* Start receive loop */
             [self2 scheduleInputReceive:connection];
 
-            /* Establish UDP media connection to the iPad's address */
+            /* Establish DTLS-encrypted UDP media connection to the iPad's address */
             [self2 establishMediaConnection:connection];
             break;
         }
         case nw_connection_state_failed:
         case nw_connection_state_cancelled:
-            os_log(wireless_log(), "Wireless connection ended");
+            os_log(wireless_log(), "TLS wireless connection ended");
             if (self2.inputConnection == connection) {
                 self2.inputConnection = nil;
                 self2.isConnected = NO;
@@ -218,9 +372,8 @@ static const char *kInputPortStr = "14568";
 
 - (void)establishMediaConnection:(nw_connection_t)tcpConnection {
     /*
-     * After the TCP control connection is established, create a UDP
-     * connection to the iPad's address for media frames. We extract
-     * the remote endpoint from the TCP connection path.
+     * After the TLS TCP control connection is established, create a DTLS-encrypted
+     * UDP connection to the iPad's address for media frames.
      */
     nw_path_t path = nw_connection_copy_current_path(tcpConnection);
     if (!path) return;
@@ -228,15 +381,12 @@ static const char *kInputPortStr = "14568";
     nw_endpoint_t remoteEndpoint = nw_path_copy_effective_remote_endpoint(path);
     if (!remoteEndpoint) return;
 
-    /* Get the remote host and create a UDP endpoint on the media port */
     const char *host = nw_endpoint_get_hostname(remoteEndpoint);
     if (!host) return;
 
     nw_endpoint_t mediaEndpoint = nw_endpoint_create_host(host, kMediaPortStr);
 
-    nw_parameters_t udpParams = nw_parameters_create_secure_udp(
-        NW_PARAMETERS_DISABLE_PROTOCOL,
-        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    nw_parameters_t udpParams = [self createSecureUDPParameters];
     nw_parameters_set_include_peer_to_peer(udpParams, true);
 
     /* Bind to the same interface as the TCP connection */
@@ -261,13 +411,13 @@ static const char *kInputPortStr = "14568";
     nw_connection_set_state_changed_handler(mediaConn, ^(nw_connection_state_t state,
                                                           nw_error_t _Nullable error) {
         if (state == nw_connection_state_ready) {
-            os_log(wireless_log(), "Wireless media UDP connection ready");
+            os_log(wireless_log(), "DTLS wireless media UDP connection ready");
             WirelessTransport *self2 = weakSelf;
             if (self2) {
                 [self2 scheduleMediaReceive:mediaConn];
             }
         } else if (state == nw_connection_state_failed) {
-            os_log_error(wireless_log(), "Wireless media UDP connection failed: %{public}@",
+            os_log_error(wireless_log(), "DTLS wireless media UDP connection failed: %{public}@",
                          error ?: (nw_error_t)@"unknown");
         }
     });

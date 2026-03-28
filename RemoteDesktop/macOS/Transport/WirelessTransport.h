@@ -2,6 +2,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Network/Network.h>
+#import <Security/Security.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -13,6 +14,9 @@ NS_ASSUME_NONNULL_BEGIN
  * connects, this module accepts the connections and determines whether
  * the path is Wi-Fi or AWDL via the connection's interface type.
  *
+ * All connections use TLS 1.3 (TCP) and DTLS (UDP) with certificate pinning.
+ * No cleartext fallback exists.
+ *
  * Mac is the LISTENER side -- iPad discovers and connects.
  */
 @interface WirelessTransport : NSObject
@@ -22,6 +26,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /** Whether the current connection is over AWDL (vs Wi-Fi). */
 @property (nonatomic, readonly) BOOL isAWDL;
+
+/** The Mac's TLS identity (SecIdentityRef) used as server identity for all listeners. */
+@property (nonatomic, nullable) SecIdentityRef tlsIdentity;
 
 /** Callback fired when raw media frame data arrives over UDP. */
 @property (nonatomic, copy, nullable) void (^onMediaReceived)(const void *data, size_t length);
@@ -38,6 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * Start advertising the Bonjour service and listening for connections.
  * Enables peer-to-peer (AWDL) discovery.
+ * Requires tlsIdentity to be set before calling.
  */
 - (void)startAdvertising;
 

@@ -1,6 +1,9 @@
 #import "USBNetworkTransport.h"
 #import "protocol.h"
+#import "crypto.h"
 #import <os/log.h>
+#import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 
 static os_log_t transport_log(void) {
     static os_log_t log;
@@ -42,6 +45,172 @@ static const char *kInputPortStr = "14568";
 
 - (void)dealloc {
     [self stopMonitoring];
+    if (_tlsIdentity) {
+        CFRelease(_tlsIdentity);
+        _tlsIdentity = NULL;
+    }
+}
+
+#pragma mark - TLS Identity
+
+- (void)setTlsIdentity:(SecIdentityRef)tlsIdentity {
+    if (_tlsIdentity) {
+        CFRelease(_tlsIdentity);
+    }
+    _tlsIdentity = tlsIdentity;
+    if (_tlsIdentity) {
+        CFRetain(_tlsIdentity);
+    }
+}
+
+#pragma mark - Certificate Pinning
+
+/**
+ * Verify peer certificate against stored paired certificate from Keychain.
+ * Returns YES if the peer cert matches the stored cert, NO otherwise.
+ * If no paired cert is stored (not yet paired), rejects the connection.
+ */
+- (BOOL)verifyPeerCertificate:(sec_trust_t)trust {
+    SecTrustRef secTrust = sec_trust_copy_ref(trust);
+    if (!secTrust) {
+        os_log_error(transport_log(), "Certificate verify: no trust ref");
+        return NO;
+    }
+
+    /* Get the peer's leaf certificate via SecTrustCopyCertificateChain (macOS 12+) */
+    CFArrayRef certChain = SecTrustCopyCertificateChain(secTrust);
+    CFRelease(secTrust);
+    if (!certChain || CFArrayGetCount(certChain) == 0) {
+        os_log_error(transport_log(), "Certificate verify: no peer certificate chain");
+        if (certChain) CFRelease(certChain);
+        return NO;
+    }
+    SecCertificateRef peerCert = (SecCertificateRef)CFArrayGetValueAtIndex(certChain, 0);
+
+    /* Compute SHA-256 fingerprint of peer cert */
+    CFDataRef peerCertData = SecCertificateCopyData(peerCert);
+    CFRelease(certChain);
+    if (!peerCertData) {
+        os_log_error(transport_log(), "Certificate verify: cannot get cert data");
+        return NO;
+    }
+
+    uint8_t peerHash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(CFDataGetBytePtr(peerCertData), (CC_LONG)CFDataGetLength(peerCertData), peerHash);
+    CFRelease(peerCertData);
+
+    /* Load stored peer certificate fingerprint from Keychain */
+    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
+    if (!storedFingerprint || storedFingerprint.length != CC_SHA256_DIGEST_LENGTH) {
+        os_log_error(transport_log(), "Certificate verify: no stored peer fingerprint (not paired)");
+        return NO;
+    }
+
+    BOOL match = (memcmp(peerHash, storedFingerprint.bytes, CC_SHA256_DIGEST_LENGTH) == 0);
+    if (!match) {
+        os_log_error(transport_log(), "Certificate verify: peer cert fingerprint MISMATCH -- rejecting");
+    } else {
+        os_log(transport_log(), "Certificate verify: peer cert fingerprint matches stored -- trusted");
+    }
+    return match;
+}
+
+- (NSData *)loadStoredPeerFingerprint {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @KEYDRD_KEYCHAIN_SERVICE,
+        (__bridge id)kSecAttrAccount: @"peer-cert-fingerprint",
+        (__bridge id)kSecReturnData: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne
+    };
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status != errSecSuccess) return nil;
+    return (__bridge_transfer NSData *)result;
+}
+
+#pragma mark - TLS/DTLS Parameter Configuration
+
+/**
+ * Configure TLS 1.3 parameters for TCP connections.
+ * Uses the Mac's self-signed TLS identity as server identity.
+ * Certificate pinning verify block rejects unknown peer certs.
+ * No cleartext fallback.
+ */
+- (nw_parameters_t)createSecureTCPParameters {
+    __weak USBNetworkTransport *weakSelf = self;
+    SecIdentityRef identity = _tlsIdentity;
+
+    nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
+        ^(nw_protocol_options_t tls_options) {
+            sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(tls_options);
+            sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+
+            /* Set server identity (Mac's self-signed cert) */
+            if (identity) {
+                sec_identity_t secIdentity = sec_identity_create(identity);
+                if (secIdentity) {
+                    sec_protocol_options_set_local_identity(sec, secIdentity);
+                }
+            }
+
+            /* Certificate pinning: verify block rejects unknown certs */
+            sec_protocol_options_set_verify_block(sec,
+                ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
+                  sec_protocol_verify_complete_t complete) {
+                    USBNetworkTransport *self2 = weakSelf;
+                    if (!self2) {
+                        complete(false);
+                        return;
+                    }
+                    BOOL trusted = [self2 verifyPeerCertificate:trust];
+                    complete(trusted);
+                },
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        },
+        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+
+    return tcpParams;
+}
+
+/**
+ * Configure DTLS parameters for UDP connections.
+ * Same certificate pinning as TLS. No cleartext fallback.
+ */
+- (nw_parameters_t)createSecureUDPParameters {
+    __weak USBNetworkTransport *weakSelf = self;
+    SecIdentityRef identity = _tlsIdentity;
+
+    nw_parameters_t udpParams = nw_parameters_create_secure_udp(
+        ^(nw_protocol_options_t dtls_options) {
+            sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(dtls_options);
+            sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+
+            /* Set server identity */
+            if (identity) {
+                sec_identity_t secIdentity = sec_identity_create(identity);
+                if (secIdentity) {
+                    sec_protocol_options_set_local_identity(sec, secIdentity);
+                }
+            }
+
+            /* Certificate pinning verify block */
+            sec_protocol_options_set_verify_block(sec,
+                ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
+                  sec_protocol_verify_complete_t complete) {
+                    USBNetworkTransport *self2 = weakSelf;
+                    if (!self2) {
+                        complete(false);
+                        return;
+                    }
+                    BOOL trusted = [self2 verifyPeerCertificate:trust];
+                    complete(trusted);
+                },
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        },
+        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+
+    return udpParams;
 }
 
 #pragma mark - Public API
@@ -49,7 +218,12 @@ static const char *kInputPortStr = "14568";
 - (void)startMonitoring {
     if (_pathMonitor) return;
 
-    os_log(transport_log(), "Starting USB NCM path monitor");
+    if (!_tlsIdentity) {
+        os_log_error(transport_log(), "Cannot start monitoring: tlsIdentity not set");
+        return;
+    }
+
+    os_log(transport_log(), "Starting USB NCM path monitor (TLS/DTLS enabled)");
 
     _pathMonitor = nw_path_monitor_create_with_type(nw_interface_type_wired);
     nw_path_monitor_set_queue(_pathMonitor, _monitorQueue);
@@ -151,13 +325,11 @@ static const char *kInputPortStr = "14568";
     /* Tear down any existing listeners first */
     [self tearDownListeners];
 
-    os_log(transport_log(), "Binding listeners to USB NCM interface: %{public}s",
+    os_log(transport_log(), "Binding TLS/DTLS listeners to USB NCM interface: %{public}s",
            nw_interface_get_name(interface));
 
-    /* UDP listener for media (port 14567) */
-    nw_parameters_t udpParams = nw_parameters_create_secure_udp(
-        NW_PARAMETERS_DISABLE_PROTOCOL, /* No DTLS yet -- added in crypto plan */
-        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    /* UDP listener for media (port 14567) -- DTLS encrypted */
+    nw_parameters_t udpParams = [self createSecureUDPParameters];
     nw_parameters_require_interface(udpParams, interface);
     nw_parameters_set_reuse_local_address(udpParams, true);
     nw_parameters_set_local_endpoint(udpParams,
@@ -166,10 +338,8 @@ static const char *kInputPortStr = "14568";
     _mediaListener = nw_listener_create(udpParams);
     [self configureMediaListener];
 
-    /* TCP listener for input (port 14568) */
-    nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
-        NW_PARAMETERS_DISABLE_PROTOCOL, /* No TLS yet -- added in crypto plan */
-        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    /* TCP listener for input (port 14568) -- TLS 1.3 encrypted */
+    nw_parameters_t tcpParams = [self createSecureTCPParameters];
     nw_parameters_require_interface(tcpParams, interface);
     nw_parameters_set_reuse_local_address(tcpParams, true);
     nw_parameters_set_local_endpoint(tcpParams,
@@ -178,7 +348,7 @@ static const char *kInputPortStr = "14568";
     _inputListener = nw_listener_create(tcpParams);
     [self configureInputListener];
 
-    os_log(transport_log(), "Listeners created on ports %s (UDP/media) and %s (TCP/input)",
+    os_log(transport_log(), "Secure listeners created on ports %s (DTLS/media) and %s (TLS/input)",
            kMediaPortStr, kInputPortStr);
 }
 
@@ -189,9 +359,9 @@ static const char *kInputPortStr = "14568";
 
     nw_listener_set_state_changed_handler(_mediaListener, ^(nw_listener_state_t state, nw_error_t _Nullable error) {
         if (state == nw_listener_state_ready) {
-            os_log(transport_log(), "Media listener ready on port %s", kMediaPortStr);
+            os_log(transport_log(), "DTLS media listener ready on port %s", kMediaPortStr);
         } else if (state == nw_listener_state_failed) {
-            os_log_error(transport_log(), "Media listener failed: %{public}@",
+            os_log_error(transport_log(), "DTLS media listener failed: %{public}@",
                          error ?: (nw_error_t)@"unknown");
         }
     });
@@ -200,7 +370,7 @@ static const char *kInputPortStr = "14568";
         USBNetworkTransport *self2 = weakSelf;
         if (!self2) return;
 
-        os_log(transport_log(), "Media connection accepted from iPad");
+        os_log(transport_log(), "DTLS media connection accepted from iPad");
 
         /* Replace any existing media connection */
         if (self2.mediaConnection) {
@@ -213,7 +383,7 @@ static const char *kInputPortStr = "14568";
 
         nw_connection_set_state_changed_handler(connection, ^(nw_connection_state_t state, nw_error_t _Nullable connError) {
             if (state == nw_connection_state_failed || state == nw_connection_state_cancelled) {
-                os_log(transport_log(), "Media connection ended");
+                os_log(transport_log(), "DTLS media connection ended");
                 USBNetworkTransport *self3 = weakSelf;
                 if (self3 && self3.mediaConnection == connection) {
                     self3.mediaConnection = nil;
@@ -238,9 +408,9 @@ static const char *kInputPortStr = "14568";
 
     nw_listener_set_state_changed_handler(_inputListener, ^(nw_listener_state_t state, nw_error_t _Nullable error) {
         if (state == nw_listener_state_ready) {
-            os_log(transport_log(), "Input listener ready on port %s", kInputPortStr);
+            os_log(transport_log(), "TLS input listener ready on port %s", kInputPortStr);
         } else if (state == nw_listener_state_failed) {
-            os_log_error(transport_log(), "Input listener failed: %{public}@",
+            os_log_error(transport_log(), "TLS input listener failed: %{public}@",
                          error ?: (nw_error_t)@"unknown");
         }
     });
@@ -249,7 +419,7 @@ static const char *kInputPortStr = "14568";
         USBNetworkTransport *self2 = weakSelf;
         if (!self2) return;
 
-        os_log(transport_log(), "Input connection accepted from iPad");
+        os_log(transport_log(), "TLS input connection accepted from iPad");
 
         if (self2.inputConnection) {
             nw_connection_cancel(self2.inputConnection);
@@ -261,7 +431,7 @@ static const char *kInputPortStr = "14568";
 
         nw_connection_set_state_changed_handler(connection, ^(nw_connection_state_t state, nw_error_t _Nullable connError) {
             if (state == nw_connection_state_failed || state == nw_connection_state_cancelled) {
-                os_log(transport_log(), "Input connection ended");
+                os_log(transport_log(), "TLS input connection ended");
                 USBNetworkTransport *self3 = weakSelf;
                 if (self3 && self3.inputConnection == connection) {
                     self3.inputConnection = nil;

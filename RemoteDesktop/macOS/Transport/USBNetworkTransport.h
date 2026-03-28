@@ -2,6 +2,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Network/Network.h>
+#import <Security/Security.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -12,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
  * separate NWListener instances for UDP (media, port 14567) and TCP (input,
  * port 14568) bound to the exact NWInterface object (never hardcoded name).
  *
+ * All connections use TLS 1.3 (TCP) and DTLS (UDP) with certificate pinning.
+ * No cleartext fallback exists.
+ *
  * Mac is the LISTENER side -- iPad connects to these listeners.
  */
 @interface USBNetworkTransport : NSObject
@@ -21,6 +25,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /** The active USB NCM interface (nil if none detected). */
 @property (nonatomic, readonly, nullable) nw_interface_t activeInterface;
+
+/** The Mac's TLS identity (SecIdentityRef) used as server identity for all listeners. */
+@property (nonatomic, nullable) SecIdentityRef tlsIdentity;
 
 /** Callback fired when raw media frame data arrives over UDP. */
 @property (nonatomic, copy, nullable) void (^onMediaReceived)(const void *data, size_t length);
@@ -34,6 +41,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * Start monitoring for USB NCM interfaces.
  * When an interface is detected, listeners are created automatically.
+ * Requires tlsIdentity to be set before calling.
  */
 - (void)startMonitoring;
 

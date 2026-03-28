@@ -1,5 +1,7 @@
 import Foundation
 import Network
+import Security
+import CryptoKit
 import os.log
 
 /// USB NCM transport for the iPadOS app.
@@ -7,6 +9,9 @@ import os.log
 /// Detects USB NCM (wiredEthernet) interfaces via NWPathMonitor, then creates
 /// NWConnection instances for UDP (media, port 14567) and TCP (input, port 14568)
 /// bound to the exact NWInterface object (never hardcoded name -- per research pitfall).
+///
+/// All connections use TLS 1.3 (TCP) and DTLS (UDP) with certificate pinning.
+/// No cleartext fallback exists. If TLS/DTLS handshake fails, connection fails.
 ///
 /// iPad is the CONNECTOR side -- it connects to the Mac's listeners.
 final class USBNetworkTransport {
@@ -36,6 +41,101 @@ final class USBNetworkTransport {
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
+    private let keychainService = "com.ryheff.keyd.remote.app"
+
+    // MARK: - Certificate Pinning
+
+    /// Verify peer certificate against stored Mac cert fingerprint from Keychain.
+    /// Returns true if fingerprint matches stored value, false otherwise.
+    private func verifyPeerCertificate(_ trust: sec_trust_t) -> Bool {
+        let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
+
+        guard let certChain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate],
+              let peerCert = certChain.first else {
+            log.error("Certificate verify: no peer certificate")
+            return false
+        }
+
+        let peerCertData = SecCertificateCopyData(peerCert) as Data
+        let fingerprint = SHA256.hash(data: peerCertData)
+        let peerFingerprint = Data(fingerprint)
+
+        guard let storedFingerprint = loadStoredPeerFingerprint() else {
+            log.error("Certificate verify: no stored peer fingerprint (not paired)")
+            return false
+        }
+
+        let match = peerFingerprint == storedFingerprint
+        if !match {
+            log.error("Certificate verify: peer cert fingerprint MISMATCH -- rejecting")
+        } else {
+            log.info("Certificate verify: peer cert fingerprint matches stored -- trusted")
+        }
+        return match
+    }
+
+    /// Load stored Mac cert fingerprint from Keychain.
+    private func loadStoredPeerFingerprint() -> Data? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: "peer-cert-fingerprint",
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else { return nil }
+        return result as? Data
+    }
+
+    // MARK: - TLS/DTLS Parameter Configuration
+
+    /// Create TLS 1.3 parameters for TCP connections with certificate pinning.
+    /// No cleartext fallback -- if TLS handshake fails, connection fails.
+    private func createSecureTCPParameters(interface: NWInterface) -> NWParameters {
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            tlsOptions.securityProtocolOptions, .TLSv13)
+
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
+            { [weak self] metadata, trust, complete in
+                guard let self = self else {
+                    complete(false)
+                    return
+                }
+                let trusted = self.verifyPeerCertificate(trust)
+                complete(trusted)
+            }, DispatchQueue.global())
+
+        let params = NWParameters(tls: tlsOptions, tcp: .init())
+        params.requiredInterface = interface
+        return params
+    }
+
+    /// Create DTLS parameters for UDP connections with certificate pinning.
+    /// No cleartext fallback -- if DTLS handshake fails, connection fails.
+    private func createSecureUDPParameters(interface: NWInterface) -> NWParameters {
+        let dtlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            dtlsOptions.securityProtocolOptions, .TLSv13)
+
+        sec_protocol_options_set_verify_block(dtlsOptions.securityProtocolOptions,
+            { [weak self] metadata, trust, complete in
+                guard let self = self else {
+                    complete(false)
+                    return
+                }
+                let trusted = self.verifyPeerCertificate(trust)
+                complete(trusted)
+            }, DispatchQueue.global())
+
+        let params = NWParameters(dtls: dtlsOptions, udp: .init())
+        params.requiredInterface = interface
+        params.requiredLocalEndpoint = nil
+        return params
+    }
+
     // MARK: - Public API
 
     /// Start monitoring for USB NCM interfaces.
@@ -43,7 +143,7 @@ final class USBNetworkTransport {
     func startMonitoring() {
         guard pathMonitor == nil else { return }
 
-        log.info("Starting USB NCM path monitor")
+        log.info("Starting USB NCM path monitor (TLS/DTLS enabled)")
 
         let monitor = NWPathMonitor(requiredInterfaceType: .wiredEthernet)
         pathMonitor = monitor
@@ -117,13 +217,10 @@ final class USBNetworkTransport {
     private func connectOverUSBNCM(interface: NWInterface) {
         tearDownConnections()
 
-        log.info("Connecting over USB NCM to Mac on interface \(interface.debugDescription)")
+        log.info("Connecting over USB NCM with TLS/DTLS to Mac on interface \(interface.debugDescription)")
 
-        // UDP connection for media (port 14567)
-        // iPad connects to Mac's link-local address on the USB NCM interface
-        let udpParams = NWParameters(dtls: nil, udp: .init())
-        udpParams.requiredInterface = interface
-        udpParams.requiredLocalEndpoint = nil
+        // DTLS-encrypted UDP connection for media (port 14567)
+        let udpParams = createSecureUDPParameters(interface: interface)
 
         let mediaHost = NWEndpoint.Host("::")
         let mediaPort = NWEndpoint.Port(rawValue: keydrdMediaPort)!
@@ -136,10 +233,10 @@ final class USBNetworkTransport {
             guard let self = self else { return }
             switch state {
             case .ready:
-                self.log.info("USB NCM media UDP connection ready")
+                self.log.info("USB NCM DTLS media connection ready")
                 self.scheduleMediaReceive(mediaConn)
             case .failed(let error):
-                self.log.error("USB NCM media connection failed: \(error)")
+                self.log.error("USB NCM DTLS media connection failed: \(error)")
                 self.mediaConnection = nil
                 if self.inputConnection == nil { self.isConnected = false }
             case .cancelled:
@@ -152,9 +249,8 @@ final class USBNetworkTransport {
 
         mediaConn.start(queue: transportQueue)
 
-        // TCP connection for input (port 14568)
-        let tcpParams = NWParameters(tls: nil, tcp: .init())
-        tcpParams.requiredInterface = interface
+        // TLS 1.3-encrypted TCP connection for input (port 14568)
+        let tcpParams = createSecureTCPParameters(interface: interface)
 
         let inputPort = NWEndpoint.Port(rawValue: keydrdInputPort)!
         let inputEndpoint = NWEndpoint.hostPort(host: mediaHost, port: inputPort)
@@ -166,11 +262,11 @@ final class USBNetworkTransport {
             guard let self = self else { return }
             switch state {
             case .ready:
-                self.log.info("USB NCM input TCP connection ready")
+                self.log.info("USB NCM TLS input connection ready")
                 self.isConnected = true
                 self.scheduleInputReceive(inputConn)
             case .failed(let error):
-                self.log.error("USB NCM input connection failed: \(error)")
+                self.log.error("USB NCM TLS input connection failed: \(error)")
                 self.inputConnection = nil
                 if self.mediaConnection == nil { self.isConnected = false }
             case .cancelled:
