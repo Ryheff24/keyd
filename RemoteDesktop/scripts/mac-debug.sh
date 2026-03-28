@@ -58,6 +58,11 @@ echo "=== Launching $SCHEME ==="
 pkill -f "RemoteDesktopAgent" 2>/dev/null || true
 sleep 1
 
+# Delete old keydrd TLS items from login keychain to avoid ACL prompts
+# (each rebuild changes code signature, old items have stale ACL)
+security delete-certificate -c "keydrd-agent" 2>/dev/null || true
+security delete-identity -c "keydrd-agent" 2>/dev/null || true
+
 # Launch the app
 "$APP_PATH/Contents/MacOS/RemoteDesktopAgent" &
 APP_PID=$!

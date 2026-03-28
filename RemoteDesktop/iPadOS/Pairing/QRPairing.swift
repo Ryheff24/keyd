@@ -428,11 +428,12 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         connection.start(queue: pairingQueue)
         print("[CONSOLE] connection.start() returned (async)")
 
-        /* Timeout: cancel if connection doesn't reach .ready in 10s */
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10.0) { [weak self] in
+        /* Timeout: cancel if pairing doesn't complete in 30s
+         * (TLS 1.3 handshake with self-signed cert takes ~7s alone) */
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 30.0) { [weak self] in
             guard let self = self, self.isPairingInProgress else { return }
-            print("[CONSOLE] pairing connection TIMEOUT after 10s")
-            self.log.error("[QRPairing] pairing connection timed out after 10 seconds")
+            print("[CONSOLE] pairing connection TIMEOUT after 30s")
+            self.log.error("[QRPairing] pairing connection timed out after 30 seconds")
             connection.cancel()
             self.isPairingInProgress = false
             DispatchQueue.main.async {

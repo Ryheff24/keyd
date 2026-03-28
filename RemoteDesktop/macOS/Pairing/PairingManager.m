@@ -65,11 +65,10 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 #pragma mark - TLS Identity
 
 - (void)ensureTLSIdentity {
-    /* Always regenerate TLS identity to avoid Keychain ACL prompts
-     * from code signature changes between dev builds.
-     * Delete old items first (delete doesn't trigger prompts).
+    /* Always regenerate to avoid Keychain ACL prompts from code signature
+     * changes between dev builds. Old items are cleaned up by the debug
+     * script (security CLI) before launch — we just generate fresh here.
      * Also reset pairing since shared secret was tied to old cert. */
-    [self deleteTLSIdentityFromKeychain];
     [self resetPairing];
 
     os_log(pairing_log(), "Generating fresh self-signed TLS identity");
