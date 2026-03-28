@@ -1,184 +1,224 @@
 # Stack Research
 
-**Domain:** iOS-to-macOS keyboard controller (USB/AWDL transport + AX/CGEvent injection)
-**Researched:** 2026-02-27
-**Confidence:** MEDIUM (web search unavailable; based on training data to August 2025 + official Apple API knowledge; verify versions against Xcode release notes before coding)
+**Domain:** iPadOS-to-macOS Remote Desktop (keyd-rd v2.0)
+**Researched:** 2026-03-27
+**Confidence:** HIGH (Apple frameworks verified via official docs, WWDC sessions, and community projects; LZ4 v1.10.0 verified on GitHub)
 
 ---
 
-## Research Note
+## Scope
 
-WebSearch and WebFetch were unavailable during this research session. All findings are based on
-training data (cutoff August 2025) and the researcher's knowledge of Apple SDK APIs. Confidence
-levels reflect this limitation. Verify specific API availability and deprecation status in the
-current Xcode 16.x / iOS 18.x / macOS 15.x release notes before writing any code.
+This document covers ONLY the stack additions needed for keyd-rd remote desktop features.
+The following are already validated by keyd v1.0 and are NOT re-researched here:
 
----
-
-## Recommended Stack
-
-### Core Frameworks — iOS App
-
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| Swift | 6.0 (Xcode 16) | Primary language for iOS app | Swift Concurrency (async/await, actors) is the right model for the event-driven transport + UI work; SwiftUI is the right framework for the Liquid Glass UI; Obj-C would require bridging for no gain |
-| SwiftUI | iOS 17+ | Keyboard layout, hotkey panel, Liquid Glass UI | The `.glassEffect()` / `.ultraThinMaterial` approach to Liquid Glass is native in SwiftUI; UIKit would require manual CALayer work for the same effect |
-| UIKit (targeted use) | iOS 17+ | Host the stock iOS keyboard inside the app via a hidden text field | Keep a UIKit text field as first responder so the system keyboard stays active, then wrap that host in `UIViewRepresentable` for SwiftUI interop |
-| Network.framework | iOS 12+ | AWDL transport (Bonjour service discovery + NWConnection) | Apple's unified transport API; supports AWDL via `NWParameters` with `.peerToPeer` interface; replaces raw BSD sockets for AWDL |
-| Foundation (URLSession / Stream) | iOS 16+ | usbmuxd TCP socket communication | usbmuxd exposes a local TCP port (62078) on macOS; on iOS the connection is inbound via a reverse tunnel; use BSD sockets (POSIX) or `NWConnection` over TCP loopback |
-
-### Core Frameworks — macOS Agent
-
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| Swift | 6.0 (Xcode 16) | Primary language for macOS daemon/agent | Same reasoning as iOS; Swift Concurrency suits the event loop needed to receive packets and dispatch AX calls |
-| AppKit | macOS 14+ | NSApplication lifecycle for Login Item / LaunchAgent | macOS agent needs an app bundle or LaunchAgent plist; `NSApplicationActivationPolicy.accessory` hides it from the Dock |
-| Accessibility (AX) framework | macOS 14+ | Read focused element, detect secure input, and support later cursor/selection sync | `AXUIElementCreateSystemWide()` + `AXUIElementCopyAttributeValue(kAXFocusedUIElement)` is used for state reads; AX value writes are not treated as the production text-entry path |
-| CoreGraphics (CGEvent) | macOS 14+ | Inject keystrokes and modifier+key combos (Cmd-C/V/Z etc.) | `CGEventCreateKeyboardEvent` + `CGEventPost(...)` is the production write path; current implementation uses annotated-session for Unicode text and HID tap for virtual-key shortcuts |
-| Network.framework | macOS 12+ | AWDL listener (NWListener) and usbmuxd TCP server | Same NWConnection/NWListener API on macOS; AWDL service advertisement via `NWListener` with Bonjour service name |
-| ServiceManagement | macOS 13+ | Register Login Item / privileged helper | `SMAppService.mainApp.register()` replaces the deprecated `SMLoginItemSetEnabled` in macOS 13+; required to auto-start the agent at login |
-
-### Transport Layer Detail
-
-| Component | Technology | Version | Purpose | Why |
-|-----------|-----------|---------|---------|-----|
-| USB channel | BSD sockets over usbmuxd TCP tunnel | macOS usbmuxd (built-in) | Create a listening TCP server on macOS; usbmuxd forwards iOS connections to that port | The usbmuxd mux daemon (built into macOS since OS X 10.6) handles the USB multiplexing transparently; no additional library needed; just bind to localhost:PORT and receive connections from iOS when the device is plugged in |
-| USB channel (iOS side) | BSD sockets (POSIX connect to usbmuxd-forwarded port) | iOS 16+ | iOS initiates TCP connect to the forwarded port | On iOS, iTunes / Apple Devices sets up the forward; the iOS app simply `connect()`s to the loopback address at the negotiated port; usbmuxd handles the rest |
-| AWDL channel | Network.framework NWBrowser + NWListener | iOS 12+ / macOS 12+ | Bonjour service discovery over AWDL interface | `NWParameters.applicationService` enables AWDL-capable peer connections without needing explicit AWDL interface selection; Bonjour `_keyd._tcp` service type enables discovery |
-| Transport switchover | Custom Swift state machine | N/A | Detect USB disconnect, promote AWDL connection to primary | Monitor usbmuxd connection closure; have AWDL connection pre-established in parallel; switch active channel on USB drop |
-| Message framing | Length-prefixed binary frames | N/A | Reliable message boundaries over TCP stream | TCP is a byte stream; prefix each message with a 4-byte big-endian length so receiver can reassemble; simpler and lower overhead than JSON for a real-time keyboard |
-
-### macOS Privileged Access
-
-| Concern | Technology | Notes |
-|---------|-----------|-------|
-| AX permission | Accessibility TCC (macOS Privacy) | User must grant "Accessibility" permission in System Settings > Privacy & Security; the app bundle must be code-signed (self-signed works for personal use); without this, AXUIElement calls silently fail |
-| CGEvent permission | Same Accessibility TCC | CGEventPost with `kCGAnnotatedSessionEventTap` requires Accessibility permission for the calling process |
-| Input Monitoring | Input Monitoring TCC | Treat as required for this project; the agent checks it at launch and provides a relaunch path after granting |
-| Agent auto-start | SMAppService (macOS 13+) | `SMAppService.mainApp` registers the main app as a Login Item without needing a helper bundle; simpler than SMJobBless for this use case |
-| No privileged helper needed | — | For AX + CGEvent injection only, a standard user-space agent with Accessibility TCC is sufficient; `SMJobBless` / PrivilegedHelperTool is only needed for kernel-level operations (not required here) |
+- usbmuxd TCP transport
+- AWDL Bonjour discovery (NWBrowser / NWListener)
+- CGEvent injection for keyboard input
+- QR pairing with ECDH key exchange
+- Transport failover FSM pattern
+- SharedProtocol SPM package
+- iOS UIViewController-based app architecture
+- macOS menu bar agent (NSStatusItem, SMAppService)
 
 ---
 
-## Supporting Libraries
+## New Stack: macOS Agent (C + Objective-C only)
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| peertalk (rsms/peertalk) | ~0.x (Obj-C, unmaintained) | Original usbmuxd wrapper used in iOS-Mac USB apps | DO NOT USE — see "What NOT to Use" below; use raw BSD sockets or NWConnection instead |
-| libimobiledevice | latest (C library) | Comprehensive iOS device management including usbmuxd | DO NOT USE for this project — see "What NOT to Use"; usbmuxd is built into macOS and accessible via raw TCP without this library |
-| Combine | Built-in (Swift 5.5+) | Reactive streams for transport state + UI binding | Use for transport state machine (USB connected/disconnected events) wiring to SwiftUI; pairs with `@Published` properties on the connection manager |
-| swift-nio | 2.x | Alternative async TCP/networking primitives | Optional; only if NWConnection proves too high-level for the framing requirements; adds complexity; not recommended unless NWConnection has issues |
+### Core Apple Frameworks
+
+| Framework | Min macOS | Language API | Purpose | Why |
+|-----------|-----------|-------------|---------|-----|
+| ScreenCaptureKit | 12.3 | Objective-C (`SCStream`, `SCStreamDelegate`, `SCStreamOutput`) | Full-display capture at Retina resolution, up to 120fps | Hardware-accelerated. Delivers `IOSurface`-backed `CMSampleBuffer` directly — no copy needed to reach the compressor. `SCFrameStatus` metadata lets you skip idle frames (screen unchanged). `SCStreamConfiguration.minimumFrameInterval` controls target fps (set to `1.0/120.0`). Replaced deprecated `CGDisplayStream`. |
+| VideoToolbox | 10.13 (HEVC encode) | C (`VTCompressionSession`, `VTCompressionSessionCreate`, `VTCompressionSessionEncodeFrame`) | HEVC hardware encode for wireless mode | Pure C API. Runs on Apple's dedicated media engine — zero CPU and zero GPU cost. `kVTVideoCodecType_HEVC` + `kVTCompressionPropertyKey_RealTime = kCFBooleanTrue`. Mac CPU budget remains intact for LLM workloads. |
+| Network.framework | 10.14 | C (`nw_connection_t`, `nw_listener_t`, `nw_path_monitor_t`) | USB NCM interface detection, UDP media stream, TCP input stream, TLS 1.3 | Full C API with ARC-compatible reference types. `nw_path_monitor_create_with_type(nw_interface_type_wired_ethernet)` detects USB NCM interface connect/disconnect. `nw_tls_create_options()` + `sec_protocol_options_set_min_tls_protocol_version(..., tls_protocol_version_TLSv13)` enforces TLS 1.3 on TCP channel. TLS 1.3 is default since macOS 10.14.4. |
+| CoreAudio (Tap API) | 14.2 | C (`AudioHardwareCreateProcessTap`, `CATapDescription`, IO Proc callback) | System audio capture — all processes via single tap | Introduced December 2023. Only built-in API that captures system audio output without a virtual audio driver or kernel extension. `CATapDescription` with empty process list captures all audio. IO Proc delivers PCM buffers. Requires `NSAudioCaptureUsageDescription` in Info.plist. |
+| IOSurface | 10.6 | C (`IOSurfaceLock`, `IOSurfaceGetBaseAddress`, `IOSurfaceGetBytesPerRow`) | Zero-copy pixel data access from ScreenCaptureKit frames | Lock surface for CPU read with `IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL)`, get raw pointer via `IOSurfaceGetBaseAddress()`, pass directly to `LZ4_compress_default()`. No `memcpy`. |
+| AppKit (NSPasteboard) | 10.0 | Objective-C (`NSPasteboard`, `changeCount`) | Clipboard read/write + change detection | `[NSPasteboard generalPasteboard]`. macOS has no clipboard change notification — poll `changeCount` via a low-frequency `dispatch_source_t` timer (~500ms). Write: `clearContents` + `setString:forType:NSPasteboardTypeString`. |
+| CoreGraphics (CGEvent) | 10.4 | C — reused from keyd v1.0 | Mouse + keyboard injection | `CGEventCreateMouseEvent`, `CGEventCreateKeyboardEvent`, `CGEventPost`. Already proven against Safari/Firefox. Adding `kCGMouseEventDeltaX`/`Y` for move events and scroll wheel events. |
+
+### Vendored C Library
+
+| Library | Version | Files to Add | Purpose | Why Not Apple's Built-in |
+|---------|---------|-------------|---------|--------------------------|
+| LZ4 | v1.10.0 (July 22, 2024) | `lz4.c` + `lz4.h` (2 files, add directly to Xcode target) | LZ4 block compression for wired keyframes and XOR delta frames | Apple's `Compression.framework` (`COMPRESSION_LZ4`) uses **LZ4 frame format** with framing overhead and a streaming API. keyd-rd needs **LZ4 block format** for direct `IOSurface` base address → compressed buffer with no wrapper. Block format also allows precise control over chunk boundaries required by the delta pipeline. v1.10.0 is BSD-2-Clause licensed. Multithreading in v1.10.0 is unused here (single-core hot path). |
+
+### Delta Compression (Pure C, Written from Scratch)
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `delta.c` / `delta.h` | `RemoteDesktop/Shared/` | XOR current IOSurface frame vs previous keyframe buffer, then LZ4-compress the diff. Threshold: if delta compressed size > 60% of keyframe compressed size, send keyframe instead. ~10 lines of SIMD-friendly XOR code. No external library. |
+
+### Binary Protocol (Pure C, Written from Scratch)
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `protocol.c` / `protocol.h` | `RemoteDesktop/Shared/` | 24-byte media frame header (magic, flags, seq, chunk index/total, payload size, timestamp, CRC32) + 9-byte input event header (type, timestamp, payload). C structs with `__attribute__((packed))`. Shared between macOS (compiled as C) and iPad (imported via bridging header). |
 
 ---
 
-## Development Tools
+## New Stack: iPadOS App (Swift)
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| Xcode 16.x | iOS + macOS development, signing, deployment | Required; use the Simulator for initial AX testing but must test on real device for usbmuxd and AWDL |
-| Instruments (Time Profiler) | Latency profiling for keystroke round-trip | Keyboard latency must be under 50ms; profile early |
-| `axe` CLI / Accessibility Inspector.app | Inspect AX hierarchy of target apps | Built into Xcode; essential for understanding which AX attributes Safari/Firefox/Messages expose |
-| Network Link Conditioner | Simulate USB/AWDL bandwidth and latency | Test AWDL fallback behavior under degraded conditions |
-| `idevice_id` / `ideviceinfo` | Verify usbmuxd device detection from command line | Part of libimobiledevice CLI tools; useful for debugging the USB connection independent of app code |
+### Core Apple Frameworks
+
+| Framework | Min iPadOS | Language API | Purpose | Why |
+|-----------|-----------|-------------|---------|-----|
+| Metal + MetalKit (MTKView) | 9.0 | Swift (`MTKView`, `MTKViewDelegate`, `CAMetalLayer`) | Render decompressed frames at ProMotion 120Hz with P3 color | Hardware GPU rendering. `MTKView` manages `CAMetalLayer` and the draw loop. Set `colorPixelFormat = .bgra8Unorm` and `colorspace = CGColorSpace(name: .displayP3)` on `CAMetalLayer` for P3. Use `CAMetalDisplayLink` (iOS 17+) for precise ProMotion frame pacing, or `preferredFramesPerSecond = 120` as fallback (iOS 16). |
+| VideoToolbox | 11.0 (HEVC decode) | Swift (C API bridged) — `VTDecompressionSession` | HEVC hardware decode for wireless mode | M4 iPad has dedicated media engine. Decode does not compete with Metal rendering. `VTDecompressionSessionCreate` + `VTDecompressionSessionDecodeFrame`. HEVC hardware decode available on A9+ (iOS 11+); M4 iPad Pro confirmed. |
+| Network.framework | 12.0 | Swift (`NWConnection`, `NWListener`, `NWPathMonitor`) | USB NCM transport + TLS + interface detection | Swift API mirrors the C API. `NWPathMonitor(requiredInterfaceType: .wiredEthernet)` detects USB NCM connect/disconnect. `NWProtocolTLS.Options` with `sec_protocol_options_set_min_tls_protocol_version` enforces TLS 1.3. |
+| UIKit (UIPasteboard) | 3.0 | Swift | Clipboard read/write + bidirectional sync | `UIPasteboard.general`. Change notification: `NotificationCenter.default.addObserver(..., name: UIPasteboard.changedNotification)`. iOS 14+ shows a system banner on clipboard access — use metadata properties (`hasStrings`) to avoid spurious banners on polling checks. |
+| UIKit (gesture recognizers) | 3.2 | Swift | Touch → mouse event translation | `UIPanGestureRecognizer` (mouse move + two-finger scroll), `UITapGestureRecognizer` (single tap = left click, two-finger tap = right click), `UIPinchGestureRecognizer` (viewport zoom), `UIHoverGestureRecognizer` (pointer mode on M4). Poll at 120Hz via `CADisplayLink`. |
+| AVFoundation | 3.0 | Swift (`AVAudioSession`, `AVAudioEngine`) | Receive and play audio stream from Mac | `AVAudioSession.sharedInstance().setCategory(.playback)`. `AVAudioEngine` for low-latency PCM playback. AAC-LC decode via built-in `AudioConverter` (no external codec needed). |
+
+### Vendored C Library (iPad)
+
+| Library | Version | Integration | Purpose |
+|---------|---------|-------------|---------|
+| LZ4 | v1.10.0 | `lz4.c` + `lz4.h` added to iPadOS Xcode target; exposed via bridging header `#include "lz4.h"` | LZ4 decompress + delta apply. Same vendored source files as macOS side — single source of truth. |
+
+---
+
+## Security Stack (Both Sides)
+
+| Technology | API | Where Used | Notes |
+|------------|-----|-----------|-------|
+| TLS 1.3 | macOS C: `nw_tls_create_options()` + `sec_protocol_options_set_min_tls_protocol_version(..., tls_protocol_version_TLSv13)`. iPad Swift: `NWProtocolTLS.Options` | TCP input stream on both sides | Default since iOS 12.2 / macOS 10.14.4. Enforce minimum explicitly to prevent downgrade. |
+| DTLS | macOS C: `nw_parameters_create_secure_udp(...)`. iPad Swift: `NWParameters.dtls` | UDP media stream on both sides | Network.framework negotiates DTLS version internally. Available macOS 10.14+ / iOS 12.0+. Enforce minimum via `sec_protocol_options`. |
+| Certificate pinning | `Security.framework` — `SecTrust` + `sec_protocol_verify_block` (C) / `sec_protocol_options_set_verify_block` (Swift) | Post-pairing handshakes | After QR pairing ECDH exchange, pin the self-signed cert. Reject any connection presenting a different cert. Reuse the keyd v1.0 keychain storage pattern under new service ID `com.ryheff.keyd.remote`. |
+
+---
+
+## OS Version Requirements (Hard Floors)
+
+| Platform | Minimum | Rationale |
+|----------|---------|-----------|
+| macOS | **14.2 (Sonoma, December 2023)** | `AudioHardwareCreateProcessTap` / CoreAudio Tap API. Without it, system audio capture requires a user-installed virtual audio driver — unacceptable. ScreenCaptureKit dirty rects and `SCFrameStatusIdle` also fully stable in 14.x. Both target Macs (M1 Max MacBook Pro) ship macOS 14+. |
+| iPadOS | **17.0** | `CAMetalDisplayLink` for precise ProMotion 120Hz frame pacing. Without it, `MTKView.preferredFramesPerSecond = 120` works but timing jitters on adaptive displays. M4 iPad Pro ships iPadOS 17+. |
+
+---
+
+## What NOT to Add
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| Swift on macOS agent | ~15-30 MB Swift runtime overhead (DC-2: Mac is resource-starved, <50 MB RSS budget). All needed Apple frameworks have native C/Obj-C APIs — no Swift bridge needed. | C + Objective-C only. |
+| Apple `Compression.framework` (`COMPRESSION_LZ4`) | Uses LZ4 **frame format** with framing headers, not LZ4 block format. Adds overhead incompatible with the delta pipeline's block-level access. Less control over compression boundaries. | Vendored `lz4.c` + `lz4.h` (2 files, BSD-2-Clause). |
+| usbmuxd for video transport | usbmuxd is a TCP tunnel per-connection. For video streaming, each UDP datagram would need a connection — wrong abstraction. USB NCM is a real network interface at full USB 3.x / TB4 speeds with standard UDP. | `Network.framework` UDP over USB NCM `en` interface (`nw_interface_type_wired_ethernet`). |
+| ReplayKit | Designed for game recording and broadcast. Adds HEVC encoding overhead regardless of mode and imposes latency incompatible with <8ms target. No IOSurface access. | `ScreenCaptureKit SCStream` → `IOSurface` → LZ4 pipeline. |
+| WebRTC | Cloud-infrastructure-oriented (STUN/TURN/ICE). Adds significant complexity and latency for a direct USB or same-LAN scenario. Not needed. | Direct UDP/TCP via `Network.framework`. |
+| Opus audio codec | Requires vendoring a ~700 KB C library (libopus). Designed for voice/lossy compression. Adds a dependency with no clear benefit — USB NCM has enough bandwidth for AAC-LC or even uncompressed PCM. | AAC-LC encode via built-in `AudioConverter` on macOS; `AVAudioEngine` decode on iPad. Zero additional dependencies. |
+| `AVCaptureSession` for screen capture | Designed for camera capture. No display capture capability. | `ScreenCaptureKit SCStream`. |
+| JSON encoding in the data path | Parsing overhead per frame is incompatible with <8ms latency target and <3% CPU budget. Frames are fixed-structure binary data. | Binary protocol: 24-byte media header + 9-byte input header (`__attribute__((packed))` C structs). |
+| libx265 (software HEVC encoder) | Software encoder uses CPU — directly competing with LLM workloads on the Mac. Would blow the <3% CPU budget immediately. | `VideoToolbox VTCompressionSession` with `kVTVideoCodecType_HEVC` — media engine, not CPU. |
+| Virtual audio driver (BlackHole, etc.) | Requires user to install a system extension. Brittle, version-dependent, invasive for a personal-use tool. | CoreAudio Tap API (`AudioHardwareCreateProcessTap`) — built-in since macOS 14.2. |
+
+---
+
+## Stack Patterns by Mode
+
+**Wired mode (USB NCM, primary path):**
+```
+SCStream callback → SCFrameStatus check (skip idle) → IOSurfaceLock → base address pointer
+→ delta.c XOR vs prev keyframe → LZ4_compress_default() → 24-byte header prepend
+→ nw_connection_send() UDP over wiredEthernet interface
+```
+
+**Wireless mode (Wi-Fi fallback, auto-triggered on USB NCM path loss):**
+```
+SCStream callback → CMSampleBuffer → VTCompressionSessionEncodeFrame(kVTVideoCodecType_HEVC)
+→ output callback: HEVC NAL units → 24-byte header (HEVC flag set)
+→ nw_connection_send() UDP over wifi interface
+```
+
+**Eco mode (user-toggled or automatic under thermal pressure):**
+- `SCStreamConfiguration.width/height` reduced to 1080p
+- `SCStreamConfiguration.minimumFrameInterval = 1.0/30.0`
+- Encoding: HEVC even over wired (avoids delta XOR cost)
+- Target: <1% CPU, <20 MB RSS
+
+**Audio path (macOS → iPad):**
+```
+AudioHardwareCreateProcessTap (all processes) → IO Proc PCM callback
+→ AudioConverter encode to AAC-LC → separate UDP datagram stream
+→ iPad AVAudioEngine decode and playback
+```
+
+**Clipboard sync:**
+```
+macOS: dispatch_source_t timer (500ms) → [NSPasteboard changeCount] changed?
+  → yes: read string → send via TCP control channel
+iPad: UIPasteboard.changedNotification → read string → send via TCP control channel
+Both sides: receive control message → write to local pasteboard
+```
+
+---
+
+## Integration Points with keyd v1.0
+
+| v1.0 Component | keyd-rd Reuse Pattern |
+|----------------|----------------------|
+| QR pairing (PairingManager.m) | Copy and adapt for new bundle IDs (`com.ryheff.keyd.remote.*`). Same ECDH key exchange and QR display/scan flow. New keychain service identifier. |
+| Transport failover FSM | Pattern reused. New states: `USB_NCM_CONNECTED`, `WIFI_CONNECTED`, `AWDL_LAST_RESORT`. New trigger: `nw_path_monitor_t` wiredEthernet path loss event. |
+| CGEvent injection (EventInjector.c) | Direct reuse. Add: `CGEventCreateMouseEvent` for move/click, `CGEventCreateScrollWheelEvent2` for scroll. Same Accessibility TCC requirement, same validation against Safari/Firefox. |
+| Bonjour service discovery | Pattern reused for Wi-Fi fallback (`_keyd-rd._tcp`). Different service name from keyd to avoid collision. |
+| Menu bar agent (NSStatusItem, SMAppService) | Direct reuse. New menu items: connection mode indicator (USB NCM / Wi-Fi / AWDL), quality/eco toggle, latency readout. |
+| IOKit USB device detection | Reuse `IOServiceAddMatchingNotification` pattern for iPad connection events. keyd-rd uses Network.framework for the data path, but IOKit still useful for connection state notification. |
 
 ---
 
 ## Alternatives Considered
 
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| USB transport library | Raw BSD sockets over usbmuxd | peertalk (rsms/peertalk) | peertalk is Obj-C, last commit 2015, requires bridging header, adds no value over raw sockets; the usbmuxd protocol it wraps is just a TCP forward |
-| USB transport library | Raw BSD sockets over usbmuxd | libimobiledevice | C library, requires SPM wrapping or manual xcframework, adds hundreds of KB, designed for device management not realtime communication; overkill |
-| AWDL transport | Network.framework NWListener/NWBrowser | Raw AWDL sockets (BSD + SO_RECV_ANYIF) | Raw AWDL requires entitlements Apple doesn't grant to App Store apps; for self-signed personal use it might work but is undocumented and fragile; Network.framework is the supported path |
-| macOS text injection | CGEventCreateKeyboardEvent | IME (Input Method Kit) | IME via InputMethodKit requires a full Input Method bundle registered with the system; massive complexity for personal use; use CGEvent for text entry and reserve AX for state reads/sync |
-| macOS text injection | CGEventCreateKeyboardEvent | IOKit HID virtual device | HID virtual device requires a kernel extension (DriverKit in modern macOS) for full compatibility; far more complexity than CGEvent; CGEvent + AX covers all target apps (Safari, Firefox, Messages) |
-| Language | Swift (both sides) | Objective-C (both sides) | Obj-C has no advantage here; AX and CGEvent APIs have Swift overlays; Network.framework is Swift-first; Obj-C only makes sense if bridging to existing Obj-C code |
-| Language | Swift (both sides) | Mixed Swift + Obj-C | The peertalk dependency would force mixed; since we're not using peertalk, stay pure Swift |
-| macOS agent registration | SMAppService.mainApp | LaunchAgent plist | SMAppService is the supported API in macOS 13+; LaunchAgent plists still work but require manual `launchctl` registration; SMAppService integrates with Login Items in System Settings |
-| AWDL discovery | Bonjour via NWBrowser (_keyd._tcp) | Multipeer Connectivity (MCSession) | Multipeer Connectivity wraps AWDL+Bluetooth in an opaque session; no control over transport selection; cannot enforce AWDL-only; cannot reliably coexist with USB transport in the same session |
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| ScreenCaptureKit | `CGDisplayStream` | Deprecated in macOS 14. No `SCFrameStatusIdle` — always receives frames even when screen is unchanged, wasting compress + send budget. No dirty rect metadata. |
+| LZ4 (vendored, block format) | zlib / LZFSE / zstd | zlib: ~200 MB/s compress — exceeds 1ms budget for 4K. zstd: ~500 MB/s at default level — marginal. LZFSE: Apple-proprietary, not open-source embeddable as cleanly. LZ4 at ~8 GB/s compress (measured) is the only option meeting <1ms target for a 4K frame. |
+| VideoToolbox HEVC (media engine) | libx265 software encoder | Software x265 consumes 15-40% CPU at real-time quality — incompatible with DC-1. Media engine is isolated. |
+| Network.framework UDP | POSIX `sendto`/`recvfrom` | POSIX works but lacks: interface pinning, built-in TLS/DTLS, path monitoring. Network.framework provides all three with a C API that works directly from Objective-C. |
+| CoreAudio Tap API | BlackHole / SoundFlower (virtual audio driver) | Requires user to install a system extension. Not acceptable for a self-contained personal-use tool. |
+| `CAMetalDisplayLink` (iOS 17+) | `CADisplayLink` / `MTKView` timer | `CADisplayLink` has variable timing on ProMotion displays — micro-jitter visible at 120Hz. `CAMetalDisplayLink` is frame-paced to the exact display refresh cycle. |
+| AAC-LC (built-in AudioConverter) | Opus (vendored libopus) | Opus requires a ~700 KB C library. AAC-LC is built into macOS and iOS. For remote desktop audio (44.1/48 kHz stereo), AAC-LC at 128-256 kbps is perceptually transparent. USB NCM easily handles the bitrate. |
 
 ---
 
-## What NOT to Use
+## Version Compatibility Matrix
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| peertalk (rsms/peertalk) | Unmaintained since ~2015; Obj-C only; forces bridging header; wraps usbmuxd TCP in a way that's easily replicated with 50 lines of Swift using BSD sockets or NWConnection | Raw BSD sockets (`bind`/`accept` on macOS, `connect` on iOS) to the usbmuxd-forwarded port |
-| libimobiledevice | C library designed for device management (file transfer, backup, media sync); not designed for real-time bidirectional communication; heavy dependency; complex to build as xcframework | Raw usbmuxd TCP tunnel (no library needed) |
-| Multipeer Connectivity | Cannot enforce AWDL-only transport; may use Bluetooth fallback without your knowledge; opaque session model; no control over message framing; discovered latency issues in real-world use | Network.framework NWBrowser/NWListener with `.peerToPeer` parameters over Bonjour |
-| InputMethodKit (IME) | Requires registering a system Input Method that replaces the user's keyboard system-wide; requires separate bundle, plist registration, and user consent; excessive complexity for injection into 3 target apps | CGEventCreateKeyboardEvent for text entry; AXUIElement for read/sync only |
-| SMJobBless / PrivilegedHelperTool | Requires XPC service, separate signed helper binary, and admin authentication; needed for root-level operations; AX + CGEvent work at user-space level and only need Accessibility TCC | SMAppService.mainApp for Login Item; standard process for AX/CGEvent |
-| Bluetooth transport | Explicitly out of scope per project constraints | usbmuxd (USB) + Network.framework AWDL |
-| JSON framing over the socket | Parsing overhead adds latency; keyboard events are small fixed-size messages; JSON adds 3-10x payload size for no benefit in this context | 4-byte length-prefixed binary frames with a compact message protocol (e.g., struct with event type + key code + modifiers) |
+| Component | macOS Minimum | iPadOS Minimum | Notes |
+|-----------|--------------|----------------|-------|
+| ScreenCaptureKit (SCStream) | 12.3 | N/A | macOS only. `SCFrameStatusIdle` available since 12.3. |
+| VideoToolbox encode (HEVC) | 10.13 | N/A | Hardware encode: T2 chip (2017 iMac Pro) or Apple Silicon. M1 Max confirmed. |
+| VideoToolbox decode (HEVC) | 10.13 | 11.0 | Hardware decode A9+ on iOS. M4 iPad Pro confirmed. |
+| Network.framework (C API: `nw_*_t`) | 10.14 | 12.0 | Full C API available. TLS 1.3 default since 10.14.4 / iOS 12.2. |
+| CoreAudio Tap (`AudioHardwareCreateProcessTap`) | **14.2** | N/A | Hard floor. macOS only. |
+| IOSurface C API (`IOSurfaceLock`, etc.) | 10.6 | 11.0 | Available on both; used on macOS side only. |
+| AppKit NSPasteboard | 10.0 | N/A | macOS only (Objective-C). No change notification — poll changeCount. |
+| UIPasteboard + changedNotification | N/A | 3.0 | iPad only. iOS 14+ shows access banner — use metadata properties to avoid. |
+| Metal / MTKView | 10.11 | 9.0 | Both sides (used on iPad only in keyd-rd). |
+| `CAMetalDisplayLink` | 14.0 | **17.0** | Hard floor for ProMotion precision. Fallback: `preferredFramesPerSecond = 120` on iOS 16. |
+| LZ4 v1.10.0 (vendored C) | Any | Any | Pure C, no OS dependency. BSD-2-Clause. |
+| TLS 1.3 (enforced via sec_protocol_options) | 10.14 | 12.0 | `tls_protocol_version_TLSv13` constant available in Security.framework. |
+| `sec_protocol_options_set_min_tls_protocol_version` | 10.15 | 13.0 | The `tls_protocol_version_t` enum was added in macOS 10.15. On 10.14, use `sec_protocol_options_set_min_tls_protocol_version` with the numeric value `0x0304`. Moot given macOS 14.2 floor. |
 
----
-
-## Stack Patterns by Variant
-
-**For the USB path (usbmuxd):**
-- macOS side: `bind()` a TCP socket on `127.0.0.1:PORT`; usbmuxd forwards the iOS device's connection to this port when the device is connected via USB
-- iOS side: `connect()` to `127.0.0.1:PORT`; the usbmuxd daemon on macOS proxies the connection through USB
-- Port negotiation: use a fixed agreed-upon port (e.g., 12345); no dynamic discovery needed for USB
-- Implementation: use POSIX BSD sockets wrapped in a Swift actor for thread safety, or use `NWConnection` with `.tcp` parameters to the loopback address
-
-**For the AWDL path (Network.framework):**
-- macOS side: `NWListener` advertising `_keyd._tcp.` Bonjour service; use `NWParameters` with `.applicationService` or custom parameters that allow AWDL
-- iOS side: `NWBrowser` browsing for `_keyd._tcp.`; connect to the first discovered endpoint
-- The `com.apple.developer.networking.multicast` entitlement is NOT needed for Bonjour/AWDL NWListener/NWBrowser; this is only needed for raw multicast
-- AWDL requires the `com.apple.developer.networking.wifi-info` entitlement on iOS for some operations but NWBrowser/NWListener over Bonjour may work without it for personal-use self-signed apps (LOW confidence — verify)
-
-**For AX text injection on macOS:**
-- Preferred path: use AX to inspect the focused element, secure-input state, selected range, and later text state for sync
-- For cursor-position-aware editing in later phases: use `kAXSelectedTextRangeAttribute` and related read APIs; do not rely on AX value writes as the primary text-entry path
-- CGEvent path for keystrokes: `CGEventCreateKeyboardEvent(nil, keyCode, keyDown)` → set flags → `CGEventPost(...)` — current implementation uses annotated-session posting for Unicode text and HID posting for virtual-key shortcuts
-- For Safari/Firefox web text fields: treat CGEvent keystroke injection as the reliable write path
-
-**For the macOS agent lifecycle:**
-- Use `NSApplicationActivationPolicy.accessory` so agent has no Dock icon
-- Register as Login Item via `SMAppService.mainApp.register()` on first launch
-- Use a menu bar `NSStatusItem` for "running" indicator and manual quit
-
----
-
-## Version Compatibility
-
-| Component | iOS Minimum | macOS Minimum | Notes |
-|-----------|-------------|---------------|-------|
-| Network.framework NWBrowser/NWListener | iOS 12.0 | macOS 10.14 | Well-established; use iOS 17+ / macOS 14+ to get Swift Concurrency integration (async/await on NWConnection) |
-| NWParameters.applicationService (AWDL-capable) | iOS 14.0 | macOS 11.0 | The specific parameter that enables peer-to-peer without explicit AWDL interface selection; verify entitlement requirements for self-signed apps |
-| SMAppService.mainApp | — | macOS 13.0 | New Login Items API; falls back to `SMLoginItemSetEnabled` on macOS 12 and earlier; since personal-use, target macOS 14+ and use SMAppService exclusively |
-| AXUIElement text injection | — | macOS 10.4+ | Stable, long-standing API; no version concerns |
-| CGEventCreateKeyboardEvent | — | macOS 10.4+ | Stable; CGEventPost behavior with `kCGAnnotatedSessionEventTap` unchanged since introduction |
-| Swift Concurrency (actors, async/await) | iOS 15+ | macOS 12+ | Use for transport state machine; requires deployment target iOS 15+ / macOS 12+; since personal-use targeting latest, use iOS 17 / macOS 14 |
-| SwiftUI `.ultraThinMaterial` (Liquid Glass base) | iOS 15+ | macOS 12+ | The `.ultraThinMaterial` and `.regularMaterial` environment are the foundation for Liquid Glass/glassmorphism in SwiftUI |
-| usbmuxd TCP forwarding | iOS 5+ | macOS 10.6+ | Built-in to macOS; no version concerns for modern targets |
-
----
-
-## Deployment Configuration
-
-This is a personal-use, self-signed project. Key configuration facts:
-
-- **iOS app:** sign with personal Apple Developer account (free tier or paid); weekly re-sign via Xcode or `codesign`; do NOT build as a Custom Keyboard Extension (UIInputViewController) — build as a regular app that presents a keyboard-like UI, since a keyboard extension cannot initiate network connections
-- **macOS agent:** sign with same personal certificate; must be code-signed for AX TCC to grant permission; use `--deep` signing; Accessibility permission is app-identity-bound, so re-signing with the same certificate preserves the TCC grant
-- **Entitlements required (iOS):** `com.apple.developer.networking.wifi-info` (may be needed for AWDL NWBrowser), standard `com.apple.security.network.client`
-- **Entitlements required (macOS):** `com.apple.security.network.server`, `com.apple.security.network.client`, standard sandbox or disable App Sandbox (preferred for personal use to avoid AX sandbox restrictions)
-- **CRITICAL:** macOS App Sandbox blocks `CGEventPost` and many AX operations; for a personal-use agent, build WITHOUT App Sandbox (set `com.apple.security.app-sandbox` to `false` in entitlements); this is fine for personal use and required for the injection to work
+**Effective deployment floors:** macOS 14.2 (CoreAudio Tap), iPadOS 17.0 (CAMetalDisplayLink precision). Both are current hardware targets.
 
 ---
 
 ## Sources
 
-- Apple Developer Documentation: Accessibility (AXUIElement, kAXValueAttribute, kAXFocusedUIElement) — training data, HIGH confidence for API existence, MEDIUM confidence for current behavior in macOS 15.x Safari/Firefox
-- Apple Developer Documentation: Network.framework (NWConnection, NWListener, NWBrowser, NWParameters) — training data to August 2025, HIGH confidence for API existence and AWDL support
-- Apple Developer Documentation: Core Graphics (CGEventCreateKeyboardEvent, CGEventPost) — training data, HIGH confidence (stable API since macOS 10.4)
-- Apple Developer Documentation: ServiceManagement (SMAppService) — training data, HIGH confidence for macOS 13+
-- usbmuxd protocol behavior — MEDIUM confidence (widely documented in open-source projects like libimobiledevice, pymobiledevice3; behavior is stable and well-understood)
-- AWDL entitlement requirements for self-signed apps — LOW confidence (underdocumented; verify by testing)
-- peertalk deprecation status — MEDIUM confidence (last commit 2015 per GitHub; no evidence of active maintenance)
-- Multipeer Connectivity AWDL exclusivity limitations — MEDIUM confidence (documented in developer forums and WWDC sessions)
+- ScreenCaptureKit `SCFrameStatus` Objective-C API — [developer.apple.com/documentation/screencapturekit/scframestatus?language=objc](https://developer.apple.com/documentation/screencapturekit/scframestatus?language=objc) — MEDIUM confidence (JavaScript-blocked page; confirmed via search showing `?language=objc` variant exists and WWDC22 session "Take ScreenCaptureKit to the next level")
+- ScreenCaptureKit `minimumFrameInterval` 120fps — OBS Studio PR #11896 (M1 Max MacBook Pro testing on macOS 15.3.1) + WWDC22 "Take ScreenCaptureKit to the next level" — MEDIUM confidence
+- Network.framework C API (`nw_path_monitor_t`, `nw_connection_t`, `nw_tls_create_options`) — [developer.apple.com/documentation/network/nw_path_monitor_t](https://developer.apple.com/documentation/network/nw_path_monitor_t) + iOS 13.0 SDK headers (xybp888/iOS-SDKs) — HIGH confidence
+- Network.framework available macOS 10.14 / iOS 12.0 — NWListener Apple docs — HIGH confidence
+- TLS 1.3 `sec_protocol_options` C API, `nw_tls_copy_sec_protocol_options` available macOS 10.14 — Rust network-framework-sys bindings + Apple forums — HIGH confidence
+- LZ4 v1.10.0 release July 22, 2024; vendoring via `lz4.c` + `lz4.h`; amalgamation via `cat lz4.c lz4hc.c lz4frame.c > lz4_all.c` — [github.com/lz4/lz4](https://github.com/lz4/lz4) lib/README.md — HIGH confidence
+- Apple `COMPRESSION_LZ4` uses LZ4 frame format — [developer.apple.com/documentation/compression/compression_algorithm/compression_lz4](https://developer.apple.com/documentation/compression/compression_algorithm/compression_lz4) + WWDC15 session 712 — MEDIUM confidence
+- CoreAudio Tap API (`CATapDescription`, `AudioHardwareCreateProcessTap`) introduced macOS 14.2 — insidegui/AudioCap GitHub, makeusabrew/audiotee GitHub, sudara gist — HIGH confidence
+- VideoToolbox HEVC encode VTCompressionSession macOS 10.8+ (C API); HEVC support macOS 10.13+ — Apple docs + objc.io VideoToolbox article — HIGH confidence
+- VideoToolbox HEVC hardware decode iOS 11+ on A9+ — Apple developer forums + HWDecoder GitHub — MEDIUM confidence
+- `CAMetalDisplayLink` iOS 17 / macOS 14 — Apple Developer Forums thread 763426 ("Running 120Hz with low latency") — MEDIUM confidence
+- `UIPasteboard.changedNotification` — Apple docs + HackingWithSwift — HIGH confidence
+- `NSPasteboard changeCount` polling (no notification on macOS) — [developer.apple.com/documentation/appkit/nspasteboard/1533544-changecount](https://developer.apple.com/documentation/appkit/nspasteboard/1533544-changecount) + Apple Community discussion — HIGH confidence
+- USB NCM iPad-Mac creates `wiredEthernet` interface type in `NWPathMonitor` — Apple Developer Forum thread 769793 (USB CDC ECM/NCM) — MEDIUM confidence (confirmed NCM creates an Ethernet interface; NWPathMonitor classifies it as `.wiredEthernet`)
 
 ---
 
-*Stack research for: keyd — iOS-to-macOS keyboard controller (USB/AWDL + AX/CGEvent)*
-*Researched: 2026-02-27*
+*Stack research for: keyd-rd — iPadOS-to-macOS Remote Desktop (v2.0)*
+*Researched: 2026-03-27*

@@ -1,231 +1,277 @@
 # Project Research Summary
 
-**Project:** keyd
-**Domain:** iOS-to-macOS remote keyboard controller (USB/AWDL transport + AX/CGEvent injection)
-**Researched:** 2026-02-27
-**Confidence:** MEDIUM
+**Project:** keyd-rd — iPadOS-to-macOS Remote Desktop (v2.0)
+**Domain:** Direct-cable remote desktop over USB NCM + Wi-Fi/AWDL fallback
+**Researched:** 2026-03-27
+**Confidence:** MEDIUM-HIGH
 
 ## Executive Summary
 
-keyd is a personal-use iOS app that turns an iPhone into a wireless keyboard for macOS, communicating over USB (via usbmuxd) with automatic AWDL fallback when the cable is unplugged. The project has a clearly constrained scope — no Bluetooth, no infrastructure Wi-Fi, no App Store distribution, no multi-Mac support — which actually simplifies implementation. The right approach is a standard iOS foreground app (not a keyboard extension) paired with a macOS menu-bar helper agent, connected over a length-prefixed binary protocol. Both sides are pure Swift 6 using Network.framework for transport, CGEventPost for keystroke injection, and AXUIElement for reading text state in Phase 2.
+keyd-rd is a personal-use remote desktop that streams the Mac display to an iPad over a direct USB-C cable, targeting glass-to-glass latency under 8ms — a bar no commercial product reaches without proprietary hardware. The recommended approach is a purpose-built two-process system: a C+Objective-C macOS agent and a Swift iPadOS app, with no shared binary between them. The hot path runs entirely in C: ScreenCaptureKit delivers `IOSurface`-backed frames, which are XOR-delta-compressed with vendored LZ4 and sent as packed C structs over UDP on the USB NCM interface. The iPad receives, decompresses, and renders via Metal at ProMotion 120Hz. On USB disconnect, the system falls over to Wi-Fi HEVC streaming automatically and silently.
 
-The critical architectural insight from research is that the transport layer must be built and frozen in Phase 1, with all later phases adding features above it without touching it. This means designing the binary protocol as bidirectional from day one — even though only iOS→Mac messages are used in Phase 1 — because retrofitting bidirectional support in Phase 2 would require a protocol rearchitect. The build order within Phase 1 is strict: protocol message types first, then USB transport, then CGEvent injection, then the iOS keyboard UI, then AWDL fallback. Each step requires the previous one to be working before adding the next.
+The approach is well-grounded in Apple's own frameworks. All required APIs are publicly available, fully documented, and have confirmed hardware acceleration paths on the target hardware (M1 Max Mac, M4 iPad Pro). The macOS minimum of 14.2 is the only hard constraint, set by the CoreAudio Tap API for system audio capture. Significant reuse is available from keyd v1.0: the QR pairing flow, CGEvent injection patterns, Bonjour/AWDL discovery, transport failover state machine, and menu bar agent shell are all pattern-copies into the new project — not shared binary code, since keyd-rd uses a binary C protocol (not JSON/Swift) and USB NCM transport (not usbmuxd).
 
-The top risks are all Phase 1 risks: usbmuxd connection reliability (retry-with-backoff required from the first line of transport code), macOS Accessibility and Input Monitoring permissions both being required and both being revoked on every Xcode rebuild, AWDL entitlement requirements that may need a paid Apple Developer account, and the binary choice between an in-app keyboard view versus a keyboard extension (extension is wrong and must not be chosen). These are not edge cases — they are guaranteed issues that will surface during initial development. The mitigation in every case is to address them in Phase 1 rather than discover them during Phase 2 or 3.
+The highest-risk area is the ScreenCaptureKit permission lifecycle on macOS Sequoia 15+, which introduced a periodic re-authorization prompt that can silently break unattended capture. This must be handled as a first-class state in Phase 1 and should prompt an Apple entitlement request for `com.apple.developer.screencapture.persist`. The second-highest risk is the correctness of the delta compression pipeline: IOSurface recycling and the delta frame XOR race condition are both silent corruption bugs that require specific data structures (double-buffer reference frames, explicit IOSurface lock lifetime management) from the very start of Phase 1, not as a post-correctness cleanup.
+
+---
 
 ## Key Findings
 
 ### Recommended Stack
 
-Both the iOS app and macOS helper agent are pure Swift 6 (Xcode 16), with no Objective-C or third-party networking libraries. Network.framework (NWConnection / NWListener / NWBrowser) handles both the USB-forwarded TCP connection and the AWDL peer connection via Bonjour service discovery. CGEventCreateKeyboardEvent + CGEventPost handles all keystroke injection on macOS; AXUIElement handles reading text state (focused element, selected range, value) in Phase 2 but is NOT used for writing text in production — CGEvent is the reliable write path for all apps including browsers. SMAppService.mainApp handles Login Item registration on macOS 13+.
+The macOS agent is C + Objective-C only — Swift is explicitly excluded to stay within the <50 MB RSS budget. All necessary Apple frameworks have native C or Objective-C APIs. The iPadOS app is Swift throughout. The only vendored dependency is LZ4 v1.10.0 (two files: `lz4.c` + `lz4.h`, BSD-2-Clause), used in block mode on both sides. Everything else is Apple-native.
 
-The stack explicitly excludes peertalk (unmaintained since 2015, Obj-C, adds no value over raw BSD sockets), Multipeer Connectivity (cannot enforce AWDL-only, opaque session model), InputMethodKit (system-wide input method is overkill for three target apps), and JSON framing (too slow for real-time keyboard). The macOS agent must be built WITHOUT App Sandbox — sandbox blocks CGEventPost and AX operations, and for personal-use this is the correct choice.
+See `./.planning/research/STACK.md` for the full version matrix, integration patterns, and "What NOT to Add" justifications.
 
 **Core technologies:**
-- Swift 6 + SwiftUI (iOS): keyboard layout, hotkey panel, Liquid Glass UI — SwiftUI `.ultraThinMaterial` is the correct Liquid Glass foundation
-- UIKit text-field host (iOS): stock iOS keyboard is kept active through a hidden text field embedded in the app; this is not a system keyboard extension
-- Network.framework (both): USB TCP connection to usbmuxd-forwarded port + AWDL NWListener/NWBrowser via Bonjour `_keyd._tcp`
-- CGEventCreateKeyboardEvent + CGEventPost (macOS): all keystroke and modifier injection — the only reliable path across Safari, Firefox, Messages
-- AXUIElement (macOS): read-only in Phase 2 — focused element, selected text range, value attribute for bidirectional state sync
-- SMAppService.mainApp (macOS): Login Item registration, replaces deprecated SMLoginItemSetEnabled
-- Binary framing (both): 4-byte big-endian length prefix + payload — replaces JSON; required for sub-50ms latency
+- **ScreenCaptureKit (SCStream, Obj-C):** Full-display capture at up to 120fps with `IOSurface`-backed CMSampleBuffers and `SCFrameStatusIdle` to skip unchanged frames — only option that achieves zero-copy into the LZ4 pipeline without frame-always delivery.
+- **LZ4 v1.10.0 (vendored, block format):** ~8 GB/s compress throughput on M1 Max; <1ms per 4K frame; block API required — not Apple's `Compression.framework`, which uses LZ4 frame format incompatible with the binary protocol design.
+- **VideoToolbox (VTCompressionSession / VTDecompressionSession):** HEVC hardware encode on Mac + decode on iPad using dedicated media engines; zero CPU cost; used for wireless mode and eco mode.
+- **Network.framework (C API on Mac, Swift API on iPad):** USB NCM interface detection via `nw_path_monitor_create_with_type(nw_interface_type_wired)`, UDP media stream, TCP input stream, TLS 1.3 / DTLS 1.3 enforcement, interface pinning via `NWParameters.requiredInterface`.
+- **CoreAudio Tap API (`AudioHardwareCreateProcessTap`, macOS 14.2+):** System audio capture without a virtual audio driver; preferred over SCKit audio capture, which silently fails on macOS 15.
+- **Metal + MTKView + CAMetalDisplayLink (iPadOS 17+):** ProMotion 120Hz rendering on iPad with P3 color; `CAMetalDisplayLink` required (not the built-in MTKView timer) for correct adaptive frame pacing.
+- **CGEvent (C API, reused from keyd v1.0):** Mouse and keyboard injection; proven against Safari/Firefox; extended with mouse move, scroll, and right-click events for remote desktop use.
 
-See `./.planning/research/STACK.md` for full version matrix and deployment configuration.
+**OS floors:** macOS 14.2 (CoreAudio Tap), iPadOS 17.0 (CAMetalDisplayLink precision).
+
+**What NOT to use:** Swift on macOS agent (RSS overhead ~15-30 MB), `Compression.framework` LZ4 (frame format, not block), usbmuxd for video transport (TCP-per-connection, wrong abstraction for UDP streaming), WebRTC (cloud-oriented, unnecessary complexity), Opus codec (requires libopus; AAC-LC built-in is sufficient), ReplayKit (high latency, no IOSurface access), JSON in data path (~50x too slow).
 
 ### Expected Features
 
-All features flow from a single dependency chain: Transport must exist before any keyboard feature works. Character input must exist before predictive text. Bidirectional text sync must exist before cursor movement, text selection, and the iOS preview box. App-awareness (NSWorkspace observer) is independent of the text sync path and can be done in Phase 3.
+See `./.planning/research/FEATURES.md` for the full feature dependency graph, MVP definition, and competitive analysis against Sidecar, Luna Display, Duet Display, and Jump Desktop.
 
-**Must have (table stakes):**
-- USB transport with usbmuxd TCP tunnel — the entire premise fails without this
-- AWDL fallback on USB unplug — without this the app is unusable in daily workflow
-- Character input to frontmost macOS field via CGEvent — core value demonstration
-- Backspace, Return, Tab, Escape — required to make the keyboard functional for real fields
-- Cmd-C/X/V, Cmd-Z/Shift-Z, Cmd-A, Cmd-Q, Option-Delete, Cmd-Delete, Cmd-Shift-4 — all explicitly required shortcuts
-- Connection state indicator (USB / AWDL / disconnected) with color coding — user needs confidence commands are arriving
-- Liquid Glass glassmorphism UI — stated design constraint, not optional
+**Must have for v2.0 (table stakes + core differentiators):**
+- USB NCM wired transport — proves the sub-8ms latency claim
+- Wi-Fi / AWDL fallback transport — makes daily use viable without cable
+- Screen streaming: LZ4+delta (wired) + HEVC (wireless) — the entire product value
+- Metal rendering at full Retina resolution + ProMotion 120Hz + P3 color
+- Touch-to-mouse: tap (left click), two-finger scroll, long-press / two-finger-tap (right click), drag
+- Physical keyboard passthrough
+- On-screen keyboard passthrough (UITextInput with autocorrect suppressed, forward raw keystrokes)
+- Automatic USB ↔ Wi-Fi failover (<2 seconds, no user action)
+- QR pairing (reuse keyd v1.0 flow — already validated, pattern-copy with new bundle IDs)
+- Connection status HUD (transport mode, latency, FPS)
+- Eco mode: 1080p/30Hz, HEVC even over wired, <1% Mac CPU, <20 MB RSS
+- TLS 1.3 (TCP input stream) + DTLS (UDP media stream) — no cleartext mode
+- Deterministic E2E test suite (RD-TEST-01 through RD-TEST-10)
+- macOS Screen Recording + Accessibility permission prompts
 
-**Should have (differentiators — Phase 2):**
-- iOS cursor movement mirrored to macOS — requires AXInjector for cursor position
-- iOS text selection mirrored to macOS — requires bidirectional AX sync
-- iOS predictive text (QuickType) fed into macOS via shadow UITextView — requires character input path to be established
-- Real-time macOS text reflection into iOS preview box — requires AXObserver infrastructure
-- iOS editing menu (cut/copy/paste) operating on macOS text
+**Should have for v2.1:**
+- Audio streaming (Mac → iPad) — AAC-LC via CoreAudio Tap → UDP → AVAudioEngine
+- Clipboard sync (text only, bidirectional) — NSPasteboard polling + UIPasteboard.changedNotification
+- Cursor position overlay on iPad — lightweight TCP event, render cursor in Metal; eliminates "where is my cursor?" confusion
+- Trackpad input mode (relative movement, alternative to default direct touch)
+- Pinch-to-zoom viewport (iPad-side Metal scale transform; does not affect Mac resolution)
+- Multi-monitor display selection
 
-**Defer (Phase 3+):**
-- App-aware hotkey panel (NSWorkspace frontmost app → app-scoped shortcut grid)
-- Tap-to-arbitrary-position cursor placement
-- Extended per-app hotkey sets for Safari, Firefox, Messages
+**Defer to v2.2+:**
+- File drag-and-drop (requires virtual filesystem protocol)
+- iPad C client rewrite (Swift v1 adequate for v2.0)
+- Clipboard images and RTF
+- Audio routing from iPad microphone to Mac
 
-**Anti-features (never build):**
-- Bluetooth transport, infrastructure Wi-Fi transport, mouse/trackpad control, App Store distribution, terminal/coding workflow support, cloud sync, multi-Mac support
+**Anti-features to avoid:** Bluetooth transport (3 Mbps insufficient for 4K), cloud relay (different product category), HEVC over USB wired non-eco (adds latency vs LZ4), on-screen virtual joystick (obstructs screen), gesture customization panel (adds settings complexity with no standard need), virtual audio driver (requires user-installed system extension).
 
-See `./.planning/research/FEATURES.md` for full dependency graph, MVP definition, and competitor comparison.
+**Touch input defaults:** Direct Touch as default (tap = absolute click at touched position), Trackpad mode as selectable alternative via HUD button. Standard gesture map: single tap = left click, two-finger tap = right click, long press = right click, two-finger pan = scroll, pinch = viewport zoom (iPad-side only). System edge swipes must NOT be intercepted.
 
 ### Architecture Approach
 
-The architecture is a strict three-layer model on each side (UI → Protocol → Transport on iOS; Transport → Protocol → Injection on macOS) with one absolute invariant: no component crosses more than one layer boundary. UI has no import of Network or MultipeerConnectivity. Transport is byte-blind — it sends and receives Data, never typed messages. The InjectionRouter is the only caller of both CGEventInjector and AXInjector. This invariant is enforced by file structure: each layer lives in its own directory, and the "transport must not change after Phase 1" requirement becomes verifiable at the file level.
+Two separate Xcode projects (`RemoteDesktop/macOS/` and `RemoteDesktop/iPadOS/`) with a `RemoteDesktop/Shared/` directory of C headers and vendored C source consumed by both via their respective include paths. No shared Swift Package, no xcworkspace, no xcframework. The hot path on the Mac is pure C to minimize runtime overhead at 120Hz; Obj-C wrappers handle the Apple framework integration around that core.
 
-The build order within the architecture is bottom-up and strict: Protocol (message types + framing) → USB Transport → CGEventInjector → iOS Keyboard UI → AWDL Transport → Hotkey Panel → AXInjector → TextPreviewView → Predictive Text → AppAwarenessService. This order exists because each component requires the previous one to be working before it can be meaningfully tested.
+See `./.planning/research/ARCHITECTURE.md` for the full component diagram, project structure, and implementation patterns with code sketches.
 
-**Major components:**
-1. TransportManager (iOS + macOS) — holds active transport reference (USB or AWDL); handles switchover; exposes single `send/receive` API to the Protocol layer; Protocol layer never knows which transport is active
-2. MessageEncoder/Decoder (iOS + macOS) — length-prefixed binary framing; message types must be identical on both sides; designed bidirectional from Phase 1 even if only one direction is used initially
-3. InjectionRouter + CGEventInjector + AXInjector (macOS) — routes decoded messages to correct injector; CGEvent for all raw keystrokes and modifier combos; AX for reading text state (Phase 2); AX for writing is explicitly NOT used in production (breaks on browsers)
-4. SystemKeyboardHost + HotkeyPanel + TextPreviewBox (iOS) — stock keyboard hosted through a hidden text field; HotkeyPanel is Phase 1; TextPreviewBox is Phase 2
-5. AppAwarenessService (macOS, Phase 3) — NSWorkspace.frontmostApplication observer; pushes bundle ID back to iOS over the same transport channel
+**Major components (macOS agent, C + Objective-C):**
+1. **ScreenCapture.m** — SCStream setup and delegate callback; extracts IOSurface from CMSampleBuffer and hands off to FrameCompressor
+2. **FrameCompressor.c** — Delta XOR computation, LZ4 compress, keyframe/delta decision, 24-byte header pack; pure C, called at up to 120Hz
+3. **HEVCEncoder.m** — VTCompressionSession for wireless and eco mode; activated by transport failover state machine
+4. **USBNetworkTransport.m** — NWPathMonitor for USB NCM detection, NWListener UDP (media out) + TCP (input in)
+5. **WirelessTransport.m** — NWBrowser for `_keydrd._tcp`, NWConnection UDP + TCP over Wi-Fi/AWDL
+6. **EventInjector.c** — CGEvent mouse + keyboard injection; pure C; direct reuse from keyd v1.0
+7. **main.m** — NSApplication accessory policy, NSStatusItem, SMAppService, permission prompts, agent startup sequence
 
-See `./.planning/research/ARCHITECTURE.md` for full component diagram, data flow diagrams, and anti-patterns.
+**Major components (iPadOS app, Swift):**
+1. **USBNetworkTransport.swift** — NWPathMonitor `.wiredEthernet` detection, NWConnection UDP recv (media) + TCP send (input)
+2. **WirelessTransport.swift** — NWBrowser connect, NWConnection for Wi-Fi/AWDL
+3. **LZ4Decompressor.swift** — lz4.c wrapper via bridging header; decompress + XOR delta apply
+4. **HEVCDecoder.swift** — VTDecompressionSession, CMSampleBuffer → CVPixelBuffer
+5. **MetalRenderer.swift + Shaders.metal** — MTKView delegate, BGRA texture upload, P3 fragment shader, CAMetalDisplayLink render loop, triple buffering
+6. **TouchToMouse.swift** — UIGestureRecognizer → input event structs, 120Hz poll with adaptive batching, TCP send
+7. **KeyboardCapture.swift** — UITextInput / hardware keyboard intercept → key event structs; autocorrect suppressed
+8. **QRPairing.swift** — AVCapture QR scan, ECDH key exchange; pattern from keyd v1.0
+
+**Shared (C only, consumed by both projects):**
+- `protocol.h` — `MediaFrameHeader` (24 bytes, `__attribute__((packed))`) + `InputEventHeader` (9 bytes)
+- `lz4.c` + `lz4.h` — vendored LZ4 v1.10.0 (block API only)
+- `delta.c` / `delta.h` — XOR delta: `compute_delta()`, `apply_delta()`
+
+**Key patterns:**
+- USB NCM interface detection: `nw_path_monitor_create_with_type(nw_interface_type_wired)` — never hardcode interface names (en4/en5/en6 vary by system and connection order)
+- Zero-copy frame path: `IOSurfaceLock` → base address pointer → `LZ4_compress_default` → `IOSurfaceUnlock`; hold `CMSampleBuffer` retain for entire compress duration
+- Binary protocol: `__attribute__((packed))` C structs; both sides are ARM64 little-endian; iPad reads via `withUnsafeBytes`
+- Pixel format: `kCVPixelFormatType_32BGRA` throughout — matches Metal texture upload format, no color conversion step
+- SCStreamConfiguration: `queueDepth = 3`, `minimumFrameInterval = CMTimeMake(1, 120)`, `pixelFormat = kCVPixelFormatType_32BGRA`
+- Transport failover FSM: USB NCM primary → Wi-Fi fallback → AWDL last resort (mirrors keyd v1.0 FSM pattern)
+- Double-buffer reference frames for delta compression — atomically swapped, protected by `pthread_rwlock_t`
 
 ### Critical Pitfalls
 
-1. **iOS keyboard extension vs. in-app keyboard** — Build the keyboard as a UIView embedded in a standard UIViewController. A UIInputViewController keyboard extension cannot initiate network connections, has a restricted sandbox, and is lifecycle-uncontrollable. This architecture choice must be correct from the first Xcode target setup. Recovery cost if wrong: HIGH.
+See `./.planning/research/PITFALLS.md` for full pitfall documentation with warning signs and integration gotchas.
 
-2. **Accessibility AND Input Monitoring permissions both required, both revoked on rebuild** — In this project, both permissions are treated as required and both are tied to the binary hash, so they can be silently revoked on every Xcode rebuild. The macOS helper must check both permissions at every launch using `AXIsProcessTrustedWithOptions` and `IOHIDRequestAccess`, surface a clear menu-driven recovery path when either is missing, and document the toggle-off/toggle-on recovery procedure as a required step after every rebuild.
+1. **ScreenCaptureKit monthly re-authorization on macOS Sequoia 15+** — SCStream silently stops delivering frames when the periodic re-authorization lapses; returns `SCStreamError` -3805 or produces zero frame callbacks. Apply for `com.apple.developer.screencapture.persist` entitlement (the VNC-class entitlement Jump Desktop uses); add a frame-delivery watchdog (0 frames for >2 seconds → menu bar re-auth prompt). Handle permission delays (3-10 second startup block) by calling `SCShareableContent` on a background queue with a 5-second timeout. Must address in Phase 1.
 
-3. **AX text injection silently fails in Safari, Firefox, Messages** — `AXUIElementSetAttributeValue(kAXValueAttribute)` works in TextEdit and Notes but fails silently in browser web views and many real apps. The correct architecture is "AX read, CGEvent write" — use AX only to read focused element, selected text range, and value; use CGEvent for all actual text and keystroke injection. This architecture decision must be made in Phase 1, not discovered when testing browsers in Phase 2.
+2. **Link-local IPv6 requires explicit interface binding on both sides** — Connecting to `fe80::` without pinning to the specific `NWInterface` object from `NWPathMonitor` produces a silent `.failed` connection. Mac C side: set `sin6_scope_id = if_nametoindex(interface_name)`. iPad Swift side: pass the exact `NWInterface` from the path to `NWParameters.requiredInterface`. Write a minimal two-device UDP loopback test on USB NCM before any pipeline work. Must address in Phase 1.
 
-4. **Bidirectional protocol not designed in Phase 1** — The transport must support Mac→iOS messages from Phase 1 even if they are unused until Phase 2. Retrofitting bidirectional support in Phase 2 requires rearchitecting the wire protocol and causes breaking changes. Reserve message type slots for `ReflectState`, `AppStateChanged`, and any future Mac→iOS events in the Phase 1 protocol definition.
+3. **IOSurface recycling corrupts in-flight LZ4 compression** — When `CMSampleBuffer` is released, the backing `IOSurface` returns to the ScreenCaptureKit pool immediately. If LZ4 runs on a background thread and the sample buffer was released on the capture thread first, the pointer is dangling. Hold `CMSampleBuffer` retain for the entire duration of `LZ4_compress_default`; use `IOSurfaceLock`/`IOSurfaceUnlock` around the compress call. Must address in Phase 1.
 
-5. **AWDL entitlements require paid Apple Developer account** — Free-tier provisioning profiles do not include `com.apple.developer.networking.wifi-info` and related networking entitlements needed for AWDL direct connections. A $99/year paid developer account is required. A self-signed app with missing entitlements will either crash at launch (`SIGKILL / LAUNCH_CONSTRAINTS_VIOLATION`) or silently fall back to infrastructure Wi-Fi (which defeats AWDL). Test AWDL explicitly with Wi-Fi infrastructure disabled and Bluetooth off to confirm true AWDL, not silent fallback.
+4. **Delta frame XOR race condition on reference frame buffer** — If the keyframe writer updates the reference buffer while a delta frame reads it, the XOR produces garbage and the decoder state diverges permanently. Use double-buffer reference frames with `pthread_rwlock_t`; atomically swap only after keyframe is fully compressed and sent. Must address in Phase 1.
 
-Additional high-priority pitfalls: usbmuxd connection requires retry-with-backoff (device takes 2–5 seconds to become ready after plug-in); CGEvent modifier key sequences must send key-up in a `defer` block (stuck Cmd key if connection drops mid-sequence); secure input mode detection required for password fields (`IsSecureEventInputEnabled()`); iOS idle timer must be disabled (`UIApplication.shared.isIdleTimerDisabled = true`) while keyboard is active.
+5. **ProMotion 120Hz requires explicit opt-in** — Without `CADisableMinimumFrameDuration = YES` in Info.plist, the system clamps all CADisplayLink-based rendering to 60Hz even with `preferredFramesPerSecond = 120`. Use `CAMetalDisplayLink` (not the built-in MTKView timer) and triple buffering (3 drawables). Must address in Phase 2.
 
-See `./.planning/research/PITFALLS.md` for the full pitfall list with verification checklists and recovery strategies.
+6. **VideoToolbox low-latency HEVC incompatible with ConstantBitRate** — Setting both `EnableLowLatencyRateControl` and `ConstantBitRate` causes one to be silently ignored (typically the bitrate constraint), flooding the Wi-Fi channel. Use `AverageBitRate` only with low-latency mode. Verify actual output rate experimentally before declaring Wi-Fi mode operational. Must address in Phase 3.
+
+7. **CoreAudio Tap preferred over SCKit audio on macOS 15** — SCKit `capturesAudio = true` silently produces no callbacks on macOS 15. Use `AudioHardwareCreateProcessTap` (CoreAudio Tap, macOS 14.2+) as the primary audio path. Must address in Phase 4.
+
+---
 
 ## Implications for Roadmap
 
-Based on research, the architecture's build-order constraint, and the feature dependency chain, a three-phase structure is strongly indicated. All Phase 1 pitfalls must be addressed in Phase 1 — they cannot be deferred without causing rework.
+Based on research, the feature dependencies, component build-order constraints, and pitfall phase assignments, a 4-phase structure is strongly indicated.
 
-### Phase 1: Transport Foundation and Core Keyboard
+### Phase 1: Foundation — Capture, Compression, and USB Transport
 
-**Rationale:** The transport layer is a hard dependency for every feature in the product. All critical pitfalls are Phase 1 pitfalls. The project is not functional until USB transport is proven working on a physical device. Building the keyboard UI before the transport is verified means building UI that cannot be tested.
+**Rationale:** Screen streaming is the entire premise. Without it there is no product. The LZ4+delta pipeline on USB NCM is the core technical differentiator and the highest-risk implementation area. All four critical correctness pitfalls (SCKit re-auth, link-local binding, IOSurface recycling, delta race condition) live here and must be addressed before any other work begins. Testing in isolation before adding Wi-Fi complexity is mandatory — USB is deterministic (cable in = connected), Wi-Fi adds peer-discovery non-determinism.
 
-**Delivers:** A working USB-connected keyboard that can type characters, modifier shortcuts, and standard keys (Return/Tab/Escape/Backspace) into the frontmost macOS application. AWDL fallback activates seamlessly on USB unplug. Connection state indicator (USB/AWDL/disconnected) is always visible. Liquid Glass UI is applied. The macOS agent starts at login and lives in the menu bar.
+**Delivers:** Mac screen displayed on iPad over USB cable at full Retina resolution with correct LZ4+delta compression, zero frame corruption, ProMotion 120Hz Metal rendering, and automatic Wi-Fi/AWDL fallback on USB unplug.
 
-**Implements:**
-- Protocol layer: Message type definitions (bidirectional — both iOS→Mac and Mac→iOS types defined even if Mac→iOS unused in Phase 1)
-- Binary framing: 4-byte length-prefixed frames, MessageEncoder + MessageDecoder on both sides
-- USBTransport (iOS): NWConnection to usbmuxd-forwarded loopback port; retry-with-backoff
-- USBListener (macOS): NWListener on localhost port; accepts iOS connection via usbmuxd
-- CGEventInjector (macOS): all keystroke + modifier injection; modifier key-up in defer blocks
-- AWDLTransport (iOS): NWBrowser for `_keyd._tcp` Bonjour service
-- AWDLListener (macOS): NWListener advertising `_keyd._tcp`
-- TransportManager (both sides): state machine for USB→AWDL switchover; pre-warms AWDL while USB is connected
-- InjectionRouter (macOS): routes messages to CGEventInjector (AXInjector stub for Phase 2)
-- iOS SystemKeyboardHost: stock keyboard kept active through a hidden text field inside the app (NOT UIInputViewController)
-- iOS HotkeyPanel: static shortcut buttons (Cmd-C/V/Z/Shift-Z, Return, Escape, Tab, delete actions, etc.); Liquid Glass styling
-- macOS agent: SMAppService login item registration; NSStatusItem menu bar indicator; AX + Input Monitoring permission check at every launch with menu-driven recovery actions
-- iOS idle timer disabled while connected
-- Secure input mode detection; "keyboard paused" indicator in iOS when active
+**Features addressed:**
+- USB NCM wired transport
+- Wi-Fi / AWDL fallback transport
+- Screen streaming: LZ4+delta (wired) + HEVC encode/decode (wireless fallback)
+- Metal rendering: Retina resolution, ProMotion 120Hz, P3 color
+- Automatic USB ↔ Wi-Fi failover
+- QR pairing (reuse keyd v1.0 pattern)
+- TLS 1.3 + DTLS encryption
+- Connection status HUD
+- macOS Screen Recording + Accessibility permission prompts
+- SMAppService login item
 
-**Addresses from FEATURES.md:** All P1 table-stakes features
-**Avoids from PITFALLS.md:** Pitfalls 1 (usbmuxd retry), 2 (peertalk/protocol), 3 (AX write decision), 4 (AX permission check), 5 (CGEvent event target), 6 (Input Monitoring), 7 (AWDL entitlements), 8 (keyboard extension vs in-app), 9 (bidirectional protocol design), 11 (USB hot-plug race), 14 (entitlement crash), 15 (modifier key stuck), 16 (idle timer), 17 (Gatekeeper), 18 (keyboard height)
+**Pitfalls to address in this phase:** Pitfall 1 (SCKit re-auth on Sequoia), Pitfall 2 (link-local binding), Pitfall 3 (IOSurface recycling), Pitfall 4 (delta race), Pitfall 5 (ProMotion opt-in), Pitfall 8 (SCKit startup block), Pitfall 9 (Local Network permission), Pitfall 10 (NWPathMonitor false positives on multi-adapter setups), Pitfall 12 (SMAppService registration), Pitfall 13 (LZ4 block vs frame API mismatch).
 
-**Research flag:** Phase 1 needs validation of AWDL entitlement requirements for the specific provisioning profile type before writing any networking code. AWDL behavior under self-signed personal-use builds is underdocumented and must be tested on physical device, not Simulator.
+**Research flag:** Needs `research-phase` during planning for two items: (1) USB NCM interface detection and link-local socket binding on iPadOS — confirmed viable via Apple Developer Forum reports but no canonical Apple sample code for the iPad↔Mac direct-cable scenario; (2) `com.apple.developer.screencapture.persist` entitlement request process for self-signed personal-use apps.
 
-### Phase 2: Bidirectional Text Sync and Advanced Editing
+### Phase 2: Input — Touch, Keyboard, and Eco Mode
 
-**Rationale:** Phase 2 builds on the stable transport established in Phase 1 without modifying it. All Phase 2 features require AXObserver infrastructure and the Mac→iOS message channel (reserved in Phase 1 protocol). Cursor movement and text selection are the highest-user-value features after Phase 1 basics.
+**Rationale:** A display with no input is a monitor, not a remote desktop. Input is the next dependency in the feature tree after screen streaming is proven stable. Eco mode belongs here because it is a configuration layer on top of the already-working HEVC encode path (used by wireless mode in Phase 1), and it is required by the project spec — the Mac must remain usable for concurrent LLM inference.
 
-**Delivers:** iOS editing gestures (cursor movement, text selection, delete-selected) operate on the macOS text field. QuickType predictive text suggestions are context-aware (based on the current macOS field content). The iOS app shows a real-time mirror of the macOS field's content and selection state. iOS cut/copy/paste menu operations translate to macOS.
+**Delivers:** Full touch-to-mouse control (tap, scroll, right-click, drag), keyboard passthrough (hardware + on-screen), eco mode (1080p/30Hz HEVC, <1% Mac CPU).
 
-**Implements:**
-- AXInjector (macOS): reads `kAXSelectedTextRangeAttribute` and `kAXValueAttribute` from focused element; writes cursor position and selection via AX (not value writes — selection range writes via AX are safe)
-- AXObserver (macOS): `kAXValueChangedNotification` + `kAXSelectedTextChangedNotification` on focused element; handles web content process PID discovery for Safari/Firefox (walk to focused element, get its process PID, register observer on that PID)
-- ReflectState messages (Mac→iOS): push text content + cursor offset + selected range back to iOS
-- TextPreviewBox (iOS): UITextView showing macOS field content; read-only display
-- Shadow UITextView (iOS): hidden, zero-frame UITextView for QuickType activation; intercept `shouldChangeTextIn:replacementText:` before local text view updates; translate all deltas to macOS events immediately
-- iOS predictive text (QuickType): flows through shadow UITextView; shadow is populated from ReflectState messages to keep suggestions context-relevant
-- iOS editing menu → macOS: UITextView selection → read AX value of selection → put in iOS pasteboard; paste → Cmd-V CGEvent
+**Features addressed:**
+- Touch-to-mouse: direct touch mode (default), scroll, right-click, drag
+- Physical keyboard passthrough
+- On-screen keyboard passthrough (UITextInput, autocorrect suppressed, raw keystrokes)
+- Eco mode (1080p or 720p / 30fps / HEVC even over wired)
+- Trackpad input mode (alternative selectable via HUD)
 
-**Addresses from FEATURES.md:** All P2 differentiator features
-**Avoids from PITFALLS.md:** Pitfalls 12 (AXObserver wrong PID), 13 (iOS predictive text desync), 19 (AX tree walking performance)
+**Pitfalls to address in this phase:** Pitfall 11 (CGEvent injection rate at 120Hz — adaptive event batching from start; never drop clicks or key events), Pitfall 14 (touch coordinate affine transform with Retina scaling + aspect ratio letterboxing — exchange Mac display geometry in session handshake).
 
-**Research flag:** Phase 2 needs research on AXObserver behavior for Safari and Firefox web content processes specifically — the PID-finding approach is well-understood in principle but has browser-version-specific behavior that should be verified. Also verify UITextInput/UITextInputDelegate patterns for the shadow UITextView approach against current UIKit documentation.
+**Research flag:** Standard patterns; well-documented CGEvent and UIGestureRecognizer APIs with proven keyd v1.0 precedent. No `research-phase` needed.
 
-### Phase 3: App-Awareness and Extended Hotkey Panel
+### Phase 3: Test Validation and Wi-Fi Quality
 
-**Rationale:** Phase 3 builds on the stable transport and bidirectional channel from Phases 1–2. App-awareness is architecturally independent (NSWorkspace observation does not interact with text sync) and was deferred because the baseline keyboard must be validated as useful before adding app-specific complexity.
+**Rationale:** Before adding further features, the E2E test suite must validate correctness of the core pipeline without requiring physical visual verification. The deterministic test suite (both devices using the same PRNG seed) was specified from the start and validates the full pipeline including delta frame correctness, chunk reassembly, and failover behavior. This phase also includes experimental validation of VideoToolbox HEVC bitrate control on the Wi-Fi path, which cannot be validated analytically.
 
-**Delivers:** The iOS hotkey panel automatically updates with app-specific shortcuts when the macOS frontmost application changes. Safari gets browser shortcuts (new tab, close tab, address bar, back/forward, prev/next tab). Firefox gets the same set. Messages gets messaging shortcuts. All apps get the default set (copy, cut, paste, undo, redo, select all, quit). Animated transition (fade/slide) between shortcut sets with Liquid Glass styling.
+**Delivers:** Deterministic E2E test suite passing end-to-end; Wi-Fi/HEVC path validated at full quality under real-world conditions; cursor overlay on iPad (lightweight addition, high UX value, removes a major friction point).
 
-**Implements:**
-- AppAwarenessService (macOS): `NSWorkspace.shared.publisher(for: \.frontmostApplication)` observer; sends `AppStateChanged(bundleID, appName)` message over existing transport
-- HotkeyPanel (iOS): updated from static shortcuts to dynamic app-aware shortcuts; bundle ID → `[Shortcut]` static dictionary lookup; horizontal scroll for overflow; animation on transition
-- Static shortcut map: `com.apple.Safari`, `org.mozilla.firefox`, `com.apple.MobileSMS`, default fallback
-- Tap-to-arbitrary-position cursor placement (extension of Phase 2 selection sync)
-- Extended per-app hotkey sets as needed
+**Features addressed:**
+- Deterministic E2E test suite (RD-TEST-01 through RD-TEST-10)
+- Wi-Fi/AWDL HEVC path at full quality (60fps)
+- Cursor position overlay on iPad (Mac sends cursor position via TCP; Metal renders overlay)
 
-**Addresses from FEATURES.md:** All P3 features
-**Avoids from PITFALLS.md:** Performance trap of polling frontmost app (use NSWorkspace notification, not polling)
+**Pitfalls to address in this phase:** Pitfall 6 (VideoToolbox HEVC bitrate control — measure actual output rate before declaring Wi-Fi mode complete).
 
-**Research flag:** Phase 3 follows well-documented NSWorkspace patterns. No phase-specific research needed unless new app target support requires deep-dive into specific app's AX hierarchy.
+**Research flag:** Standard patterns; no `research-phase` needed.
+
+### Phase 4: Audio and Clipboard
+
+**Rationale:** Audio and clipboard are genuinely independent of each other and of the compression/rendering pipeline. They share the TCP control channel established in Phase 1 but add no dependencies to earlier phases. Audio is the higher-value addition (video content on Mac becomes usable on iPad); clipboard is moderate complexity with well-understood platform APIs on both sides.
+
+**Delivers:** System audio streaming from Mac to iPad (all processes via CoreAudio Tap → AAC-LC encode → UDP stream → AVAudioEngine decode), bidirectional text clipboard sync.
+
+**Features addressed:**
+- Audio streaming Mac → iPad: CoreAudio Tap, AAC-LC via AudioConverter, AVAudioEngine playback
+- Clipboard sync: text only, bidirectional; NSPasteboard polling (Mac) + UIPasteboard.changedNotification (iPad)
+
+**Pitfalls to address in this phase:** Pitfall 7 (SCKit audio silent failure on macOS 15 — use CoreAudio Tap API exclusively as primary capture path).
+
+**Research flag:** CoreAudio Tap API is new (macOS 14.2) and described as "poorly documented" in community resources. Needs `research-phase` during planning — study `AudioCap` open-source project (insidegui/AudioCap GitHub) as the reference implementation before writing any audio capture code.
 
 ### Phase Ordering Rationale
 
-- Transport before UI: The keyboard UI cannot be meaningfully tested without a working macOS receiver. Building receiver first (USB listener + CGEvent injector) with a hardcoded test sender, then building the real iOS UI, avoids building UI against a mock.
-- USB before AWDL: USB is deterministic (cable in = connected). AWDL adds non-deterministic peer discovery. Validate the full pipeline on USB before adding fallback complexity.
-- CGEvent before AX: CGEvent requires no special setup beyond a code-signed binary. AX requires granting Accessibility permission and is harder to debug. Prove keystroke injection works before adding the more complex AX read path.
-- Bidirectional protocol in Phase 1: The wire protocol is the hardest thing to change after deployment. Design it right once, with all message types reserved, before any feature relies on it.
-- AX before TextPreview: iOS mirror requires macOS to read and send back text state. AX is the only API that reads current text value of a focused field. AXObserver must exist before the preview box can receive content.
-- App-awareness last: Independent of text sync, no dependencies on Phases 1–2 beyond transport being alive. Deferring it allows Phase 1 and 2 to ship faster and validates the hotkey concept before investing in the app-aware version.
+- Screen streaming must come first: it is the single dependency that everything else requires. Input without screen is injecting into the void. Audio without screen is incomplete. Tests without working core pipeline are testing nothing.
+- Input must follow rendering because coordinate mapping requires the render viewport dimensions and a live display feed to verify cursor alignment is correct.
+- E2E test suite comes before audio/clipboard because shipping additional features on top of an unvalidated core pipeline creates compounding correctness debt.
+- Audio and clipboard are last because they are genuinely independent and add no dependency risk to earlier phases; their most complex aspect (CoreAudio Tap) is a bounded integration problem that benefits from the team having deep familiarity with the codebase.
 
 ### Research Flags
 
-Phases needing deeper research during planning:
-- **Phase 1:** AWDL entitlement requirements for self-signed builds — LOW confidence from research; must be tested on physical device with actual provisioning profile before writing transport code. Also verify usbmuxd TCP port forwarding behavior on current iOS 18 / macOS 15 (libimobiledevice community docs are the best reference, but Apple does not publish a changelog for usbmuxd protocol changes).
-- **Phase 2:** AXObserver PID behavior for Safari and Firefox web content processes — MEDIUM confidence; browser-version-specific. Verify UITextInput + QuickType shadow UITextView pattern against current UIKit documentation before implementing predictive text.
+Needs `research-phase` during planning:
+- **Phase 1:** USB NCM interface detection and link-local socket binding on iPadOS — confirmed viable from forum reports but no canonical Apple sample code for the iPad↔Mac direct-cable peer scenario. Write a minimal loopback test (UDP ping-pong over USB NCM) before any pipeline work.
+- **Phase 1:** `com.apple.developer.screencapture.persist` entitlement request process for a self-signed non-App-Store personal-use app — whether Apple approves this for personal use is unknown; the fallback (manual re-authorization flow in menu bar) must be designed in Phase 1 regardless.
+- **Phase 4:** CoreAudio Tap API (`CATapDescription`, `AudioHardwareCreateProcessTap`, `AudioHardwareCreateAggregateDevice`) — new API (macOS 14.2), poor documentation; study `insidegui/AudioCap` before planning audio work.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1 (non-AWDL):** CGEvent injection, AXIsProcessTrusted, SMAppService, NWConnection — all HIGH confidence, stable APIs, well-documented patterns.
-- **Phase 3:** NSWorkspace frontmostApplication observation — HIGH confidence, stable AppKit API with no known version concerns.
+Standard patterns (skip `research-phase`):
+- **Phase 2:** CGEvent injection, UIGestureRecognizer, UITextInput — well-documented, proven in keyd v1.0 and industry practice.
+- **Phase 2/3:** QR pairing + ECDH — fully pattern-reused from keyd v1.0 with validated code.
+- **Phase 3:** E2E test structure — standard XCTest + pure C unit test patterns.
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | MEDIUM | Core API confidence is HIGH (CGEvent, AXUIElement, Network.framework, SMAppService all stable and well-documented). AWDL-specific entitlement requirements for self-signed builds are LOW — underdocumented and must be tested. No web search available; all from training data to August 2025. |
-| Features | MEDIUM | Feature set is clear from PROJECT.md requirements. UITextInput/QuickType shadow UITextView approach is a common pattern but not verified against current UIKit docs. Apple Continuity Keyboard comparison is MEDIUM confidence. |
-| Architecture | MEDIUM | Layer boundaries, build order, and component responsibilities are HIGH confidence based on stable Apple API patterns. AWDL and AXObserver cross-process behavior are MEDIUM — tested patterns but with browser-version-specific caveats. |
-| Pitfalls | HIGH for macOS permissions and CGEvent behavior | AX/CGEvent permission model and behavior since macOS 10.15 is thoroughly documented. usbmuxd reliability and AWDL entitlement pitfalls are MEDIUM — well-attested in community but depend on specific iOS/macOS version combination. |
+| Stack | HIGH | Core Apple APIs (ScreenCaptureKit, VideoToolbox, Network.framework, Metal, CGEvent) verified via official docs, WWDC sessions, and open-source projects. LZ4 v1.10.0 license and vendoring confirmed on GitHub. One MEDIUM item: SCKit SCFrameStatus Obj-C variant confirmed via search but not directly viewable. |
+| Features | MEDIUM-HIGH | Commercial solution analysis from official product pages and developer forums. Technical feature claims cross-referenced against Apple docs. USB NCM `.wiredEthernet` classification confirmed via Apple Developer Forum thread 769793. iOS clipboard privacy banner behavior confirmed as Apple-mandated and unavoidable since iOS 14. |
+| Architecture | MEDIUM-HIGH | Core APIs confirmed HIGH confidence. USB NCM interface name non-determinism (en4/en5/en6) confirmed — always use NWPathMonitor type detection. DTLS in Network.framework confirmed HIGH. Sequoia re-authorization behavior documented from developer forum reports and Jump Desktop precedent. |
+| Pitfalls | MEDIUM-HIGH | All pitfalls verified against Apple Developer Forums, official docs, WWDC sessions, or open-source implementations. IOSurface recycling and delta race are architecture-level findings with clear prevention patterns. VideoToolbox low-latency + CBR incompatibility confirmed via WWDC21 session and developer forum reports. |
 
-**Overall confidence:** MEDIUM
-
-Research is sufficient to begin implementation. The critical unknowns (AWDL entitlements, usbmuxd iOS 18 behavior) are best resolved by a 30-minute test on a physical device in Phase 1, not by additional research.
+**Overall confidence:** MEDIUM-HIGH
 
 ### Gaps to Address
 
-- **AWDL entitlement requirements under personal-use self-signed provisioning:** Research confidence is LOW. Resolution: test NWBrowser + NWListener over Bonjour on a physical device with infrastructure Wi-Fi and Bluetooth both off. If connection fails, verify paid Apple Developer account is required. Do this before writing any AWDL-dependent code.
-- **usbmuxd iOS 18 protocol compatibility:** Research recommends against peertalk and in favor of raw NWConnection to the forwarded TCP port. The raw TCP approach avoids the plist-level usbmuxd protocol entirely (usbmuxd handles the forwarding transparently). Verify this by testing iOS-initiated connect to macOS-bound TCP port on iOS 18 + macOS 15 before building the full transport layer.
-- **AXObserver cross-process PID for Safari web content on current Safari version:** The PID-finding approach (walk to focused element, get its PID, register AXObserver on that PID) is well-established but Safari's web content process architecture changes with major versions. Verify in Phase 2 before implementing real-time reflection.
-- **CGEvent kCGAnnotatedSessionEventTap vs kCGHIDEventTap:** Research recommends kCGAnnotatedSessionEventTap for more reliable delivery to the front app. Verify this does not require additional entitlements on current macOS 15 for a non-sandboxed self-signed helper.
+- **USB NCM viability on specific iPad-to-Mac direct-cable configuration:** Confirmed viable via forum reports that USB NCM creates a `.wiredEthernet` interface accessible to iPadOS apps, but fewer confirmed reports exist for the iPad↔Mac peer scenario specifically (vs USB Ethernet adapter scenarios). Resolution: write a one-file loopback test (UDP ping-pong over USB NCM) as the first implementation task in Phase 1 before committing to the full pipeline.
+- **`com.apple.developer.screencapture.persist` for personal-use self-signed apps:** Jump Desktop uses this entitlement. Whether Apple approves it for a self-signed non-App-Store personal-use app is undocumented. Design the fallback (menu bar re-auth prompt, frame watchdog) in Phase 1 regardless of entitlement status.
+- **NWInterface scope ID + link-local IPv6 on both sides with USB NCM:** The Mac C approach (`sin6_scope_id = if_nametoindex(...)`) and iPad Swift approach (`NWParameters.requiredInterface` with exact NWInterface object) are well-known patterns but have not been tested specifically with the M1 Max + M4 iPad direct-cable configuration. Validate in Phase 1 loopback test.
+- **VideoToolbox HEVC AverageBitRate effectiveness on Apple Silicon hardware encoder:** The `AverageBitRate` + `EnableLowLatencyRateControl` combination behavior requires experimental verification during Phase 3 — the hardware encoder may silently ignore bitrate constraints.
+
+---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Apple Developer Documentation: AXUIElement, kAXValueAttribute, kAXFocusedUIElement, AXObserver — stable macOS accessibility APIs; training data consistent with documented behavior
-- Apple Developer Documentation: CGEventCreateKeyboardEvent, CGEventPost, secure input mode — stable since macOS 10.4; training knowledge
-- Apple Developer Documentation: Network.framework NWConnection, NWListener, NWBrowser — training data to August 2025
-- Apple Developer Documentation: ServiceManagement SMAppService — stable macOS 13+ API; training knowledge
-- Apple Developer Documentation: NSWorkspace.frontmostApplication — stable AppKit API; training knowledge
-- Carbon.h virtual key codes — stable since macOS 10.x; training knowledge
-- macOS Catalina (10.15) Privacy & Security permission model changes (Accessibility vs Input Monitoring split) — well-documented in Apple developer forums; training knowledge HIGH confidence
+- Apple developer.apple.com documentation — ScreenCaptureKit, Network.framework (C API), VideoToolbox, CoreAudio Tap API, Metal/MTKView, IOSurface, CGEvent, NSPasteboard, UIPasteboard, CAMetalDisplayLink
+- LZ4 v1.10.0 — github.com/lz4/lz4 lib/README.md — vendoring pattern, block vs frame API distinction, BSD-2 license
+- Network.framework C API headers — xybp888/iOS-SDKs (macOS 14 SDK), `nw_path_monitor_t`, `nw_tls_create_options`
+- CoreAudio Tap API — developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps
 
 ### Secondary (MEDIUM confidence)
-- usbmuxd TCP forwarding protocol behavior — documented in libimobiledevice project; widely tested in community; behavior stable on macOS but not Apple-official documentation
-- AWDL via Network.framework NWListener/NWBrowser with Bonjour — multiple community implementations; entitlement requirements for non-App-Store apps are the uncertain part
-- peertalk (rsms/peertalk) deprecation status — GitHub commit history; last meaningful commit ~2014; training knowledge
-- UITextInput + UITextInputDelegate for QuickType shadow UITextView — common UIKit pattern; not verified against current UIKit docs due to no web search available
-- AXObserver cross-process PID behavior for sandboxed browser processes — confirmed pattern in Apple AX programming guide; browser-version-specific behavior is the uncertain part
-- Apple Continuity Keyboard (iOS 18 / macOS Sequoia) as competitive context — training data; MEDIUM confidence
+- Apple Developer Forum thread 769793 — USB NCM `.wiredEthernet` classification in NWPathMonitor on iPadOS
+- Apple Developer Forum thread 763426 — `CAMetalDisplayLink` 120Hz + `CADisableMinimumFrameDuration` requirement
+- insidegui/AudioCap GitHub — CoreAudio Tap reference implementation
+- OBS Studio PR #11896 — ScreenCaptureKit 120fps on M1 Max, macOS 15.3.1
+- WWDC21 VideoToolbox session — `EnableLowLatencyRateControl` + rate control property interactions
+- Jump Desktop support documentation — input mode documentation (direct touch / trackpad / pointer modes)
+- Astropad/Luna Display product pages, Duet Display product pages — competitive analysis
+- Apple Community forum threads — Sidecar AWDL latency reports
+- makeusabrew/audiotee, sudara AudioCap gist — CoreAudio Tap usage confirmation
+- REMOTE-DESKTOP-SPEC.md + PROJECT.md — project-internal latency and resource budget targets
 
-### Tertiary (LOW confidence)
-- AWDL entitlement requirements for self-signed personal-use apps (free-tier vs paid-tier provisioning) — community discussions through training cutoff; real behavior must be tested on device
-- `com.apple.developer.networking.wifi-info` requirement for NWBrowser/NWListener Bonjour AWDL — underdocumented; may not be required for Bonjour-based peer discovery as opposed to raw multicast
-
-**Note:** WebSearch and WebFetch were unavailable during all four research sessions. All findings are from training data (cutoff August 2025). Gaps identified above should be resolved by targeted testing on physical devices in the first days of Phase 1 implementation, not by additional research sessions.
+### Tertiary (LOW confidence — validate during implementation)
+- USB NCM specific iPad↔Mac direct peer-to-peer scenario — fewer confirmed reports than general wiredEthernet adapter use cases; validate with loopback test in Phase 1
+- `com.apple.developer.screencapture.persist` approval process for self-signed non-App-Store apps — no public documentation
+- VideoToolbox AverageBitRate effectiveness on Apple Silicon hardware encoder specifically — known developer forum issue, not officially documented
 
 ---
-*Research completed: 2026-02-27*
+
+*Research completed: 2026-03-27*
 *Ready for roadmap: yes*

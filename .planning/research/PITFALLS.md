@@ -1,447 +1,380 @@
 # Pitfalls Research
 
-**Domain:** iOS→macOS remote keyboard / remote input control app
-**Researched:** 2026-02-27
-**Confidence:** MEDIUM (WebSearch and WebFetch unavailable; findings drawn from training knowledge of Apple platform internals, peertalk/usbmuxd ecosystem, AX/CGEvent APIs, and community-sourced post-mortems through August 2025 cutoff. Critical claims flagged with confidence level.)
+**Domain:** iPadOS-to-macOS remote desktop (keyd-rd)
+**Researched:** 2026-03-27
+**Confidence:** MEDIUM-HIGH (WebSearch verified against Apple Developer Forums, official docs, WWDC sessions, and open-source implementations. USB NCM viability section has additional evidence from community reports.)
+
+---
+
+## CRITICAL FINDING: USB NCM Accessibility from Regular iPadOS Apps
+
+**Verdict: VIABLE with caveats — but requires Local Network permission and careful interface binding.**
+
+When an iPad is connected to a Mac via USB-C/Thunderbolt, macOS creates a USB NCM (CDC-NCM) network interface — a real link-local Ethernet-like link. Starting with iOS 16, two CDC-NCM interfaces are created after mode switching.
+
+**What is accessible to regular (non-jailbroken) iPadOS apps:**
+- The USB NCM interface appears as `.wiredEthernet` type in `NWPathMonitor` on the iPad side
+- Regular apps CAN open TCP/UDP sockets over this interface using `Network.framework`
+- No special entitlement is required to initiate or listen on TCP/UDP connections to link-local addresses over this interface
+- `NWParameters.requiredInterface` can be used to pin a connection to the specific wiredEthernet interface
+- The "Local Network" privacy permission (`NSLocalNetworkUsageDescription`) IS required if the app sends UDP packets or connects to link-local addresses (triggered on first send, not on socket creation)
+
+**Critical gotchas:**
+1. Link-local addresses (fe80::/10 or 169.254.x.x) require explicit interface binding. Using `NWParameters.requiredInterface` with the specific `NWInterface` object (not just `requiredInterfaceType`) is required for link-local to work correctly — the TCP SYN must carry the correct source interface IP or the connection is dropped
+2. The multicast entitlement (`com.apple.developer.networking.multicast`) IS required for multicast/broadcast — but unicast TCP/UDP does NOT need it
+3. Service discovery via mDNS/Bonjour requires `NSBonjourServices` in Info.plist and `NSLocalNetworkUsageDescription`
+4. The USB NCM interface is NOT guaranteed to have a stable interface name (en4, en7, en8 vary by device and connection order) — always use NWPathMonitor to find the current wiredEthernet interface by type, not by name
+
+**Alternative if USB NCM proves unreliable:** Fall back to the existing usbmuxd TCP tunnel (proven in keyd v1.0). Media throughput over usbmuxd is limited by TCP framing overhead but is viable for HEVC-encoded streams. Reserve USB NCM as the primary path for LZ4+delta wired mode.
+
+**Confidence:** MEDIUM (multiple Apple Developer Forum threads confirm wiredEthernet access from iPadOS apps; specific USB NCM peer-to-peer iPad↔Mac scenario has fewer confirmed reports than general wiredEthernet adapter use cases)
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: usbmuxd Port Binding Collision With iTunes/Xcode
+### Pitfall 1: ScreenCaptureKit Monthly Re-Authorization Prompt (macOS Sequoia+)
+
+**Severity: CRITICAL — Breaks unattended/background operation**
 
 **What goes wrong:**
-The macOS daemon `usbmuxd` multiplexes all USB communication to/from iOS devices. If iTunes (or the Apple Mobile Device Service) is running, it may already hold exclusive locks on device communication at certain moments — particularly during backup, sync, or pairing. Your macOS helper process connecting to usbmuxd may get connection resets or `ECONNREFUSED` at seemingly random times, especially on first connect or after device re-plug.
+macOS Sequoia (15.0+) added a periodic re-authorization prompt for all apps using ScreenCaptureKit. Initially weekly, later reduced to monthly. The prompt fires even for apps that previously had permission. An unattended agent (running without user interaction) will silently stop capturing after the permission lapses — `SCShareableContent` callbacks stop firing, stream continues but delivers no frames, or returns `SCStreamError.connectionInvalid` (-3805).
 
 **Why it happens:**
-Developers assume usbmuxd is a stable shared bus. It is shared, but Apple's own services (iTunes, Xcode device support downloads, backup daemons) connect to it and can dominate device attention during operations. The socket interface at `/var/run/usbmuxd` is available to any process, but device-level multiplexed connections can be closed by the device itself when it's preoccupied with higher-priority services.
+Apple added this privacy UX as a security measure. Any app using `SCShareableContent.getWithCompletionHandler` or `SCStream` without using the `SCContentSharingPicker` triggers the periodic re-authorization cycle. There is a "Persistent Content Capture" entitlement for VNC-class apps that bypasses this, but Apple has provided no public documentation on how to obtain it, and it appears to require an explicit entitlement request to Apple (form-based process). Jump Desktop uses this entitlement.
 
 **How to avoid:**
-- Implement retry-with-backoff on all usbmuxd socket connections; never assume first connection attempt will succeed.
-- Log every connection failure with timestamp and error code; surface these to the user so they know to wait.
-- Do not assume a device is "ready" immediately after plug-in — the pairing handshake plus Apple daemon initialization can take 2–5 seconds.
-- Test with iTunes/Music app closed, then open — verify behavior differs and handle both states.
+- Apply for the `com.apple.developer.screencapture.persist` (Persistent Content Capture) entitlement via Apple's entitlement request form — this is specifically designed for remote desktop / VNC use cases and should be approvable for a personal-use self-signed app if the request is made
+- As a fallback for the self-signed case: add a menu bar status indicator that explicitly shows capture permission status; prompt the user to re-authorize if the stream stops delivering frames
+- Detect permission lapse: register a handler that fires when `SCStream` produces 0 frames for >2 seconds during active session; distinguish from "display sleeping" vs "permission lapsed" (the latter produces no output even with display awake)
+- macOS 15.1 reduced the frequency further; test on the actual macOS version
 
 **Warning signs:**
-- Connection works in isolation but fails intermittently when Music/Finder is open.
-- `ECONNREFUSED` or `EPIPE` on first connect attempt.
-- Works fine in Xcode simulator but fails on physical device.
+- Stream starts successfully but delivers no frame callbacks after an initial burst
+- `SCStreamError` code -3805 (`connectionInvalid`) in the stream error callback
+- App worked last week, now captures 0 frames after launching
 
-**Phase to address:** Phase 1 — Transport foundation. This must be solved before any other functionality is built on top.
-
-**Confidence:** MEDIUM (training knowledge; behavior well-documented in peertalk and libimobiledevice GitHub issues)
+**Phase to address:** Phase 1 (Screen Capture + Transport). Must be verified during initial ScreenCaptureKit integration before any other pipeline work.
 
 ---
 
-### Pitfall 2: peertalk / Custom usbmuxd Protocol Breaking on New iOS Versions
+### Pitfall 2: Link-Local IPv6 Requires Explicit Interface Binding on Both Sides
+
+**Severity: CRITICAL — Silent connection failure, no useful error**
 
 **What goes wrong:**
-Apple periodically updates the usbmuxd plist-based protocol (the "lockdown" layer). Projects using raw usbmuxd socket access (like peertalk) have broken on iOS major version bumps because:
-- The device's lockdownd changed handshake requirements.
-- New pairing/trust dialog requirements were added (iOS 16+ pairing changes).
-- The iOS side app's network extension entitlements changed behavior.
-
-Projects relying on the original peertalk library (last meaningfully updated ~2014) often silently fail or need protocol patches on iOS 16/17/18.
+Attempting to open a `NWConnection` to a link-local address (fe80::) without pinning it to the specific interface results in a silently dropped or rejected connection. The connection enters a `.failed` state with a generic error. This affects BOTH the Mac side (Objective-C `Network.framework` or BSD sockets) and the iPad side (Swift `Network.framework`).
 
 **Why it happens:**
-peertalk was written when iOS 6–7 was current. It speaks a relatively stable but undocumented usbmuxd protocol. Apple treats this as a private API surface and doesn't publish a changelog when it changes. Developers assume the library "just works" without verifying against current iOS.
+Link-local addresses are per-interface by definition (the same fe80:: prefix appears on every interface). The OS needs the scope ID (interface index) to route correctly. `Network.framework` requires using `NWParameters.requiredInterface` with the exact `NWInterface` object from `NWPathMonitor`, not just `requiredInterfaceType: .wiredEthernet`. On the BSD socket side (C code on macOS), the `IPV6_BOUND_IF` socket option or `sin6_scope_id` field must be set correctly.
 
 **How to avoid:**
-- Do not use the original rsms/peertalk library unchanged. Use a fork that's been verified on iOS 16+/17+/18, or implement the usbmuxd socket protocol directly using libimobiledevice's documented protocol as reference.
-- Build a protocol version negotiation or at minimum log the full plist exchange on startup so failures are diagnosable.
-- Test against the specific iOS version you'll run on. Test on iOS 18 before shipping Phase 1.
-- The iOS side must also use `NSNetService` / `Network.framework` peertalk-style socket servers correctly — test that the TCP listener on the iOS app side starts before the macOS side connects.
+- iPad side: Use `NWPathMonitor` to obtain the current `NWPath`, extract the `NWInterface` with type `.wiredEthernet`, then pass that interface object directly to `NWParameters.requiredInterface`
+- Mac side (C/Obj-C): Use `if_nametoindex("en7")` (or whatever interface NWPathMonitor reports) and set `sin6_scope_id` in the `sockaddr_in6` struct before calling `connect()` or `bind()`
+- For service discovery over USB NCM: Use Bonjour/mDNS with `NSBonjourServices` declared — Bonjour handles scope correctly and will discover services on the link-local interface without manual IP address management
+- Test with both IPv4 link-local (169.254.x.x) and IPv6 link-local (fe80::) — macOS may prefer one over the other depending on macOS version and interface configuration
 
 **Warning signs:**
-- "Device not found" from usbmuxd even though device is trusted and USB-connected.
-- Lockdown errors referencing `com.apple.mobile.lockdown` in logs.
-- Works on iOS 15 test device but fails on iOS 17/18 production device.
+- `NWConnection` goes to `.failed` state immediately on wiredEthernet
+- BSD socket `connect()` returns `ENETUNREACH` or `EHOSTUNREACH`
+- Ping to fe80:: address works in Terminal but app connection fails (Terminal uses the correct scope ID automatically with `%en7` syntax)
 
-**Phase to address:** Phase 1. Must be verified against the target iOS version during initial transport implementation, not discovered later.
-
-**Confidence:** MEDIUM (training knowledge, corroborated by multiple open-source issues in peertalk forks)
+**Phase to address:** Phase 1 (USB NCM Transport). Write a minimal two-device loopback test on USB NCM before implementing the full pipeline.
 
 ---
 
-### Pitfall 3: AX (Accessibility) Text Injection Silently Failing Per-App
+### Pitfall 3: IOSurface Recycling Corrupts In-Flight Metal Renders
+
+**Severity: CRITICAL — Invisible frame corruption, hard to reproduce**
 
 **What goes wrong:**
-`AXUIElementSetAttributeValue` for `kAXValueAttribute` (direct text set) and `AXUIElementPerformAction` for `kAXPressAction` work in some apps and fail silently in others. Browser apps (Safari, Firefox) use custom web view rendering that does not always expose standard AX text fields. The macOS web views expose a hierarchy where the focused text element may be several levels deep and may not support `kAXValueAttribute` writes.
-
-Specifically:
-- Safari's web content process is sandboxed; AX crosses the process boundary but the focused web element may be `AXWebArea` → `AXGroup` → `AXTextField` structure, and only the leaf node accepts value writes.
-- Firefox has its own Gecko accessibility layer that partially mirrors MSAA/AX but does not always expose writable `kAXValue` on text fields inside web content.
-- Messages uses a custom text input that works with AX for reading but not always for direct value injection.
+`ScreenCaptureKit` delivers frames as `CMSampleBuffer`/`CVPixelBuffer` backed by `IOSurface`. When the `CMSampleBuffer` is released (ARC or explicit release), its underlying `IOSurface` returns to the ScreenCaptureKit pool and can be reused for the NEXT frame immediately. If LZ4 compression or the send pipeline holds a reference to the IOSurface data (e.g., a raw pointer from `CVPixelBufferGetBaseAddress`) beyond the sample buffer's lifetime, it will read corrupted/partially-written data from the next frame being captured into the same surface.
 
 **Why it happens:**
-Developers test AX text injection on TextEdit or Notes (native AppKit text fields), which work perfectly. They don't test on browsers until Phase 2 or 3, when they discover the web view hierarchy is much more complex and partially inaccessible.
+Developers lock the CVPixelBuffer (`CVPixelBufferLockBaseAddress`), get a raw pointer, pass it to `LZ4_compress_default()`, then release the pixel buffer — not realizing the lock is advisory and that releasing the sample buffer allows the surface to be recycled. If LZ4 compression runs on a background thread and the sample buffer is released on the capture callback thread before compression completes, the pointer is dangling.
 
 **How to avoid:**
-- Test AX text injection against all three target apps (Safari, Firefox, Messages) in Phase 1, not just native text fields.
-- Prefer CGEvent-based keystroke injection for typing over AX value writes — CGEvent works at the input layer, not the app-internal data model layer, so it bypasses app-specific AX implementation gaps.
-- Use AX only for reading context (focused element, selected text, cursor position), not for writing.
-- Implement an "AX read + CGEvent write" split: AX tells you what's focused, CGEvent sends the actual keystrokes.
+- Hold the `CMSampleBuffer` (or `CVPixelBuffer`) retain count for the ENTIRE duration of LZ4 compression — do not release until `LZ4_compress_default` returns
+- Use `CMSampleBufferCreateCopy` if you need to pass the buffer across threads and cannot guarantee lifetime
+- Alternative: Use `IOSurfaceLock`/`IOSurfaceUnlock` directly with `kIOSurfaceLockReadOnly` flag for the duration of the compress operation
+- In the C compression path: treat the IOSurface pointer as valid only inside the lock/unlock pair; never cache the raw pointer across a potential release boundary
+- Set `SCStreamConfiguration.queueDepth` to 3 (default) or 4 — higher values give more pipeline slack but use more RAM
 
 **Warning signs:**
-- Text injection works in TextEdit/Notes but not in Safari/Firefox.
-- `kAXErrorCannotComplete` or `kAXErrorNotImplemented` returned from `AXUIElementSetAttributeValue`.
-- AX element found but value attribute is read-only (`kAXErrorAttributeUnsupported`).
+- Occasional corrupted frames with clean seams suggesting partial write-over (not noise corruption)
+- Corruption reproducible only under load (multiple background apps capturing frames faster)
+- Frame corruption disappears when compression is moved to main thread (serializes with release)
 
-**Phase to address:** Phase 1 for architecture decision (AX read / CGEvent write split). Phase 2 for per-app AX reading of cursor position and selected text.
-
-**Confidence:** HIGH (training knowledge, well-documented in Apple dev forums and AX API documentation)
+**Phase to address:** Phase 1 (Screen Capture + Compression). Unit test with LZ4 roundtrip against known frames before integrating into the real capture pipeline.
 
 ---
 
-### Pitfall 4: Accessibility Permission Not Persisting / Requiring Manual Toggle After Updates
+### Pitfall 4: Delta Frame XOR Race Condition on Reference Frame
+
+**Severity: CRITICAL — Diverging decoder state, escalating corruption**
 
 **What goes wrong:**
-macOS requires the helper process (or app bundle) to be granted Accessibility permission in System Settings → Privacy & Security → Accessibility. This permission is tied to the **binary hash** of the executable. Any time the binary changes — including any Xcode rebuild, code signing update, or self-signed certificate renewal — macOS silently revokes the permission. The helper process continues to run but all AX calls return `kAXErrorAPIDisabled` with no useful error message in the console.
+The delta frame scheme XORs the current frame against a reference (previous keyframe). If the reference frame buffer is mutated while a delta frame is being XORed against it (on the Mac: compressor starts new keyframe → updates reference buffer → simultaneously a delta frame read is in progress), the decoder receives a delta that was partially computed against the old reference and partially the new one. The XOR produces garbage. Since the decoder accumulates these deltas, every subsequent frame is corrupted until the next keyframe.
 
 **Why it happens:**
-Developers grant AX permission once and assume it persists. On a personally-used, self-signed app that is rebuilt frequently (every day or week), the binary hash changes with every code signing operation, so the permission is effectively revoked on every rebuild.
+The reference frame buffer is a shared mutable resource accessed by both the keyframe writer (copy new frame into reference) and the delta frame compressor (read reference for XOR). Without a reader-writer lock, these operations can interleave.
 
 **How to avoid:**
-- Design the macOS helper so it checks `AXIsProcessTrustedWithOptions` at startup and displays a clear, persistent UI prompt when trust is missing (not just a console log).
-- Automate the "re-grant" workflow: open the accessibility pane, highlight your app, toggle off and on. Document this as a required step after every Xcode rebuild.
-- Consider wrapping the helper in a stable outer shell script or Launch Agent that detects the trust revocation and auto-prompts.
-- During development, use a "check-then-prompt" pattern on every launch; never silently proceed when untrusted.
+- Maintain TWO reference frame buffers (double-buffer pattern): a "committed" reference (read-only for delta computation) and a "pending" reference (write target for the new keyframe). Atomically swap them only when the keyframe has been fully compressed and sent
+- Use a `pthread_rwlock_t` (or `dispatch_semaphore_t`) around reference buffer access: readers (delta computation) take read lock, writers (keyframe copy) take write lock
+- Rule: A new keyframe invalidates the reference buffer. Do not start computing a new delta until the new keyframe has been acknowledged as received by the iPad (or use a timer-based approach with a hard keyframe interval)
+- In the binary protocol: include a `keyframe_seq` field that the decoder must match before applying a delta — if the delta references a keyframe seq the decoder hasn't received, discard it and request a new keyframe
 
 **Warning signs:**
-- AX calls that worked yesterday now return `kAXErrorAPIDisabled`.
-- No AX behavior change observed after rebuild.
-- `AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true})` returns `false` after rebuild.
+- Decoder state drifts over time, with corruption increasing between keyframe intervals
+- Corruption appears only when the delta threshold is exceeded (fast-changing content) — not during static content
+- Adding a sleep before delta computation causes corruption to disappear (masks the race)
 
-**Phase to address:** Phase 1. This is a basic infrastructure requirement that must be in the macOS app from day one.
-
-**Confidence:** HIGH (well-documented Apple behavior; confirmed in multiple developer forum threads)
+**Phase to address:** Phase 1 (Compression + Protocol). Tested in `DeltaTests.c` with synthetic concurrent writes before integration.
 
 ---
 
-### Pitfall 5: CGEvent Keystroke Injection Ignored by Focused App Due to Wrong Event Target
+### Pitfall 5: ProMotion 120Hz Requires Explicit Opt-In; MTKView Defaults to 60Hz
+
+**Severity: HIGH — Silent 60Hz cap despite 120Hz hardware**
 
 **What goes wrong:**
-`CGEventCreateKeyboardEvent` + `CGEventPost(kCGHIDEventTap, event)` posts to the HID event stream. If the app receiving the event is:
-- Running in a different security context (secure input mode — e.g., password fields)
-- Using a custom event loop that filters synthetic events
-- A sandboxed process that ignores events from non-trusted sources
-
-...then the events are generated but silently dropped. Password fields in particular enable "secure input mode" (`CGSSetSecureInputMode`), which causes the system to block synthetic keyboard events. No error is returned — the event appears to be sent successfully but the app never receives it.
+`MTKView.preferredFramesPerSecond = 120` is not sufficient to achieve 120Hz rendering on ProMotion iPads. Without `CADisableMinimumFrameDuration = YES` in Info.plist, the system clamps all `CADisplayLink`-based rendering to 60Hz. Even with the plist key set, `MTKView` must use `CAMetalDisplayLink` (not the built-in MTKView timer) for correct frame pacing at variable rates. Using MTKView's default timer at high frame rates produces uneven cadence (12ms-20ms-12ms instead of 8.3ms-8.3ms-8.3ms).
 
 **Why it happens:**
-`CGEventPost` returns void; there's no feedback mechanism. Developers assume success because no error is thrown. They don't discover the secure-input-mode blocking until someone tests on a login screen or password field.
+ProMotion's variable refresh rate requires explicit opt-in at both the plist level and the rendering loop level. The plist key tells the system the app is ProMotion-aware. `CAMetalDisplayLink` provides a callback that fires at the display's actual cadence (which can vary from 24Hz to 120Hz dynamically) rather than a fixed interval timer.
 
 **How to avoid:**
-- Detect secure input mode using `IsSecureEventInputEnabled()` (IOKit) before injecting keystrokes; if active, display "secure input mode — keyboard paused" in the iOS app UI.
-- Use `kCGAnnotatedSessionEventTap` instead of `kCGHIDEventTap` if targeting a specific process; this creates a session-level tap that is more reliably received by the front app.
-- For text input, prefer `CGEventKeyboardSetUnicodeString` on a key-down event to inject text as Unicode rather than simulating individual keycodes — this bypasses keyboard layout mapping issues.
-- Test on: Safari URL bar, Safari password field, Terminal, TextEdit, Messages.
+- Add `CADisableMinimumFrameDuration` key with value `YES` to Info.plist
+- Use `CAMetalDisplayLink` instead of MTKView's built-in `preferredFramesPerSecond` for the render loop
+- Use triple buffering (3 drawables) — 2 is documented as "basically impossible to make work" with the compositor
+- Use a semaphore with count 3 to gate drawable acquisition so the render thread never stalls
+- Present with `commandBuffer.present(drawable)` not `drawable.present()` directly — let Metal's scheduler handle presentation timing
 
 **Warning signs:**
-- CGEvent posts succeed (no error) but no text appears.
-- Behavior changes based on whether the active field is a password field.
-- Works when your process has input monitoring permission but not when it doesn't.
+- FPS counter shows 60Hz even with `preferredFramesPerSecond = 120`
+- Irregular frame intervals visible in Instruments (Time Profiler)
+- Adding an Instruments capture causes stuttering due to frame timing sensitivity
 
-**Phase to address:** Phase 1 for basic keystroke injection. Phase 2 when cursor movement and selection control are added.
-
-**Confidence:** HIGH (well-documented Apple platform behavior; `IsSecureEventInputEnabled` and secure input mode are widely discussed in developer forums)
+**Phase to address:** Phase 2 (Metal Renderer). Verify with Instruments Frame Debugger before considering rendering complete.
 
 ---
 
-### Pitfall 6: CGEvent Requires Input Monitoring Permission Separate From Accessibility
+### Pitfall 6: VideoToolbox Low-Latency HEVC Has Undocumented Incompatibilities
+
+**Severity: HIGH — Silent bitrate control failure, encoder ignores constraints**
 
 **What goes wrong:**
-On macOS 10.15+, posting synthetic keyboard events via `CGEventPost` to the HID event tap (`kCGHIDEventTap`) requires the process to have **Input Monitoring** permission in addition to (or instead of, depending on the event tap type) Accessibility permission. This is a separate Privacy & Security pane entry. Apps that only request Accessibility permission find that `CGEventPost` silently fails for global keyboard injection.
+The `kVTCompressionPropertyKey_EnableLowLatencyRateControl` property (required for realtime streaming) cannot be combined with `kVTCompressionPropertyKey_ConstantBitRate`. Attempting to set both causes one to be silently ignored — typically the bitrate constraint, resulting in unconstrained output that floods the Wi-Fi channel. Additionally, `kVTCompressionPropertyKey_AverageBitRate` and `kVTCompressionPropertyKey_DataRateLimits` have been reported as having no effect on the hardware HEVC encoder in some macOS versions — the encoder produces variable bitrate output regardless.
 
 **Why it happens:**
-Before Catalina (10.15), Accessibility permission covered keyboard event posting. Post-Catalina, Apple split this into two permissions. Documentation was unclear at launch about exactly which permission covers which operation. Many tutorials and Stack Overflow answers predate this split.
+Apple's VideoToolbox hardware encoder has a different feature matrix than the software encoder. Properties that appear to be settable return `noErr` but are silently ignored if the hardware encoder doesn't support the combination. The documentation for low-latency rate control was added in WWDC21 but the interaction with bitrate properties is not documented.
 
 **How to avoid:**
-- The macOS helper must declare both Accessibility AND Input Monitoring as required permissions and check for both at startup using `IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)` and `AXIsProcessTrustedWithOptions`.
-- Show a setup wizard on first launch that walks through granting both permissions, with deep-link buttons to the correct preference panes.
-- Both permissions suffer the binary-hash revocation issue on rebuild (see Pitfall 4) — document both in the rebuild workflow.
+- Enable low-latency rate control in the `encoderSpecification` dictionary at session creation time, not as a property set post-creation
+- Use only `kVTCompressionPropertyKey_AverageBitRate` for bitrate control with low-latency mode — not constant bitrate
+- Verify actual encoder output rate experimentally by measuring bytes per second on the output side during Wi-Fi tests
+- Do NOT set B-frame count properties when using low-latency mode — they conflict and the encoder may silently disable low-latency operation
+- Test with `kVTCompressionPropertyKey_RealTime = true` (required for low-latency) — without this the encoder buffers multiple frames for quality optimization, blowing the 25ms latency budget
 
 **Warning signs:**
-- `AXIsProcessTrustedWithOptions` returns `true` but CGEvent posting doesn't work globally.
-- Events work when the helper is the frontmost app but not when a different app is focused.
-- Keystrokes appear to post but target app doesn't receive them.
+- `VTCompressionSessionSetProperty` returns `noErr` but bitrate is unconstrained at runtime
+- Frame intervals jump to 33ms+ under motion even with 60fps target (B-frame buffering)
+- Wi-Fi channel saturates despite "set" bitrate limit
 
-**Phase to address:** Phase 1. Both permissions must be requested and verified in the initial macOS helper setup.
-
-**Confidence:** HIGH (documented Apple behavior since macOS 10.15 Catalina)
+**Phase to address:** Phase 3 (Wireless/HEVC path). Benchmark actual output rate before declaring Wi-Fi mode operational.
 
 ---
 
-### Pitfall 7: AWDL Requiring Entitlements Not Available on Non-App-Store Apps
+### Pitfall 7: ScreenCaptureKit Audio Capture Fails Silently on macOS 15
+
+**Severity: HIGH — Audio streaming silently produces no output**
 
 **What goes wrong:**
-AWDL (Apple Wireless Direct Link) is accessible from iOS apps through `MultipeerConnectivity` and from macOS through `Network.framework` or `MultipeerConnectivity`. However, activating the AWDL network interface and using it for direct peer connections requires the `com.apple.developer.networking.wifi-info` entitlement and potentially `com.apple.developer.networking.multipath`. These entitlements are provisioned by Apple for App Store apps. For self-signed personal-use apps, the entitlements may be present in the provisioning profile with restrictions, or may cause a `SecTaskCopyValueForEntitlement` failure at runtime.
+On macOS 15 (Sequoia), attempts to capture system audio via `SCStream` with `capturesAudio = true` may fail with `SCStreamError` code -3805 (`connectionInvalid`) or simply produce no audio callbacks. The stream appears to start successfully, video frames arrive normally, but `stream(_:didOutputSampleBuffer:ofType:)` is never called for audio.
 
 **Why it happens:**
-Developers use `MultipeerConnectivity` which abstracts AWDL, Bluetooth, and Wi-Fi infrastructure under one API. They don't realize that when Bluetooth is disabled (as in this project), MCSession falls back to AWDL, which has entitlement requirements. On a self-signed app, the entitlement may be missing from the provisioning profile entirely, causing silent fallback to infrastructure Wi-Fi (which is also blocked by design in this project).
+macOS 15 changed audio capture internals. The preferred approach is now the CoreAudio Tap API (`CATapDescription`, `AudioHardwareCreateProcessTap`, `AudioHardwareCreateAggregateDevice`), available since macOS 14.4. ScreenCaptureKit's audio path was not reliably updated to match.
 
 **How to avoid:**
-- Explicitly verify AWDL is the active transport in MCSession by observing the peer's `MCSessionState` and logging the underlying connection details.
-- If using `Network.framework` directly for AWDL (via `NWParameters` with `.bonjour` service with `.awdl` interface), test that `NWInterface.InterfaceType == .wifi` and `NWInterface.Name == "awdl0"` are active.
-- For self-signed personal use: use a paid Apple Developer account (not free tier) — free-tier provisioning profiles do NOT include the networking entitlements needed. The $99/year developer account provides the required entitlements for personal devices.
-- Test AWDL behavior explicitly with Wi-Fi infrastructure disconnected and Bluetooth off to confirm you are truly on AWDL and not falling back silently.
+- Use the CoreAudio Tap API for audio capture on macOS 14.4+: create a `CATapDescription`, use `AudioHardwareCreateProcessTap` to tap system output, wrap in an aggregate device, read via `AudioDeviceCreateIOProcIDWithBlock`
+- Add `NSAudioCaptureUsageDescription` to Info.plist — required for the Tap API permission prompt
+- Fall back to ScreenCaptureKit audio capture only on macOS 12-14.3 where the Tap API is unavailable
+- Implement a capability detection path at startup: attempt CoreAudio Tap first, fall back to SCKit audio if it fails
+- The Tap API does NOT require the Screen Recording permission — it uses Microphone permission category — this is an advantage over SCKit audio
 
 **Warning signs:**
-- `MultipeerConnectivity` connects only when both devices are on the same Wi-Fi, not when infrastructure Wi-Fi is off.
-- MCSession advertiser is discovered but connection never completes without Wi-Fi.
-- Network.framework `NWConnection` never reaches `.ready` state when targeting AWDL interface.
+- `SCStream` audio type callbacks never fire despite `capturesAudio = true`
+- No error in `stream(_:didStopWithError:)` — stream appears healthy
+- Reproducible on macOS 15, works on macOS 14.x with same code
 
-**Phase to address:** Phase 1. AWDL is the specified fallback transport and must be validated end-to-end in Phase 1.
-
-**Confidence:** MEDIUM (entitlement requirements documented in Apple developer docs; free-tier vs paid-tier behavior confirmed in multiple community discussions through training cutoff)
+**Phase to address:** Phase 4 (Audio Streaming). Verify CoreAudio Tap API works before building the audio pipeline.
 
 ---
 
-### Pitfall 8: iOS Custom Keyboard Extension vs. In-App Keyboard — Wrong Architecture Choice
+### Pitfall 8: Sequoia's Screen Recording Permission Prompt Fires on Every API Call Path
+
+**Severity: HIGH — Blocks SCShareableContent for 3-10 seconds on first call**
 
 **What goes wrong:**
-Building the iOS side as a **Custom Keyboard Extension** (`UIInputViewController` subclass) seems obvious — it literally installs a system keyboard replacement. However, custom keyboard extensions are heavily sandboxed:
-- No network access by default (requires `RequestsOpenAccess` entitlement).
-- Even with `RequestsOpenAccess`, the extension runs in a restricted sandbox that complicates USB socket connections.
-- Extension lifecycle is not controllable — iOS may kill it at any time.
-- No persistent background process; the extension only lives while typing.
-- Cannot initiate the USB/AWDL connection proactively; it must wait for user to switch to it.
-
-The correct approach for this project is a **regular iOS app with a custom in-app keyboard view** — not a system keyboard extension. The app runs in the foreground, controls its own lifecycle, and owns the network connections.
+On macOS Sequoia, calling `SCShareableContent.getWithCompletionHandler` sometimes blocks for 3-10 seconds or never calls the completion handler if the periodic re-authorization prompt is about to appear. This blocks the capture initialization path and can cause the agent to appear "hung" at startup.
 
 **Why it happens:**
-"iOS keyboard app" sounds like it should be a keyboard extension. The distinction between "app that contains a keyboard UI" and "system keyboard extension" is not immediately obvious to developers who haven't shipped both.
+The SCKit permission check presents the re-authorization UI synchronously relative to the completion handler. If the user has dismissed the prompt or it is awaiting user interaction, the completion handler is deferred until the user responds (or times out).
 
 **How to avoid:**
-- Build the iOS keyboard as a `UIView` subclass embedded in a standard `UIViewController`, NOT as `UIInputViewController` / keyboard extension.
-- The app must run in the foreground to maintain the USB/AWDL connection. Design the UI so the user keeps it frontmost while typing on Mac.
-- Use `UIApplication.shared.isIdleTimerDisabled = true` to prevent screen lock while the app is in active keyboard use.
+- Call `SCShareableContent.getWithCompletionHandler` on a background queue, not the main queue
+- Implement a 5-second timeout on initial content enumeration; if the timeout fires, assume permission is pending and display a menu bar status indicating "Awaiting screen recording permission"
+- After timeout, retry the enumeration every 30 seconds
+- Do not block agent startup on SCKit initialization — start the network listener and pairing flow independently, then add SCKit streaming capability once permission is confirmed
 
 **Warning signs:**
-- Initial architecture puts keyboard UI in an Extension target in Xcode.
-- Network code doesn't compile in the extension target due to sandbox restrictions.
-- Connection drops whenever the iOS device screen dims.
+- Agent appears to launch but never starts streaming
+- Completion handler called with empty content list on macOS 15
+- Works immediately on macOS 14, hangs on macOS 15
 
-**Phase to address:** Phase 1. Architecture must be established correctly before any networking code is written.
-
-**Confidence:** HIGH (UIKit keyboard extension sandboxing is thoroughly documented in Apple HIG and developer docs)
-
----
-
-### Pitfall 9: Text State Desync Between iOS and macOS — No Ground Truth
-
-**What goes wrong:**
-When the iOS app sends keystrokes to macOS via CGEvent, the macOS text field's actual state (content, cursor position, selection) changes. But the iOS app has no automatic way to know the new state — it must either:
-a) Maintain a local model of what it believes the macOS text field contains, OR
-b) Poll the macOS text field via AX to read actual state, OR
-c) Receive real-time state updates from the macOS helper.
-
-Option (a) fails when the user also types directly on the Mac keyboard, when auto-correct fires, when the app modifies text programmatically (e.g., form auto-fill), or when macOS text field value changes due to app logic.
-
-Option (b) adds AX polling round-trip latency and drains battery. Option (c) requires the macOS helper to watch AX notifications (`kAXValueChangedNotification`, `kAXSelectedTextChangedNotification`) and push updates back over the connection — adding significant complexity.
-
-**Why it happens:**
-Developers start with one-way flow (iOS sends, macOS receives) because it's simpler. The "real-time reflection" requirement from Phase 2 is treated as a Phase 2 problem. But without designing the bidirectional state sync protocol in Phase 1's transport layer, adding it in Phase 2 requires rearchitecting the connection protocol.
-
-**How to avoid:**
-- Design the transport protocol as bidirectional from Phase 1 even if only one direction is used initially. Reserve message types for macOS→iOS state updates.
-- In Phase 2, implement AX notification observation on the macOS side (`AXObserverCreate`, `kAXSelectedTextChangedNotification`) to push cursor/selection state back to iOS.
-- Treat the macOS AX-read state as authoritative; iOS maintains a local cache for responsiveness but syncs on every received update.
-
-**Warning signs:**
-- iOS shows wrong cursor position after user types directly on Mac keyboard.
-- Delete key deletes wrong content because iOS believes different text is in the field.
-- Phase 2 implementation requires changing the Phase 1 message protocol.
-
-**Phase to address:** Phase 1 for protocol design. Phase 2 for full implementation.
-
-**Confidence:** MEDIUM (architectural pattern derived from remote-input system design; specific AX notification APIs confirmed from training knowledge)
+**Phase to address:** Phase 1 (Screen Capture). Handle permission delays as a first-class state in the agent startup sequence.
 
 ---
 
 ## Moderate Pitfalls
 
-### Pitfall 10: macOS Firewall Blocking AWDL / Bonjour Discovery
+### Pitfall 9: Local Network Permission Blocks UDP on First Launch
+
+**Severity: MEDIUM — Requires user interaction, one-time**
 
 **What goes wrong:**
-macOS's application-level firewall (`/Library/Preferences/com.apple.alf`) can block incoming Bonjour/mDNS service advertisements and TCP connections. When the macOS firewall is set to "Block all incoming connections" or "Allow signed applications only," the macOS helper process (which is self-signed, not notarized) will be silently blocked from receiving AWDL connections. The macOS side will advertise fine but iOS will not be able to complete the TCP handshake.
+On iPadOS 14+, sending the first UDP packet (or opening the first TCP connection) to a local network address triggers the "Would like to find and connect to devices on your local network" permission prompt. Until the user grants this, all local network sockets silently fail — no error is returned, packets are dropped. This affects the USB NCM interface even though it is a direct point-to-point connection, not a traditional LAN.
 
 **How to avoid:**
-- Add the macOS helper to the firewall's allowed-apps list as part of the setup documentation.
-- Test specifically with the macOS application firewall enabled (it defaults to off but many users turn it on).
-- Display a setup-time check: use `SCDynamicStoreCopyValue` or parse `com.apple.alf` to detect if the firewall is active, and warn the user.
-
-**Confidence:** MEDIUM
-
-**Phase to address:** Phase 1 setup and onboarding.
-
----
-
-### Pitfall 11: USB Hot-Plug Reconnection Race Condition
-
-**What goes wrong:**
-When USB is replugged after being disconnected, the usbmuxd device notification fires before the device is fully enumerated and trusted. Attempting to reconnect immediately on notification receipt results in connection failure. Additionally, the AWDL→USB switchover (which must happen on re-plug) races with the AWDL session teardown, potentially leaving the app in a state where neither transport is active.
-
-**How to avoid:**
-- On USB-plug notification (via `IOKit` device notifications or usbmuxd protocol `DeviceAdd` message), add a 1–2 second delay before attempting reconnect.
-- Implement a connection state machine: `disconnected` → `usb_connecting` → `usb_connected` / `awdl_fallback`. Never attempt both connections simultaneously.
-- For the USB→AWDL fallback on unplug: start AWDL advertiser/browser when USB connects (so it's ready to go) and activate it immediately on USB disconnect.
-
-**Confidence:** MEDIUM
-
-**Phase to address:** Phase 1.
-
----
-
-### Pitfall 12: AXObserver Notification Missing for Web Views in Sandboxed Browser Processes
-
-**What goes wrong:**
-Safari and Firefox run their web content in separate sandboxed helper processes. `AXObserverCreate` must be called with the **web content process PID**, not the main browser PID, to receive text-change notifications from web forms. Finding the correct PID requires walking the process tree and AX hierarchy, which is non-trivial and can change between browser versions.
-
-**How to avoid:**
-- Use `AXUIElementCreateSystemWide()` and walk to the focused element to find the correct process, then use that PID for `AXObserverCreate`.
-- Subscribe to `kAXFocusedUIElementChangedNotification` on the system-wide AX element to detect when focus moves to a different process, and re-register the observer for the new process PID.
-- Test in both Safari and Firefox and verify that AX notifications fire for web form text changes in both.
-
-**Confidence:** MEDIUM
-
-**Phase to address:** Phase 2 (real-time reflection implementation).
-
----
-
-### Pitfall 13: iOS Predictive Text / Autocorrect Firing on the iOS Side Instead of macOS Side
-
-**What goes wrong:**
-The iOS app embeds a keyboard view. If the keyboard view is attached to a local `UITextField` or `UITextView` (a common approach to make iOS predictive text and autocorrect work), those corrections fire locally on iOS. But when the corrected text is sent to macOS as keystroke events, the sequence is: backspace × N + replacement text — which is visually disruptive and may fail if the CGEvent backspace events don't land in the right sequence.
-
-**Why it happens:**
-Getting iOS's native predictive text and autocorrect to work requires a real `UITextInput`-conforming responder. Developers hook this up locally, then find their local text state and macOS text state diverge because macOS processed different events.
-
-**How to avoid:**
-- Use a hidden, minimal `UITextView` as the keyboard attachment point purely to activate predictive text. Intercept all `shouldChangeTextIn:replacementText:` and `selectionDidChange:` delegate/notification callbacks before they touch the local text view.
-- Treat the local text view as a scratch buffer — translate every delta (insertion, deletion, selection change) into a macOS event immediately rather than updating the local buffer first.
-- Never display the local text view's content; it is purely a keyboard-activation mechanism.
-
-**Confidence:** MEDIUM
-
-**Phase to address:** Phase 2.
-
----
-
-### Pitfall 14: Self-Signed App Crashing on iOS Due to Missing Entitlements at Runtime
-
-**What goes wrong:**
-A self-signed iOS app built with a personal developer account may have entitlements in the `.entitlements` file that are not present in the provisioning profile. On iOS, this causes a hard crash at launch (`SIGKILL` from the OS, typically `LAUNCH_CONSTRAINTS_VIOLATION` in crash logs) with no useful message displayed to the user. Common culprits: `com.apple.developer.networking.wifi-info`, `com.apple.developer.networking.multipath`, and any push notification entitlements accidentally included.
-
-**Why it happens:**
-Xcode sometimes auto-generates entitlements files with capabilities that were added in the UI but not properly provisioned. Personal team provisioning profiles are more restrictive than paid-account profiles.
-
-**How to avoid:**
-- Audit the `.entitlements` file before building: every key must be matched by a capability in the provisioning profile.
-- For a personal-use self-signed app, keep entitlements minimal: remove everything not explicitly needed.
-- Use a paid Apple Developer account (not free personal team) — the free personal team cannot provision networking-related entitlements, including those needed for AWDL direct connections.
-- After every entitlement change, do a clean build and test launch on device.
+- Add `NSLocalNetworkUsageDescription` to Info.plist with a clear explanation ("Required to connect to the Mac over USB")
+- Add `NSBonjourServices` with your service type (e.g., `_keyd-rd._tcp`) if using Bonjour for discovery
+- Do NOT use Bonjour for USB NCM transport (use fixed link-local address + stored port); but still declare the service type for the Wi-Fi fallback path
+- Design the pairing flow to trigger the local network permission prompt early and explicitly (send a probe packet during pairing, not at session start)
+- The permission is one-time per app install; once granted, subsequent launches work without prompting
 
 **Warning signs:**
-- App launches briefly then immediately exits on device (no crash dialog).
-- Xcode shows `SIGKILL` with `LAUNCH_CONSTRAINTS` in the device log.
-- Works on Simulator but crashes on physical device.
+- UDP socket sends return 0 bytes written but no error
+- NWConnection goes to `.waiting` state with `POSIXError.EPERM` or local network error
+- Works on simulator, fails on physical device (simulator skips the permission check in Xcode 14+)
 
-**Confidence:** HIGH
-
-**Phase to address:** Phase 1.
+**Phase to address:** Phase 1 (Transport + Pairing). Test Local Network permission grant during initial pairing flow design.
 
 ---
 
-### Pitfall 15: CGEvent Modifier Key State Getting Stuck
+### Pitfall 10: NWPathMonitor wiredEthernet Reports False Positives
+
+**Severity: MEDIUM — May trigger USB NCM mode over wrong interface**
 
 **What goes wrong:**
-When injecting modifier-key combinations (Cmd-C, Cmd-V, etc.), you must explicitly send:
-1. Key-down for the modifier (Cmd)
-2. Key-down for the character (C) with modifier flag set
-3. Key-up for the character
-4. Key-up for the modifier
+`NWPathMonitor` reports `.wiredEthernet` for ANY Ethernet-like interface, including USB Ethernet adapters (hubs, dongles) and the iPad's USB NCM link to the Mac. If the user has an Ethernet hub connected, `NWPathMonitor` will report wiredEthernet for both — and the wrong interface will be selected for the USB NCM transport, causing connection failures that look like USB NCM transport bugs.
 
-If the app crashes, freezes, or the connection drops mid-sequence, the modifier key-up event never fires. The macOS system then behaves as if Cmd is physically held down, causing bizarre behavior in the frontmost app until the user manually presses and releases Cmd.
+**How to avoid:**
+- Do not rely solely on `interfaceType == .wiredEthernet`; also check the interface's link-local address to confirm it is the Mac-connected NCM interface
+- During pairing, exchange the Mac's USB NCM interface IP (link-local) with the iPad; store it and use it to identify the correct interface on subsequent connections
+- Alternatively: use Bonjour service advertisement from the Mac on the NCM interface only (advertise with `interface` set to the specific NCM interface) and let the iPad discover via that specific interface
+
+**Warning signs:**
+- Transport fails intermittently when the user also has an Ethernet adapter connected
+- `NWPathMonitor` reports multiple wiredEthernet interfaces simultaneously
+- USB NCM transport works in isolation, fails when other adapters are present
+
+**Phase to address:** Phase 1 (Transport). Include multi-interface detection in the USB NCM path implementation from the start.
+
+---
+
+### Pitfall 11: CGEvent Injection at 120-240Hz Triggers Accessibility Watchdog
+
+**Severity: MEDIUM — Accessibility permission silently revoked or injection throttled**
+
+**What goes wrong:**
+Injecting CGEvents at 240Hz (one event per 4ms) is at the extreme high end of what macOS's accessibility subsystem expects. Under high CPU load (e.g., simultaneous LLM inference), the accessibility event queue can back up. macOS may throttle or drop injected events without error. Additionally, posting a high volume of mouse-move events can cause system behavior changes (e.g., hover tooltips flickering, UI elements responding to phantom moves).
+
+**How to avoid:**
+- Batch input events on the iPad before sending: if multiple mouse-move events accumulate in a 4ms window, send only the most recent position (the intermediate positions are not visible at 60Hz anyway)
+- On the Mac injection side, use `CGEventPost(kCGHIDEventTap, event)` rather than `kCGSessionEventTap` — HID tap has lower overhead
+- Implement adaptive batching: measure actual event injection rate vs target rate; if falling behind, drop intermediate move events (never drop clicks or key events)
+- Test under load: run an LLM concurrently during input injection and verify event delivery fidelity
+
+**Warning signs:**
+- Mouse cursor movement on Mac is jerky despite smooth touch input on iPad
+- Clicks are delivered but moves are dropped under load
+- Accessibility permission disappears from System Preferences after heavy use (rare but documented)
+
+**Phase to address:** Phase 2 (Input Handling). Build adaptive batching into the input pipeline from the start.
+
+---
+
+### Pitfall 12: SMAppService Login Item Registration Succeeds but Agent Doesn't Launch
+
+**Severity: MEDIUM — Requires explicit user action to fix after OS upgrade**
+
+**What goes wrong:**
+`SMAppService.mainApp.register()` returns `.success` but the agent is not actually running after login. The `status` property shows `.enabled` but `launchctl list | grep keyd` shows nothing. This happens reliably after macOS upgrades and intermittently on fresh installs in macOS 13-15.
 
 **Why it happens:**
-CGEvent injection is not atomic. Event sequences are posted one at a time. Error paths often don't include cleanup code for partially-sent modifier sequences.
+SMAppService has documented bugs in macOS Ventura 13.6 and Sequoia where the launchd job is not correctly associated despite the API reporting success. The issue is especially common when the app bundle has been modified (code re-signed) since the last registration.
 
 **How to avoid:**
-- Always post modifier key-up events in a `defer` block (Swift) or `@finally` handler so they fire even on error paths.
-- Send modifier key-up events with a synthetic "release all modifiers" sequence on connection drop/reconnect.
-- Keep the macOS helper's sent-modifier state, and on unexpected disconnection, send release events for all pending modifiers.
+- After registering, verify using `SMAppService.mainApp.status` — if `.notRegistered` or `.requiresApproval`, surface a menu bar alert to the user
+- Implement a "Fix Launch at Login" menu bar option that calls `unregister()` followed by `register()` — this reliably resolves stuck registration state
+- Check `status` after every launch; if the agent is running but the login item shows `.notRegistered`, re-register silently
+- Do not rely on SMAppService alone for critical first-launch experience — include a manual launch option
 
-**Confidence:** HIGH
+**Warning signs:**
+- Agent requires manual launch after OS upgrade
+- `SMAppService.mainApp.status` returns `.enabled` but process is not in process list
+- Registration works on first install but breaks after Xcode re-sign
 
-**Phase to address:** Phase 1 (hotkeys are Phase 1 scope).
+**Phase to address:** Phase 1 (Agent Infrastructure). Test login item registration and re-registration on macOS 14 and 15.
 
 ---
 
-## Minor Pitfalls
+### Pitfall 13: LZ4 Block Mode vs Frame Mode Confusion Causes Decompress Failures
 
-### Pitfall 16: iOS App Background Suspension Killing the Connection
+**Severity: MEDIUM — Silent decompression failure or assert on iPad**
 
 **What goes wrong:**
-If the user switches away from the iOS keyboard app (to check another app, for example), iOS will suspend the app within ~30 seconds. All TCP connections (USB and AWDL) will be severed. On return, the app must reconnect from scratch, adding 2–5 seconds of latency before keyboard is usable again.
+`lz4.c` (single-file vendored) exposes two distinct APIs: the block API (`LZ4_compress_default`, `LZ4_decompress_safe`) and the frame API (`LZ4F_*`). These are NOT interchangeable. Compressing with the block API on the Mac and attempting to decompress with the frame API on the iPad (or vice versa) produces an immediate error (-1 return or negative decompressed size). This is easy to mistake for a transport corruption issue.
 
 **How to avoid:**
-- Implement a clear "suspended" state in the iOS UI (grayed-out keyboard, "reconnecting..." message).
-- Use `UIApplication.shared.beginBackgroundTask` to request up to 30 seconds of background time for orderly disconnection (not for persistent operation — that's not available without background modes).
-- Explore declaring the `audio` background mode as a keep-alive mechanism (controversial; not recommended for App Store, acceptable for personal use).
-- Accept this limitation and document it — it's a user-education issue, not a bug.
+- Use the block API (`LZ4_compress_default` / `LZ4_decompress_safe`) exclusively for the hot path — it is simpler, has no header overhead, and operates on a single contiguous buffer matching the frame protocol design
+- The frame API adds a 7-byte header and is designed for streaming files, not network datagrams
+- Include a `compressed_size` field in the media frame header (it's already in the 24-byte header design as `size`) so the decompressor knows the exact byte count
+- Write a `DeltaTests.c` test that compresses with block API and decompresses with block API on the same machine before testing cross-device
 
-**Confidence:** MEDIUM
+**Warning signs:**
+- `LZ4_decompress_safe` returns a negative value (decompression failure)
+- Decompression works in unit tests, fails over the wire (suggests the header is being parsed as data)
+- Frame deserialization passes but decompressed size is wrong
 
-**Phase to address:** Phase 1 (connection lifecycle management).
+**Phase to address:** Phase 1 (Compression + Protocol). Protocol unit tests must cover compress-decompress roundtrip before transport work begins.
 
 ---
 
-### Pitfall 17: macOS App Notarization Requirement for Gatekeeper
+### Pitfall 14: Touch-to-Mouse Coordinate Mapping Requires Affine Transform, Not Simple Scaling
+
+**Severity: MEDIUM — Misaligned cursor, usability failure**
 
 **What goes wrong:**
-A self-signed macOS app that is not notarized will be quarantined by Gatekeeper on first launch. The user must right-click → Open to bypass the quarantine warning. After a macOS update, the quarantine flag may be re-applied to already-launched apps in some scenarios. This is not a stopper for personal use but is a friction point that must be managed.
+Naively mapping iPad touch coordinates to Mac screen coordinates using a simple scale factor (iPad width / Mac width) produces misaligned cursor behavior on Retina displays. The Mac may have multiple logical resolutions (Retina scaling, display zoom), and the iPad Metal renderer may add letterboxing or pillarboxing if aspect ratios differ. A touch at the bottom-right of the iPad screen does not map to the bottom-right of the Mac screen.
+
+**Why it happens:**
+There are three coordinate spaces in play: iPad touch coordinates (points), iPad Metal renderer coordinates (pixels, with potential letterbox offsets), and Mac screen coordinates (logical pixels, with Retina scale). Each transformation needs to be tracked independently.
 
 **How to avoid:**
-- Document the right-click → Open procedure as part of app setup.
-- Use `xattr -d com.apple.quarantine /path/to/App.app` in a setup script to permanently remove the quarantine flag.
-- Run `spctl --master-disable` is an option for personal machines but is too aggressive; prefer the per-app quarantine removal.
+- Exchange Mac display geometry at connection time: send `{logicalWidth, logicalHeight, scaleFactor}` as part of the session handshake
+- On the iPad side, compute the render viewport (accounting for aspect ratio letterboxing) and translate touch coordinates within the rendered content area first, then scale to Mac logical coordinates
+- Use `CGDisplayBounds()` on the Mac to get the current display geometry (including Retina scale); send this to the iPad in the session handshake
+- Test with both native resolution and scaled ("More Space" / "Larger Text") display settings on the Mac — these change `CGDisplayBounds` values
+- Account for macOS dock and menu bar: the Mac mouse can go to (0,0) but the dock changes where application content starts — the mapping should cover the full Mac display (0,0) to (width, height), not the "safe area"
 
-**Confidence:** HIGH
+**Warning signs:**
+- Cursor offset increases proportionally toward bottom-right corner
+- Cursor works correctly until Mac display settings are changed
+- Scrolling works but click position is wrong by a constant offset (suggests letterbox math is correct but offset from viewport edge is missing)
 
-**Phase to address:** Phase 1 setup documentation.
-
----
-
-### Pitfall 18: Keyboard Height Calculation Breaking on iPhone Models With Dynamic Island / Home Indicator
-
-**What goes wrong:**
-The iOS keyboard view layout must account for the safe area insets, which change across iPhone models (notch, Dynamic Island, home indicator). Hard-coding keyboard frame sizes or using `UIScreen.main.bounds` (deprecated in iOS 16) for layout calculations produces clipped or incorrectly positioned keyboard UI on newer devices.
-
-**How to avoid:**
-- Use `safeAreaInsets` and `keyboardLayoutGuide` (iOS 15+) for all keyboard-related layout.
-- Test the UI on iPhone models with: no notch (SE), notch (iPhone 13), and Dynamic Island (iPhone 14 Pro+).
-- Avoid `UIScreen.main.bounds` — use `UIWindowScene.keyWindow.bounds` or view-relative frame calculations.
-
-**Confidence:** HIGH
-
-**Phase to address:** Phase 1 UI implementation.
-
----
-
-### Pitfall 19: AX Walking Performance — Traversing Large Web Document Hierarchies
-
-**What goes wrong:**
-When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a browser tab with a large web document, each AX call is a cross-process IPC call. Walking deep hierarchies (large web pages with thousands of elements) can block for 100ms+ per query, making the AX-read-then-inject latency noticeable.
-
-**How to avoid:**
-- Cache the focused AX element reference. Only re-query on focus-change notification.
-- Never walk the full AX tree for every keystroke — only walk on focus change.
-- Use `kAXFocusedUIElementAttribute` on the app-level AX element to jump directly to the focused element without traversal.
-
-**Confidence:** HIGH
-
-**Phase to address:** Phase 2 (when AX reading is implemented for real-time reflection).
+**Phase to address:** Phase 2 (Input Handling + Touch Translation). Validate coordinate mapping with a "cursor calibration" test before declaring input complete.
 
 ---
 
@@ -449,12 +382,14 @@ When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a b
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| AX value write instead of CGEvent injection | Simpler code, no key-code mapping | Breaks silently on browsers, password fields, most real apps | Never for this project — use CGEvent for all writes |
-| One-way transport (iOS→Mac only) | Simpler Phase 1 protocol | Phase 2 text reflection requires full protocol rearchitect | Never — reserve bidirectional message types from Phase 1 |
-| Polling macOS text state instead of AX notifications | Simpler than observer setup | Battery drain, adds latency to every state read | Only as a temporary fallback if AX notifications fail for a specific app |
-| Using peertalk unchanged without iOS 16+ testing | Faster Phase 1 start | High risk of silent failure on production device | Never — validate against target iOS version before any other Phase 1 work |
-| Requesting only Accessibility permission | Single permission flow | CGEvent global injection fails without Input Monitoring permission too | Never — request both from day one |
-| Hardcoding AWDL service name / port | Simpler discovery | Conflicts if multiple instances of app run | Acceptable for personal use with single device pair |
+| Hardcode port 12345 for USB NCM | Simpler setup | Conflicts if keyd v1.0 also running | Never — use separate port (e.g., 12346) or negotiate |
+| Skip DTLS on UDP media over USB | Less latency overhead | No integrity check on wired path; harder to add later | Never — TLS 1.3 mandatory per spec |
+| Fixed reference frame buffer (no double-buffer) | Simpler code | Delta race condition (Pitfall 4) | Never — correctness is non-negotiable |
+| Parse frame headers in Swift with Codable | Fast to implement | JSON in data path violates spec; ~50x slower than binary parse | Never — binary protocol is locked decision |
+| Single dispatch queue for capture + compress | No synchronization code | Blocks capture delivery at 120fps | Never for >60fps; acceptable at 30fps eco mode only |
+| Skip CoreAudio Tap, use only SCKit audio | One less API to learn | SCKit audio silently fails on macOS 15 (Pitfall 7) | Never for macOS 15+ primary target |
+| Use NWInterface.InterfaceType check only | Simpler interface detection | Multi-adapter false positive (Pitfall 10) | Only in dev/test with known single-adapter setup |
+| LZ4 frame mode instead of block mode | Easier streaming semantics | Frame/block API mismatch with binary protocol (Pitfall 13) | Never — block mode is correct for this use case |
 
 ---
 
@@ -462,12 +397,14 @@ When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a b
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| usbmuxd socket | Assuming connection succeeds on first try immediately after plug | Retry with exponential backoff; device takes 2–5s to become ready |
-| AXObserver (Safari) | Registering observer on main Safari PID | Walk to focused element, get its process PID, register observer on that PID |
-| CGEvent modifier combos | Sending key-down only or not sending key-up | Always send complete down/up sequences; use defer/finally for key-up |
-| MultipeerConnectivity + no Bluetooth | Assuming MCSession uses AWDL automatically | Must explicitly disable Bluetooth transport in MCSession and verify AWDL is active interface |
-| iOS keyboard view attachment | Attaching keyboard to a visible UITextField with content | Use a hidden zero-frame UITextView as input responder; never display its content |
-| macOS Accessibility trust | Checking permission once at startup | Check every launch; binary hash changes on rebuild revoke permission |
+| ScreenCaptureKit + Obj-C | SCStream's output delegate is held weakly in Sonoma+ | Store the delegate object in an ivar on the owning class, not a local variable |
+| ScreenCaptureKit + Obj-C | Calling SCKit APIs from C functions | Wrap in `@autoreleasepool {}` blocks; SCKit returns Obj-C objects that ARC manages |
+| VideoToolbox + Obj-C | Compression session callback fires on random thread | Never touch UIKit or AppKit from the VT callback; dispatch to main queue if needed |
+| Network.framework + C | `nw_connection_t` is an Obj-C object under the hood | Use `nw_retain`/`nw_release` in C code; or wrap in Obj-C to use ARC |
+| Metal + Swift | `MTLCommandBuffer` must be committed before the drawable is presented | Always call `commit()` before `present()`; reversing these silently drops frames |
+| IOSurface + C | `IOSurfaceLock` must be matched with `IOSurfaceUnlock` | Use `IOSurfaceLock`/`Unlock` in a paired pattern even in error paths; missing unlock leaks surface |
+| CGEvent + C | `CGEventRef` created with `CGEventCreate` must be released with `CFRelease` | No ARC for CoreFoundation types in C; track all CGEvent allocations manually |
+| Bonjour on Mac + iPad | mDNS TTL too short causes repeated re-discovery | Set `txtRecord` TTL to 60+ seconds; use `SCContentSharingPicker` equivalent Bonjour approach for Wi-Fi fallback |
 
 ---
 
@@ -475,11 +412,13 @@ When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a b
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| AX cross-process IPC on every keystroke | Keystroke latency 100-500ms; CPU spike | Cache focused element; only query on focus change | Immediately visible on web pages with complex DOM |
-| Large CGEvent queue (no flow control) | Keystrokes arrive out of order or duplicated on macOS | Process one keystroke round-trip before sending next; add sequence numbers | Under fast typing (>8 keys/sec) |
-| AWDL vs USB not actually switching | USB unplug causes multi-second outage | Pre-warm AWDL while USB is connected; switch in <100ms | On USB unplug event |
-| JSON serialization for every message | Latency increases with message frequency | Use fixed-size binary framing (4-byte length + payload) for high-frequency messages | Under sustained typing load |
-| Polling macOS focused app for hotkey panel | CPU usage visible in Activity Monitor | Use `NSWorkspace.didActivateApplicationNotification` instead of polling | Immediately at all loads |
+| Copying IOSurface data instead of locking in-place | Mac CPU spikes to 5-8% during capture | Lock IOSurface, pass pointer directly to LZ4; never memcpy the frame data | Always — 4K frame is ~33MB/s at 60fps; memcpy adds ~15ms |
+| Allocating LZ4 output buffer per frame | Heap fragmentation, latency spikes | Pre-allocate `LZ4_COMPRESSBOUND(srcSize)` buffers in a pool at startup | Above ~60fps with 4K frames |
+| SCStreamConfiguration.queueDepth > 8 | Higher RAM but documented as unsupported | Keep at 3-4; Apple doc says ≤8 | Undefined behavior above 8 |
+| Metal drawables requested before previous frame committed | GPU stall, frame queue backup | Use semaphore with count = 3 to gate drawable acquisition | Any consistent >120fps render attempt |
+| LZ4 compress on main thread | App becomes unresponsive | Always compress on a dedicated high-priority background queue | Immediately at 4K resolution |
+| Polling NSPasteboard at <500ms intervals | Clipboard monitoring wastes CPU | Poll at 500ms with `changeCount` comparison; skip if no change | Continuous polling wastes ~1% CPU for zero benefit |
+| NWPathMonitor updates on background queue not dispatched to main | UI updates crash on background thread | Always dispatch UI changes to main queue in path update handler | Every time |
 
 ---
 
@@ -487,38 +426,26 @@ When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a b
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| No authentication on USB/AWDL socket | Any app on the Mac can connect to the iOS listener socket and inject keystrokes if it can communicate over AWDL | Add a shared secret / challenge-response handshake in Phase 1 (even a simple hardcoded token is sufficient for personal use) |
-| Logging keystrokes to persistent file for debugging | Keylog file on disk with all typed content | Never log keystroke content; log only metadata (message type, length, timestamp) |
-| No bounds checking on incoming protocol messages | Malformed message could crash helper | Validate message length and type before parsing; cap message size at sane limit (e.g., 64KB) |
-
----
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| No visual feedback for "connected" vs "disconnected" state | User types into void thinking Mac is receiving | Persistent connection status indicator in iOS app header; never assume connected |
-| Keyboard dismisses when tapping outside the keyboard area | Loss of keyboard focus while trying to interact with iOS app controls (hotkey buttons) | Use a container that keeps iOS keyboard presented even when tapping non-text UI |
-| Sending Cmd-Q accidentally | Quits the frontmost macOS app — impossible to undo | Require confirmation for destructive hotkeys (Cmd-Q, Cmd-W); add a "confirm dangerous shortcuts" setting |
-| No indication of frontmost macOS app on iOS | User confused about which macOS app is receiving keystrokes | Display app name/icon of frontmost macOS app in iOS header using AX `kAXFrontmostApplicationAttribute` pushed from macOS helper |
-| iOS screen lock while user is using keyboard | Connection drops, must reconnect and re-unlock | Set `UIApplication.shared.isIdleTimerDisabled = true` while connection is active |
+| Cleartext UDP for media over USB (no DTLS) | Eavesdropping possible (unlikely over USB but violates spec) | DTLS 1.3 mandatory per RD-SEC-01; use NWProtocolDTLS |
+| Self-signed certificate regenerated on every launch | Certificate pinning breaks daily; pairing needs re-done | Generate once during pairing, store in Keychain with kSecAttrAccessibleAfterFirstUnlock |
+| Storing ECDH private key in UserDefaults | Key accessible without Keychain protection | Store in Keychain with `kSecClassKey`, access group matching bundle ID |
+| No replay protection on UDP media stream | Attacker can replay old frames | Include sequence number in media header (already in spec as `seq` field); validate monotonic increase |
+| Screen Recording permission granted to non-pinned TLS | Agent could be impersonated if certificate validation fails | Always validate certificate against pinned value from QR pairing exchange |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **USB transport:** Works on physical device connected to Mac — verify NOT just on Simulator
-- [ ] **AWDL transport:** Works with Wi-Fi infrastructure OFF and Bluetooth OFF — verify it's truly AWDL, not infrastructure fallback
-- [ ] **USB→AWDL switchover:** Test by physically unplugging USB mid-session — verify <2 second switchover with no message loss
-- [ ] **AX permission:** Re-grant after a fresh Xcode build and verify it still works — do not assume permission persists
-- [ ] **Input Monitoring permission:** Verify granted separately from Accessibility permission
-- [ ] **CGEvent in Safari:** Test typing into a Google search bar — not just TextEdit
-- [ ] **CGEvent in password field:** Verify behavior is correct (should be blocked; iOS UI should show "secure input" notice)
-- [ ] **CGEvent modifier key-up:** Simulate connection drop during Cmd hold — verify Cmd is not stuck after reconnect
-- [ ] **AWDL entitlements:** Verify app launches without crash on device, not just Simulator — entitlement mismatches only manifest on device
-- [ ] **Keyboard height:** Test on iPhone SE (small, no notch) and iPhone 14 Pro+ (Dynamic Island) — verify layout not clipped
-- [ ] **Idle timer:** Verify iOS screen does not lock while keyboard app is foreground and connected
-- [ ] **Hotkey destructive actions:** Test Cmd-Q from iOS — verify confirmation prompt fires before sending
+- [ ] **USB NCM Transport:** Often missing Local Network permission prompt handling — verify the app correctly requests and recovers from permission denial, and that the permission prompt fires during pairing (not silently dropped)
+- [ ] **ScreenCaptureKit:** Often missing permission re-authorization handling for Sequoia monthly prompts — verify the agent detects capture stoppage and surfaces re-authorization to the user
+- [ ] **Delta Frames:** Often missing keyframe request mechanism on iPad side — verify the iPad can request a fresh keyframe when decoder state is uncertain (e.g., after packet loss simulation)
+- [ ] **Coordinate Mapping:** Often missing Retina scale factor exchange in session handshake — verify with a Retina Mac and a Mac with "Larger Text" display setting active simultaneously
+- [ ] **ProMotion 120Hz:** Often missing `CADisableMinimumFrameDuration` plist key — verify with Instruments that frame delivery is actually at 120Hz and not capped at 60Hz
+- [ ] **VideoToolbox HEVC:** Often missing actual bitrate validation — verify measured output bitrate matches target by measuring bytes per second on the receive side
+- [ ] **Audio Sync:** Often missing video/audio timestamp alignment — verify audio and video timestamps both reference the same clock (use `mach_absolute_time` on Mac, synchronize to session start)
+- [ ] **Failover:** Often missing state machine for transport degradation — verify USB→Wi-Fi failover completes within 2 seconds and input events are not dropped during transition
+- [ ] **SMAppService:** Often missing re-registration after code signing — verify login item status after every Xcode re-sign cycle
+- [ ] **IOSurface Lifetime:** Often not holding sample buffer retain count through LZ4 compression — verify with ASan or Instruments Allocations that no use-after-free occurs during compression
 
 ---
 
@@ -526,13 +453,12 @@ When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a b
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| usbmuxd/peertalk protocol break on new iOS version | HIGH | Port usbmuxd protocol to updated iOS handshake; may require reverse engineering. Mitigation: use libimobiledevice as reference. |
-| AX permission revoked after rebuild | LOW | System Settings → Privacy → Accessibility → toggle off/on for the helper |
-| Input Monitoring permission revoked | LOW | System Settings → Privacy → Input Monitoring → toggle off/on |
-| AWDL entitlements missing in provisioning profile | MEDIUM | Regenerate provisioning profile with paid developer account; clean build and resign |
-| Text state desync requiring protocol rearchitect | HIGH | Stop and redesign bidirectional protocol before Phase 2 work proceeds |
-| Modifier key stuck | LOW | User presses Cmd key manually; add "reset modifier state" button to iOS UI |
-| AX value write chosen over CGEvent (wrong architecture) | HIGH | Rewrite all text injection paths to use CGEvent; Phase 1 scope |
+| SCKit permission lapsed (Sequoia monthly prompt) | LOW | Add capture state monitoring; show menu bar "Re-authorize" prompt; test with tccutil reset on dev machine |
+| Link-local binding failure | LOW | Add explicit interface binding from the start; do not attempt to retrofit |
+| IOSurface use-after-free corruption | HIGH | Requires pipeline redesign; add retain/release accounting audit; requires physical device testing |
+| Delta XOR race condition | MEDIUM | Introduce double-buffer for reference frame; add sequence validation in binary protocol |
+| VideoToolbox ignoring bitrate | MEDIUM | Restructure session creation to set low-latency in encoderSpecification at create-time; re-test wireless path |
+| USB NCM not viable (blocked by Apple policy) | HIGH | Fall back to usbmuxd TCP tunnel for media (lower throughput, ~500Mbps effective vs 5Gbps NCM); HEVC encode for wired mode instead of LZ4 |
 
 ---
 
@@ -540,39 +466,48 @@ When using `AXUIElementCopyAttributeValue` to walk the accessibility tree of a b
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| usbmuxd port collision / retry required | Phase 1 | Connect with Music app open; verify stable reconnect |
-| peertalk protocol break on iOS 16+/17+/18 | Phase 1 (before writing anything else) | Test on physical device running target iOS version on day 1 |
-| AX text injection per-app failures | Phase 1 architecture decision | Test AX write on TextEdit AND Safari; confirm only CGEvent write is used |
-| AX permission revocation on rebuild | Phase 1 | Rebuild, re-run; verify permission-check-and-prompt works |
-| CGEvent requires Input Monitoring permission | Phase 1 | Check both permissions at startup; test with both denied/granted |
-| CGEvent secure input mode blocking | Phase 1 | Test in password field; verify iOS UI shows "secure input" message |
-| AWDL entitlements + provisioning | Phase 1 | Test AWDL with Wi-Fi and Bluetooth off; verify connection completes |
-| iOS keyboard extension vs in-app keyboard | Phase 1 architecture | App target structure correct in Xcode from first commit |
-| Bidirectional protocol not designed in Phase 1 | Phase 1 | Protocol message types defined for both directions even if Mac→iOS unused initially |
-| USB hot-plug race condition | Phase 1 | Plug/unplug USB rapidly 10x; verify stable reconnect |
-| macOS firewall blocking AWDL | Phase 1 setup | Test with macOS firewall enabled; document exception step |
-| Self-signed entitlement crash | Phase 1 | Audit .entitlements; test launch on device |
-| CGEvent modifier key stuck | Phase 1 | Force-kill helper mid-Cmd sequence; verify no stuck modifier |
-| AXObserver wrong PID for Safari | Phase 2 | Verify kAXValueChangedNotification fires for typing in Safari web forms |
-| iOS predictive text desync | Phase 2 | Verify autocorrect replacements land correctly in macOS field |
-| iOS screen lock during use | Phase 1 | Let screen idle with keyboard connected; verify no lock and no connection drop |
+| SCKit monthly re-auth (Pitfall 1) | Phase 1: Screen Capture | Verify with tccutil reset + SCKit stream start/stop cycle |
+| Link-local binding (Pitfall 2) | Phase 1: USB NCM Transport | Two-device loopback test on USB NCM before pipeline work |
+| IOSurface recycling (Pitfall 3) | Phase 1: Compression | LZ4 roundtrip test under concurrent capture load |
+| Delta XOR race condition (Pitfall 4) | Phase 1: Compression + Protocol | DeltaTests.c with concurrent write simulation |
+| ProMotion 120Hz opt-in (Pitfall 5) | Phase 2: Metal Renderer | Instruments Frame Debugger verification |
+| VideoToolbox HEVC incompatibilities (Pitfall 6) | Phase 3: HEVC Wireless | Measured bitrate benchmark before declaring wireless mode complete |
+| SCKit audio failure macOS 15 (Pitfall 7) | Phase 4: Audio Streaming | CoreAudio Tap API integration test on macOS 15 |
+| SCKit permission delay at startup (Pitfall 8) | Phase 1: Agent Infrastructure | Startup timing test with permission prompt pending |
+| Local Network permission (Pitfall 9) | Phase 1: Transport + Pairing | Physical device first-launch test |
+| NWPathMonitor false positive (Pitfall 10) | Phase 1: USB NCM Transport | Test with Ethernet hub also connected |
+| CGEvent injection throttling (Pitfall 11) | Phase 2: Input Handling | Load test with concurrent LLM process running |
+| SMAppService bugs (Pitfall 12) | Phase 1: Agent Infrastructure | Re-sign + relaunch + verify login item status |
+| LZ4 API mismatch (Pitfall 13) | Phase 1: Compression | Protocol unit test: compress block API → decompress block API |
+| Touch coordinate mapping (Pitfall 14) | Phase 2: Input Handling | Calibration test with Retina + scaled display settings |
 
 ---
 
 ## Sources
 
-- Apple AXUIElement documentation and macOS Accessibility API (training knowledge, confidence HIGH)
-- CGEvent API documentation — `CGEventCreateKeyboardEvent`, `CGEventPost`, secure input mode behavior (training knowledge, confidence HIGH)
-- macOS Privacy & Security permission model changes in Catalina (10.15) and later — Accessibility vs Input Monitoring split (training knowledge, confidence HIGH)
-- peertalk GitHub repository (rsms/peertalk) and known forks — iOS version compatibility history (training knowledge, confidence MEDIUM)
-- usbmuxd protocol documentation from libimobiledevice project (training knowledge, confidence MEDIUM)
-- MultipeerConnectivity AWDL entitlement requirements — Apple developer documentation (training knowledge, confidence MEDIUM)
-- UIInputViewController sandbox restrictions — Apple developer documentation (training knowledge, confidence HIGH)
-- `IsSecureEventInputEnabled()` / `CGSSetSecureInputMode` behavior — Apple developer forums (training knowledge, confidence HIGH)
-- AXObserver cross-process PID behavior for sandboxed browser processes (training knowledge, confidence MEDIUM)
-
-**Note:** WebSearch and WebFetch tools were unavailable during this research session. All findings are drawn from training knowledge (cutoff August 2025). For high-stakes implementation decisions — especially usbmuxd protocol compatibility with the specific iOS version being targeted and AWDL entitlement requirements under the specific provisioning profile type — verify against current Apple developer documentation before implementation.
+- [Apple Developer Forums: USB CDC ECM or NCM device requirements](https://developer.apple.com/forums/thread/769793)
+- [Apple Developer Forums: connect to device from iPad/iPhone over link-local](https://developer.apple.com/forums/thread/725414)
+- [Apple Developer Forums: running 120Hz with low latency](https://developer.apple.com/forums/thread/763426)
+- [ScreenCaptureKit Issue: SCStreamErrorDomain -3805 on macOS 15](https://github.com/ronaldoussoren/pyobjc/issues/647)
+- [macOS Sequoia adds weekly screen recording permission prompt - 9to5Mac](https://9to5mac.com/2024/08/06/macos-sequoia-screen-recording-privacy-prompt/)
+- [Michael Tsai: Sequoia Screen Recording Prompts and Persistent Content Capture](https://mjtsai.com/blog/2024/08/08/sequoia-screen-recording-prompts-and-the-persistent-content-capture-entitlement/)
+- [macOS Sequoia 15.1 reduces permission prompt frequency - iDownloadBlog](https://www.idownloadblog.com/2024/10/09/macos-sequoia-15-1-macos-screen-recording-prompts-frequency-reduced/)
+- [TidBITS: How to Avoid Sequoia's Repetitive Screen Recording Prompts](https://tidbits.com/2024/09/23/how-to-avoid-sequoias-repetitive-screen-recording-permissions-prompts/)
+- [Jump Desktop: macOS Sequoia Screen Recording Policies](https://support.jumpdesktop.com/hc/en-us/articles/29070118000781-macOS-Sequoia-Screen-Recording-Policies-and-Jump-Desktop-Connect)
+- [Apple Developer Documentation: Encoding video for low-latency conferencing](https://developer.apple.com/documentation/VideoToolbox/encoding-video-for-low-latency-conferencing)
+- [WWDC21: Explore low-latency video encoding with VideoToolbox](https://developer.apple.com/videos/play/wwdc2021/10158/)
+- [OBS Studio Issue: RealTime VT property + bitrate limit causes frame drops](https://github.com/obsproject/obs-studio/issues/5840)
+- [Apple Developer Documentation: Capturing system audio with Core Audio taps](https://developer.apple.com/documentation/CoreAudio/capturing-system-audio-with-core-audio-taps)
+- [AudioCap: Sample code for CoreAudio Tap API](https://github.com/insidegui/AudioCap)
+- [Apple Developer Documentation: TN3179 Understanding local network privacy](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)
+- [Apple Developer Documentation: NWParameters.requiredInterface](https://developer.apple.com/documentation/network/nwparameters/requiredinterface)
+- [Apple Developer Documentation: NWInterface.InterfaceType.wiredEthernet](https://developer.apple.com/documentation/network/nwinterface/interfacetype/wiredethernet)
+- [WWDC21: Optimize for variable refresh rate displays](https://developer.apple.com/videos/play/wwdc2021/10147/)
+- [Apple Developer Forums: ScreenCaptureKit SCStream startCapture fails](https://developer.apple.com/forums/thread/739809)
+- [Apple Developer Forums: SMAppService login item registration](https://developer.apple.com/forums/thread/726826)
+- [Synacktiv: iOS journey in the USB networking stack](https://www.synacktiv.com/en/publications/ios-a-journey-in-the-usb-networking-stack)
+- [LZ4 Frame Format Description](https://android.googlesource.com/platform/external/lz4/+/HEAD/doc/lz4_Frame_format.md)
 
 ---
-*Pitfalls research for: iOS→macOS remote keyboard / remote input control (keyd)*
-*Researched: 2026-02-27*
+*Pitfalls research for: iPadOS-to-macOS remote desktop (keyd-rd)*
+*Researched: 2026-03-27*
