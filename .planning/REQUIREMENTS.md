@@ -22,23 +22,23 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Screen Capture
 
-- [ ] **RD-CAP-01**: macOS agent captures full display via ScreenCaptureKit (`SCStream`) at Retina resolution
-- [ ] **RD-CAP-02**: Capture supports up to 120fps (`minimumFrameInterval = CMTimeMake(1, 120)`)
-- [ ] **RD-CAP-03**: Capture delivers IOSurface-backed CMSampleBuffer directly to compress pipeline (zero-copy: `IOSurfaceLock` → LZ4 compress → `IOSurfaceUnlock`)
-- [ ] **RD-CAP-04**: Capture CPU usage <1% in steady state
-- [ ] **RD-CAP-05**: Frame delivery watchdog detects silent capture stop (0 frames for >2s) and surfaces re-authorization prompt in menu bar (Sequoia monthly re-auth handling)
+- [x] **RD-CAP-01**: macOS agent captures full display via ScreenCaptureKit (`SCStream`) at Retina resolution
+- [x] **RD-CAP-02**: Capture supports up to 120fps (`minimumFrameInterval = CMTimeMake(1, 120)`)
+- [x] **RD-CAP-03**: Capture delivers IOSurface-backed CMSampleBuffer directly to compress pipeline (zero-copy: `IOSurfaceLock` → LZ4 compress → `IOSurfaceUnlock`)
+- [x] **RD-CAP-04**: Capture CPU usage <1% in steady state
+- [x] **RD-CAP-05**: Frame delivery watchdog detects silent capture stop (0 frames for >2s) and surfaces re-authorization prompt in menu bar (Sequoia monthly re-auth handling)
 - [x] **RD-CAP-06**: Pixel format is `kCVPixelFormatType_32BGRA` throughout pipeline (matches Metal texture upload, no color conversion)
 
 ### Compression
 
 - [x] **RD-COMP-01**: Wired mode uses vendored LZ4 v1.10.0 block API (not Apple Compression.framework) on full keyframes
-- [ ] **RD-COMP-02**: Wired mode uses XOR delta frames between keyframes, LZ4-compressed
-- [ ] **RD-COMP-03**: Keyframes sent every 1-2 seconds or when delta exceeds 60% of keyframe size
+- [x] **RD-COMP-02**: Wired mode uses XOR delta frames between keyframes, LZ4-compressed
+- [x] **RD-COMP-03**: Keyframes sent every 1-2 seconds or when delta exceeds 60% of keyframe size
 - [x] **RD-COMP-04**: Delta frame reference buffer uses double-buffer with `pthread_rwlock_t` to prevent XOR race condition
-- [ ] **RD-COMP-05**: CMSampleBuffer retain held for entire duration of LZ4 compress (prevents IOSurface recycling corruption)
+- [x] **RD-COMP-05**: CMSampleBuffer retain held for entire duration of LZ4 compress (prevents IOSurface recycling corruption)
 - [ ] **RD-COMP-06**: Wireless mode uses VideoToolbox HEVC hardware encoder (`VTCompressionSession`, realtime, low-latency profile with `AverageBitRate` — NOT `ConstantBitRate`)
 - [ ] **RD-COMP-07**: Eco mode uses HEVC at reduced resolution (1080p or 720p) and framerate (30Hz), even over wired connection
-- [ ] **RD-COMP-08**: LZ4 compress completes in <1ms per 4K BGRA frame
+- [x] **RD-COMP-08**: LZ4 compress completes in <1ms per 4K BGRA frame
 - [ ] **RD-COMP-09**: Mode switching (LZ4 ↔ HEVC) triggered automatically by transport change or manually by user via HUD
 
 ### Rendering
@@ -89,7 +89,7 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 - [ ] **RD-PERF-01**: Glass-to-glass latency <8ms over wired (LZ4+delta path)
 - [ ] **RD-PERF-02**: Glass-to-glass latency <25ms over wireless (HEVC path)
-- [ ] **RD-PERF-03**: Mac agent CPU usage <3% during wired streaming
+- [x] **RD-PERF-03**: Mac agent CPU usage <3% during wired streaming
 - [ ] **RD-PERF-04**: Mac agent RSS <50 MB during wired streaming
 - [ ] **RD-PERF-05**: Mac agent CPU usage <1% in eco mode
 - [ ] **RD-PERF-06**: Mac agent RSS <20 MB in eco mode
@@ -183,20 +183,20 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-TRANS-08 | Phase 2 | Complete |
 | RD-TRANS-09 | Phase 2 | Pending |
 | RD-TRANS-10 | Phase 2 | Pending |
-| RD-CAP-01 | Phase 2 | Pending |
-| RD-CAP-02 | Phase 2 | Pending |
-| RD-CAP-03 | Phase 2 | Pending |
-| RD-CAP-04 | Phase 2 | Pending |
-| RD-CAP-05 | Phase 2 | Pending |
+| RD-CAP-01 | Phase 2 | Complete |
+| RD-CAP-02 | Phase 2 | Complete |
+| RD-CAP-03 | Phase 2 | Complete |
+| RD-CAP-04 | Phase 2 | Complete |
+| RD-CAP-05 | Phase 2 | Complete |
 | RD-CAP-06 | Phase 2 | Complete |
 | RD-COMP-01 | Phase 2 | Complete |
-| RD-COMP-02 | Phase 2 | Pending |
-| RD-COMP-03 | Phase 2 | Pending |
+| RD-COMP-02 | Phase 2 | Complete |
+| RD-COMP-03 | Phase 2 | Complete |
 | RD-COMP-04 | Phase 2 | Complete |
-| RD-COMP-05 | Phase 2 | Pending |
+| RD-COMP-05 | Phase 2 | Complete |
 | RD-COMP-06 | Phase 2 | Pending |
 | RD-COMP-07 | Phase 2 | Pending |
-| RD-COMP-08 | Phase 2 | Pending |
+| RD-COMP-08 | Phase 2 | Complete |
 | RD-COMP-09 | Phase 2 | Pending |
 | RD-REND-01 | Phase 2 | Pending |
 | RD-REND-02 | Phase 2 | Pending |
@@ -223,7 +223,7 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-APP-07 | Phase 2 | Pending |
 | RD-PERF-01 | Phase 2 | Pending |
 | RD-PERF-02 | Phase 2 | Pending |
-| RD-PERF-03 | Phase 2 | Pending |
+| RD-PERF-03 | Phase 2 | Complete |
 | RD-PERF-04 | Phase 2 | Pending |
 | RD-PERF-07 | Phase 2 | Complete |
 | RD-INPUT-01 | Phase 3 | Pending |

@@ -134,7 +134,7 @@ v2.0 phases execute in numeric order: 2 → 3 → 4 → 5
 |-------|-----------|----------------|--------|-----------|
 | 1. Transport and Core Keyboard | v1.0 | 7/7 | Complete | 2026-03-01 |
 | 1.1. Connected Integration Test Suite | v1.0 | 4/4 | Complete | 2026-03-01 |
-| 2. Foundation | v2.0 | 0/10 | Planned | - |
+| 2. Foundation | 2/10 | In Progress|  | - |
 | 3. Input | v2.0 | 0/TBD | Not started | - |
 | 4. Testing and Wi-Fi Quality | v2.0 | 0/TBD | Not started | - |
 | 5. Audio and Clipboard | v2.0 | 0/TBD | Not started | - |

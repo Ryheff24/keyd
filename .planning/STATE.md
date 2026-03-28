@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Remote Desktop
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-28T16:48:07.064Z"
-last_activity: 2026-03-28 — Completed plan 02-01 (project scaffold)
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-28T16:57:47.401Z"
+last_activity: 2026-03-28 — Completed plan 02-02 (screen capture + LZ4 delta compression)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 21
-  completed_plans: 12
-  percent: 57
+  completed_plans: 13
+  percent: 62
 ---
 
 # Project State
@@ -26,24 +26,25 @@ See: .planning/PROJECT.md (updated 2026-03-27)
 ## Current Position
 
 Phase: 2 of 5 (Foundation — wired display pipeline)
-Plan: 1 of 10 in current phase
+Plan: 2 of 10 in current phase
 Status: Executing
-Last activity: 2026-03-28 — Completed plan 02-01 (project scaffold)
+Last activity: 2026-03-28 — Completed plan 02-02 (screen capture + LZ4 delta compression)
 
-Progress: [██████░░░░] 57%
+Progress: [██████░░░░] 62%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1 (v2.0)
-- Average duration: 8min
-- Total execution time: 8min
+- Total plans completed: 2 (v2.0)
+- Average duration: 7min
+- Total execution time: 14min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 02-01 | 8min | 3 tasks | 16 files |
+| 02-02 | 6min | 2 tasks | 5 files |
 
 *Updated after each plan completion*
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - Research: Bonjour service name is _keydrd._tcp (distinct from keyd's _keyd._tcp)
 - [Phase 02]: MediaFrameHeader uses u16 seq + u8 chunk_idx/chunk_total + reserved byte to fit 24-byte constraint
 - [Phase 02]: Removed persistent-content-capture entitlement (unavailable on personal dev team) -- fallback via frame watchdog + re-auth
+- [Phase 02]: Used zlib crc32() for payload CRC in MediaFrameHeader -- always available on macOS, zero dependency cost
+- [Phase 02]: Separate capture and compress dispatch queues to decouple SCStream delivery from LZ4 work
 
 ### Pending Todos
 
@@ -78,6 +81,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-28T16:48:07.061Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-03-28T16:56:09Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
