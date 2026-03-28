@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Remote Desktop
 status: executing
-stopped_at: Completed 02-08-PLAN.md
+stopped_at: Completed 02-09-PLAN.md
 last_updated: "2026-03-28T17:26:53.127Z"
-last_activity: 2026-03-28 — Completed plan 02-08 (iPad app shell)
+last_activity: 2026-03-28 — Completed plan 02-09 (end-to-end pipeline wiring)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 21
-  completed_plans: 19
-  percent: 90
+  completed_plans: 20
+  percent: 95
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-27)
 ## Current Position
 
 Phase: 2 of 5 (Foundation — wired display pipeline)
-Plan: 8 of 10 in current phase
+Plan: 9 of 10 in current phase
 Status: Executing
-Last activity: 2026-03-28 — Completed plan 02-08 (iPad app shell)
+Last activity: 2026-03-28 — Completed plan 02-09 (end-to-end pipeline wiring)
 
-Progress: [█████████░] 90%
+Progress: [█████████▌] 95%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [█████████░] 90%
 | Phase 02-04 P04 | 12min | 2 tasks | 11 files |
 | Phase 02-07 P07 | 4min | 2 tasks | 8 files |
 | Phase 02 P08 | 4min | 2 tasks | 6 files |
+| Phase 02 P09 | 6min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,11 @@ Recent decisions affecting current work:
 - [Phase 02-07]: Programmatic NSApplication delegate setup (no NIB) -- menu bar-only app doesn't need MainMenu.xib
 - [Phase 02-07]: Eager pipeline component creation in SessionManager init -- avoids lazy-init race conditions
 - [Phase 02-07]: Permission re-check uses AXIsProcessTrustedWithOptions(NULL) to avoid re-prompting system dialog
+- [Phase 02-09]: Dedicated resolution match message types (0x21/0x22/0x23) -- cleaner protocol separation than mode change subtypes
+- [Phase 02-09]: Mac reverts display mode on disconnect via stored CGDisplayModeRef -- preserves user display preferences
+- [Phase 02-09]: Rolling 60-frame FPS window instead of per-second count -- smoother, more accurate
+- [Phase 02-09]: Latency probe initiated from iPad side (Mac echoes) -- consumer controls measurement timing
+- [Phase 02-09]: Session handshake via TCP (not UDP) -- guaranteed delivery of display geometry before first frame
 
 ### Pending Todos
 
@@ -103,6 +109,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-28T17:26:53.125Z
-Stopped at: Completed 02-07-PLAN.md
+Last session: 2026-03-28T17:34:51Z
+Stopped at: Completed 02-09-PLAN.md
 Resume file: None

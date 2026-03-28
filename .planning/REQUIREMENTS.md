@@ -90,7 +90,7 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 - [x] **RD-PERF-01**: Glass-to-glass latency <8ms over wired (LZ4+delta path)
 - [x] **RD-PERF-02**: Glass-to-glass latency <25ms over wireless (HEVC path)
 - [x] **RD-PERF-03**: Mac agent CPU usage <3% during wired streaming
-- [ ] **RD-PERF-04**: Mac agent RSS <50 MB during wired streaming
+- [x] **RD-PERF-04**: Mac agent RSS <50 MB during wired streaming
 - [ ] **RD-PERF-05**: Mac agent CPU usage <1% in eco mode
 - [ ] **RD-PERF-06**: Mac agent RSS <20 MB in eco mode
 - [x] **RD-PERF-07**: Mac agent uses 0% GPU in all modes (no GPU work on Mac side)
@@ -224,7 +224,7 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-PERF-01 | Phase 2 | Complete |
 | RD-PERF-02 | Phase 2 | Complete |
 | RD-PERF-03 | Phase 2 | Complete |
-| RD-PERF-04 | Phase 2 | Pending |
+| RD-PERF-04 | Phase 2 | Complete |
 | RD-PERF-07 | Phase 2 | Complete |
 | RD-INPUT-01 | Phase 3 | Pending |
 | RD-INPUT-02 | Phase 3 | Pending |
