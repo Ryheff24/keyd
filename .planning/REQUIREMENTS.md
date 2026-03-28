@@ -98,23 +98,23 @@ Requirements for initial remote desktop release. Each maps to roadmap phases.
 
 ### Agent
 
-- [ ] **RD-AGENT-01**: macOS agent runs as menu bar app (no dock icon, `LSUIElement` / accessory activation policy)
+- [x] **RD-AGENT-01**: macOS agent runs as menu bar app (no dock icon, `LSUIElement` / accessory activation policy)
 - [x] **RD-AGENT-02**: macOS agent written in C + Objective-C only (no Swift runtime; target RSS <5 MB baseline)
-- [ ] **RD-AGENT-03**: macOS agent starts at login via SMAppService
-- [ ] **RD-AGENT-04**: macOS agent prompts for Screen Recording permission via system alert; handles Sequoia re-auth with frame watchdog
-- [ ] **RD-AGENT-05**: macOS agent prompts for Accessibility permission (for CGEvent injection)
-- [ ] **RD-AGENT-06**: Menu bar shows connection state (USB/Wi-Fi/AWDL/disconnected) and current mode (quality/eco)
+- [x] **RD-AGENT-03**: macOS agent starts at login via SMAppService
+- [x] **RD-AGENT-04**: macOS agent prompts for Screen Recording permission via system alert; handles Sequoia re-auth with frame watchdog
+- [x] **RD-AGENT-05**: macOS agent prompts for Accessibility permission (for CGEvent injection)
+- [x] **RD-AGENT-06**: Menu bar shows connection state (USB/Wi-Fi/AWDL/disconnected) and current mode (quality/eco)
 - [x] **RD-AGENT-07**: macOS minimum version: 14.2 (required for CoreAudio Tap API)
 
 ### iPad App
 
 - [x] **RD-APP-01**: iPad app displays remote Mac screen at full Retina resolution with P3 color
-- [ ] **RD-APP-02**: iPad app shows connection status HUD (transport mode icon, latency ms, FPS counter; togglable)
-- [ ] **RD-APP-03**: iPad app provides mode toggle in HUD (full quality / eco)
+- [x] **RD-APP-02**: iPad app shows connection status HUD (transport mode icon, latency ms, FPS counter; togglable)
+- [x] **RD-APP-03**: iPad app provides mode toggle in HUD (full quality / eco)
 - [x] **RD-APP-04**: iPad app supports landscape and portrait orientation (letterbox or scale-to-fit)
 - [x] **RD-APP-05**: iPad app supports iPad Pro 11" and 13" screen sizes
 - [x] **RD-APP-06**: iPadOS minimum version: 17.0 (required for `CAMetalDisplayLink`)
-- [ ] **RD-APP-07**: iPad system edge swipes are NOT intercepted (respected as system gestures)
+- [x] **RD-APP-07**: iPad system edge swipes are NOT intercepted (respected as system gestures)
 
 ### Testing
 
@@ -207,20 +207,20 @@ Deferred to next milestone. Tracked but not in current roadmap.
 | RD-SEC-03 | Phase 2 | Complete |
 | RD-SEC-04 | Phase 2 | Complete |
 | RD-SEC-05 | Phase 2 | Complete |
-| RD-AGENT-01 | Phase 2 | Pending |
+| RD-AGENT-01 | Phase 2 | Complete |
 | RD-AGENT-02 | Phase 2 | Complete |
-| RD-AGENT-03 | Phase 2 | Pending |
-| RD-AGENT-04 | Phase 2 | Pending |
-| RD-AGENT-05 | Phase 2 | Pending |
-| RD-AGENT-06 | Phase 2 | Pending |
+| RD-AGENT-03 | Phase 2 | Complete |
+| RD-AGENT-04 | Phase 2 | Complete |
+| RD-AGENT-05 | Phase 2 | Complete |
+| RD-AGENT-06 | Phase 2 | Complete |
 | RD-AGENT-07 | Phase 2 | Complete |
 | RD-APP-01 | Phase 2 | Complete |
-| RD-APP-02 | Phase 2 | Pending |
-| RD-APP-03 | Phase 2 | Pending |
+| RD-APP-02 | Phase 2 | Complete |
+| RD-APP-03 | Phase 2 | Complete |
 | RD-APP-04 | Phase 2 | Complete |
 | RD-APP-05 | Phase 2 | Complete |
 | RD-APP-06 | Phase 2 | Complete |
-| RD-APP-07 | Phase 2 | Pending |
+| RD-APP-07 | Phase 2 | Complete |
 | RD-PERF-01 | Phase 2 | Complete |
 | RD-PERF-02 | Phase 2 | Complete |
 | RD-PERF-03 | Phase 2 | Complete |

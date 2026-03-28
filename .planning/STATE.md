@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Remote Desktop
 status: executing
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-03-28T17:18:16.716Z"
-last_activity: 2026-03-28 — Completed plan 02-06 (Metal renderer)
+stopped_at: Completed 02-08-PLAN.md
+last_updated: "2026-03-28T17:26:53.127Z"
+last_activity: 2026-03-28 — Completed plan 02-08 (iPad app shell)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 21
-  completed_plans: 17
-  percent: 81
+  completed_plans: 19
+  percent: 90
 ---
 
 # Project State
@@ -26,18 +26,18 @@ See: .planning/PROJECT.md (updated 2026-03-27)
 ## Current Position
 
 Phase: 2 of 5 (Foundation — wired display pipeline)
-Plan: 6 of 10 in current phase
+Plan: 8 of 10 in current phase
 Status: Executing
-Last activity: 2026-03-28 — Completed plan 02-06 (Metal renderer)
+Last activity: 2026-03-28 — Completed plan 02-08 (iPad app shell)
 
-Progress: [████████░░] 81%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6 (v2.0)
+- Total plans completed: 7 (v2.0)
 - Average duration: 6min
-- Total execution time: 36min
+- Total execution time: 40min
 
 **By Phase:**
 
@@ -52,6 +52,8 @@ Progress: [████████░░] 81%
 
 *Updated after each plan completion*
 | Phase 02-04 P04 | 12min | 2 tasks | 11 files |
+| Phase 02-07 P07 | 4min | 2 tasks | 8 files |
+| Phase 02 P08 | 4min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -83,6 +85,11 @@ Recent decisions affecting current work:
 - [Phase 02-04]: P-256 (not Curve25519) for ECDH -- Security.framework SecKeyCopyKeyExchangeResult supports P-256 natively in ObjC
 - [Phase 02-04]: Self-signed X.509 cert via manual ASN.1 DER encoding -- no public Apple API for cert creation
 - [Phase 02-04]: HMAC-SHA256 for HKDF key derivation -- CommonCrypto available in pure C/ObjC without CryptoKit
+- [Phase 02]: MetalHostView uses layerClass override (not MTKView) for CAMetalDisplayLink compatibility
+- [Phase 02]: DragGesture on top 44pt zone for HUD reveal -- not UIScreenEdgePanGestureRecognizer (RD-APP-07)
+- [Phase 02-07]: Programmatic NSApplication delegate setup (no NIB) -- menu bar-only app doesn't need MainMenu.xib
+- [Phase 02-07]: Eager pipeline component creation in SessionManager init -- avoids lazy-init race conditions
+- [Phase 02-07]: Permission re-check uses AXIsProcessTrustedWithOptions(NULL) to avoid re-prompting system dialog
 
 ### Pending Todos
 
@@ -96,6 +103,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-28T17:18:16.713Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-03-28T17:26:53.125Z
+Stopped at: Completed 02-07-PLAN.md
 Resume file: None
