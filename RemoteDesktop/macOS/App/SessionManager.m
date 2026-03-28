@@ -232,6 +232,11 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 #pragma mark - Pairing
 
 - (void)showPairingQR {
+    /* Stop transports to free port 14568 for the pairing listener */
+    [_usbTransport stopMonitoring];
+    [_wirelessTransport stopAdvertising];
+    [_pairing resetPairing];
+
     NSString *payload = [_pairing generateQRPayload];
     if (!payload) {
         os_log_error(sLog, "Failed to generate QR payload -- TLS identity missing?");
