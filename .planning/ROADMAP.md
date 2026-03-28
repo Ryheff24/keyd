@@ -78,7 +78,19 @@ Plans:
   3. User re-plugs the cable and the connection promotes back to USB NCM within 2 seconds
   4. Mac agent CPU usage stays below 3% during wired streaming and the agent uses 0% GPU at all times
   5. Glass-to-glass latency is below 8ms over wired (LZ4+delta) and below 25ms over wireless (HEVC)
-**Plans**: TBD
+**Plans**: 10 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Project scaffold (Xcode projects, shared C headers, LZ4, delta module)
+- [ ] 02-02-PLAN.md — Screen capture + LZ4+delta compression pipeline (macOS)
+- [ ] 02-03-PLAN.md — Transport layer: USB NCM, Wi-Fi, AWDL, failover FSM (both sides)
+- [ ] 02-04-PLAN.md — TLS/DTLS encryption + QR pairing with ECDH (both sides)
+- [ ] 02-05-PLAN.md — HEVC encode/decode + iPad LZ4 decompressor
+- [ ] 02-06-PLAN.md — Metal rendering: ProMotion 120Hz, P3 color, letterbox (iPad)
+- [ ] 02-07-PLAN.md — macOS agent shell: menu bar, permissions, SMAppService, session manager
+- [ ] 02-08-PLAN.md — iPad app shell: ContentView, HUD overlay, session flow
+- [ ] 02-09-PLAN.md — End-to-end wiring: session handshake, frame pipeline, failover integration
+- [ ] 02-10-PLAN.md — End-to-end verification on physical devices
 
 ### Phase 3: Input
 **Goal**: The iPad is a fully functional remote input device — touch controls the Mac cursor (tap, scroll, right-click, drag), physical and on-screen keyboards send keystrokes to the Mac, the cursor position is visible as an overlay on the iPad, and eco mode lets the Mac stay below 1% CPU for LLM-concurrent use
@@ -122,7 +134,7 @@ v2.0 phases execute in numeric order: 2 → 3 → 4 → 5
 |-------|-----------|----------------|--------|-----------|
 | 1. Transport and Core Keyboard | v1.0 | 7/7 | Complete | 2026-03-01 |
 | 1.1. Connected Integration Test Suite | v1.0 | 4/4 | Complete | 2026-03-01 |
-| 2. Foundation | v2.0 | 0/TBD | Not started | - |
+| 2. Foundation | v2.0 | 0/10 | Planned | - |
 | 3. Input | v2.0 | 0/TBD | Not started | - |
 | 4. Testing and Wi-Fi Quality | v2.0 | 0/TBD | Not started | - |
 | 5. Audio and Clipboard | v2.0 | 0/TBD | Not started | - |
