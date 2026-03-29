@@ -171,6 +171,237 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         log.info("[QRPairing] registered 5 notification observers for session \(String(describing: session))")
     }
 
+    // MARK: - Test Mode Auto-Pairing
+
+    /// Auto-pair without QR camera scan (test mode only).
+    ///
+    /// Reads QR payload from --qr-payload launch argument (base64-encoded JSON,
+    /// passed by run-e2e-tests.sh which reads it from /tmp/keydrd-test-qr.json on the Mac).
+    ///
+    /// 1. Decode QR payload from launch argument.
+    /// 2. Connect to the Mac's pairing port over TLS, accepting any cert (test mode only).
+    /// 3. Perform ECDH key exchange.
+    /// 4. Call completion on success.
+    func autoPairViaBonjourForTestMode(testRunner: DeviceTestRunner?,
+                                       completion: @escaping () -> Void) {
+        print("[CONSOLE] autoPairViaBonjourForTestMode: entry")
+
+        let queue = DispatchQueue(label: "com.ryheff.keyd.remote.app.testpair")
+        queue.async { [weak self] in
+            guard let self = self else { return }
+
+            // Read QR payload from --qr-payload launch argument (base64-encoded JSON)
+            var payload: QRPayload?
+            let args = ProcessInfo.processInfo.arguments
+            if let idx = args.firstIndex(of: "--qr-payload"), idx + 1 < args.count {
+                let b64 = args[idx + 1]
+                print("[CONSOLE] autoPairViaBonjourForTestMode: found --qr-payload arg (length: \(b64.count))")
+                if let data = Data(base64Encoded: b64),
+                   let jsonStr = String(data: data, encoding: .utf8) {
+                    print("[CONSOLE] autoPairViaBonjourForTestMode: decoded JSON (length: \(jsonStr.count))")
+                    payload = QRPayload.parse(from: jsonStr)
+                }
+            }
+
+            guard let qrPayload = payload else {
+                print("[CONSOLE] autoPairViaBonjourForTestMode: FAILED -- no valid --qr-payload argument")
+                testRunner?.reportTLSConnection(success: false, detail: "QR payload not in launch args")
+                return
+            }
+
+            print("[CONSOLE] autoPairViaBonjourForTestMode: parsed payload, host=\(qrPayload.host), port=\(qrPayload.port)")
+
+            // Store display geometry
+            self.displayWidth = qrPayload.displayWidth
+            self.displayHeight = qrPayload.displayHeight
+            self.scaleFactor = qrPayload.scaleFactor
+
+            // Connect with TLS, accepting any cert (TEST MODE ONLY)
+            self.completePairingTestMode(qrPayload: qrPayload,
+                                          testRunner: testRunner,
+                                          completion: completion)
+        }
+    }
+
+    /// Complete pairing in test mode -- accepts any TLS cert (no fingerprint verification).
+    private func completePairingTestMode(qrPayload: QRPayload,
+                                          testRunner: DeviceTestRunner?,
+                                          completion: @escaping () -> Void) {
+        print("[CONSOLE] completePairingTestMode: entry, port=\(qrPayload.port)")
+        isPairingInProgress = true
+
+        // TLS with accept-any-cert verify block (TEST MODE ONLY)
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            tlsOptions.securityProtocolOptions, .TLSv13)
+
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
+            { _, _, complete in
+                // TEST MODE: accept any certificate
+                print("[CONSOLE] TEST MODE TLS verify: accepting any cert")
+                complete(true)
+            }, DispatchQueue.global())
+
+        let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
+
+        let host = NWEndpoint.Host(qrPayload.host)
+        let port = NWEndpoint.Port(rawValue: qrPayload.port)!
+        let endpoint = NWEndpoint.hostPort(host: host, port: port)
+
+        let connection = NWConnection(to: endpoint, using: tcpParams)
+        let pairingQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.testpairing")
+
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self = self else { return }
+            print("[CONSOLE] test pairing connection state: \(state)")
+
+            switch state {
+            case .ready:
+                print("[CONSOLE] TEST MODE: TLS connection ready")
+                testRunner?.reportTLSConnection(success: true, detail: "TLS 1.3 handshake complete")
+                self.performECDHExchangeTestMode(connection: connection,
+                                                  macPublicKey: qrPayload.publicKey,
+                                                  macCertFingerprint: qrPayload.certFingerprint,
+                                                  testRunner: testRunner,
+                                                  completion: completion)
+
+            case .failed(let error):
+                print("[CONSOLE] test pairing TLS connection FAILED: \(error)")
+                testRunner?.reportTLSConnection(success: false, detail: "failed: \(error)")
+                self.isPairingInProgress = false
+
+            case .cancelled:
+                print("[CONSOLE] test pairing connection cancelled")
+                self.isPairingInProgress = false
+
+            default:
+                break
+            }
+        }
+
+        connection.start(queue: pairingQueue)
+
+        // Timeout
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30) { [weak self] in
+            guard let self = self, self.isPairingInProgress else { return }
+            print("[CONSOLE] test pairing TIMEOUT after 30s")
+            connection.cancel()
+            self.isPairingInProgress = false
+            testRunner?.reportTLSConnection(success: false, detail: "timeout after 30s")
+        }
+    }
+
+    /// Perform ECDH exchange in test mode and report results to test runner.
+    private func performECDHExchangeTestMode(connection: NWConnection,
+                                              macPublicKey: Data,
+                                              macCertFingerprint: Data,
+                                              testRunner: DeviceTestRunner?,
+                                              completion: @escaping () -> Void) {
+        // Generate iPad's P-256 ECDH key pair
+        let attributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits: 256,
+            kSecAttrIsPermanent: false,
+        ]
+
+        var error: Unmanaged<CFError>?
+        guard let iPadPrivateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
+            let detail = "key gen failed: \(error?.takeRetainedValue().localizedDescription ?? "unknown")"
+            testRunner?.reportECDHExchange(success: false, detail: detail)
+            return
+        }
+
+        guard let iPadPublicKey = SecKeyCopyPublicKey(iPadPrivateKey) else {
+            testRunner?.reportECDHExchange(success: false, detail: "public key extraction failed")
+            return
+        }
+
+        guard let iPadPubKeyData = SecKeyCopyExternalRepresentation(iPadPublicKey, &error) as Data? else {
+            testRunner?.reportECDHExchange(success: false, detail: "public key export failed")
+            return
+        }
+
+        // Send iPad's public key
+        print("[CONSOLE] TEST ECDH: sending iPad public key (\(iPadPubKeyData.count) bytes)")
+        connection.send(content: iPadPubKeyData, completion: .contentProcessed { [weak self] sendError in
+            guard let self = self else { return }
+
+            if let sendError = sendError {
+                testRunner?.reportECDHExchange(success: false, detail: "send failed: \(sendError)")
+                return
+            }
+
+            // Receive Mac's ECDH public key
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 256) {
+                [weak self] content, _, _, recvError in
+                guard let self = self else { return }
+
+                if let recvError = recvError {
+                    testRunner?.reportECDHExchange(success: false, detail: "recv failed: \(recvError)")
+                    return
+                }
+
+                guard let macECDHPubKeyData = content, !macECDHPubKeyData.isEmpty else {
+                    testRunner?.reportECDHExchange(success: false, detail: "empty Mac key")
+                    return
+                }
+
+                // Perform ECDH key agreement
+                let pubKeyAttrs: [CFString: Any] = [
+                    kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
+                    kSecAttrKeyClass: kSecAttrKeyClassPublic,
+                    kSecAttrKeySizeInBits: 256,
+                ]
+
+                var importError: Unmanaged<CFError>?
+                guard let macECDHPubKey = SecKeyCreateWithData(
+                    macECDHPubKeyData as CFData,
+                    pubKeyAttrs as CFDictionary,
+                    &importError
+                ) else {
+                    testRunner?.reportECDHExchange(success: false, detail: "invalid Mac key")
+                    return
+                }
+
+                let exchangeParams: [String: Any] = [
+                    SecKeyKeyExchangeParameter.requestedSize.rawValue as String: 32,
+                    SecKeyKeyExchangeParameter.sharedInfo.rawValue as String: "keydrd-v2".data(using: .utf8)!,
+                ]
+
+                var exchangeError: Unmanaged<CFError>?
+                guard let sharedSecretData = SecKeyCopyKeyExchangeResult(
+                    iPadPrivateKey,
+                    .ecdhKeyExchangeStandard,
+                    macECDHPubKey,
+                    exchangeParams as CFDictionary,
+                    &exchangeError
+                ) as Data? else {
+                    testRunner?.reportECDHExchange(success: false, detail: "ECDH failed")
+                    return
+                }
+
+                // Derive symmetric key
+                let salt = "keydrd-pairing-v1".data(using: .utf8)!
+                let derivedKey = self.hmacSHA256(key: salt, data: sharedSecretData)
+
+                // Store in Keychain
+                self.saveToKeychain(data: derivedKey, account: "pairing")
+                self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
+
+                let secretPrefix = derivedKey.prefix(4).map { String(format: "%02x", $0) }.joined()
+                testRunner?.reportECDHExchange(success: true, detail: "secret: \(secretPrefix)")
+
+                print("[CONSOLE] TEST MODE: PAIRING COMPLETE")
+                connection.cancel()
+                self.isPairingInProgress = false
+
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        })
+    }
+
     // MARK: - QR Scanning
 
     /// Start the camera session for QR code scanning.

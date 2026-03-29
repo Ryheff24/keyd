@@ -96,7 +96,10 @@ int compress_frame(FrameCompressorState *state,
     IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
 
     void  *base  = IOSurfaceGetBaseAddress(surface);
-    size_t bytes = IOSurfaceGetAllocSize(surface);
+    /* Use frame_bytes (the size our buffers were allocated for), NOT
+     * IOSurfaceGetAllocSize() which includes row-alignment padding and
+     * can exceed delta_scratch/delta_buf capacity → buffer overread. */
+    size_t bytes = state->frame_bytes;
 
     /* Determine keyframe vs delta */
     int is_keyframe = (state->seq == 0) ||

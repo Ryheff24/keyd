@@ -125,20 +125,41 @@ static const int kEcoMaxHeight720 = 720;
 }
 
 - (void)stop {
+    /* Set inactive FIRST to prevent callbacks from delivering frames
+     * while we're tearing down the session. */
+    _isActive = NO;
+    _onEncodedFrame = nil;
+
     if (_session) {
         VTCompressionSessionCompleteFrames(_session, kCMTimeInvalid);
         VTCompressionSessionInvalidate(_session);
         CFRelease(_session);
         _session = NULL;
     }
-    _isActive = NO;
     os_log_info(hevc_log(), "HEVC encoder stopped");
 }
 
 #pragma mark - Encoding
 
 - (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp {
-    if (!_isActive || !_session) return;
+    if (!_isActive || !_session) {
+        static int skipCount = 0;
+        if (skipCount < 3) {
+            os_log_error(hevc_log(), "encodePixelBuffer: skipped (isActive=%{public}s, session=%{public}p)",
+                         _isActive ? "YES" : "NO", _session);
+        }
+        skipCount++;
+        return;
+    }
+
+    static int encodeCount = 0;
+    if (encodeCount < 5) {
+        size_t w = CVPixelBufferGetWidth(pixelBuffer);
+        size_t h = CVPixelBufferGetHeight(pixelBuffer);
+        os_log(hevc_log(), "encodePixelBuffer: encoding frame #%d (%zux%zu) ts=%.3fs",
+               encodeCount, w, h, CMTimeGetSeconds(timestamp));
+    }
+    encodeCount++;
 
     /* frameProperties: nil = let encoder decide keyframe placement */
     OSStatus status = VTCompressionSessionEncodeFrame(
@@ -205,13 +226,17 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
                                  OSStatus status,
                                  VTEncodeInfoFlags infoFlags,
                                  CMSampleBufferRef sampleBuffer) {
-    if (status != noErr || !sampleBuffer) {
+    if (status != noErr) {
         os_log_error(hevc_log(), "HEVC encode callback error: %d", (int)status);
+        return;
+    }
+    if (!sampleBuffer) {
+        /* Informational callback (no output) — not an error */
         return;
     }
 
     HEVCEncoder *encoder = (__bridge HEVCEncoder *)outputCallbackRefCon;
-    if (!encoder.onEncodedFrame) return;
+    if (!encoder || !encoder.isActive || !encoder.onEncodedFrame) return;
 
     /* Check if this is a keyframe */
     BOOL isKeyframe = NO;
@@ -233,10 +258,68 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
     CMBlockBufferRef blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer);
     if (!blockBuffer) return;
 
-    size_t totalLength = 0;
-    char *dataPointer = NULL;
-    OSStatus accessStatus = CMBlockBufferGetDataPointer(blockBuffer, 0, NULL, &totalLength, &dataPointer);
-    if (accessStatus != noErr || !dataPointer || totalLength == 0) return;
+    size_t sliceLength = 0;
+    char *slicePointer = NULL;
+    OSStatus accessStatus = CMBlockBufferGetDataPointer(blockBuffer, 0, NULL, &sliceLength, &slicePointer);
+    if (accessStatus != noErr || !slicePointer || sliceLength == 0) return;
+
+    /*
+     * For keyframes, prepend VPS/SPS/PPS from the format description.
+     * VTCompressionSession stores parameter sets in the CMFormatDescription,
+     * NOT in the CMBlockBuffer data. The decoder needs them inline.
+     * Format: [4-byte length][NAL unit] for each parameter set, then slice data.
+     */
+    const void *outputData = slicePointer;
+    size_t totalLength = sliceLength;
+    uint8_t *keyframeBuf = NULL;
+
+    if (isKeyframe) {
+        CMFormatDescriptionRef fmtDesc = CMSampleBufferGetFormatDescription(sampleBuffer);
+        if (fmtDesc) {
+            size_t paramSetCount = 0;
+            CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(fmtDesc, 0, NULL, NULL, &paramSetCount, NULL);
+
+            /* Calculate total size needed for parameter sets */
+            size_t paramTotalSize = 0;
+            for (size_t i = 0; i < paramSetCount; i++) {
+                const uint8_t *paramSet = NULL;
+                size_t paramSetSize = 0;
+                if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(fmtDesc, i, &paramSet, &paramSetSize, NULL, NULL) == noErr) {
+                    paramTotalSize += 4 + paramSetSize; /* 4-byte length prefix + NAL data */
+                }
+            }
+
+            if (paramTotalSize > 0) {
+                totalLength = paramTotalSize + sliceLength;
+                keyframeBuf = malloc(totalLength);
+                if (keyframeBuf) {
+                    size_t writeOffset = 0;
+                    for (size_t i = 0; i < paramSetCount; i++) {
+                        const uint8_t *paramSet = NULL;
+                        size_t paramSetSize = 0;
+                        if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(fmtDesc, i, &paramSet, &paramSetSize, NULL, NULL) == noErr) {
+                            /* Write 4-byte big-endian length prefix */
+                            uint32_t netLen = htonl((uint32_t)paramSetSize);
+                            memcpy(keyframeBuf + writeOffset, &netLen, 4);
+                            writeOffset += 4;
+                            memcpy(keyframeBuf + writeOffset, paramSet, paramSetSize);
+                            writeOffset += paramSetSize;
+                        }
+                    }
+                    /* Append slice data */
+                    memcpy(keyframeBuf + writeOffset, slicePointer, sliceLength);
+                    outputData = keyframeBuf;
+
+                    static BOOL loggedOnce = NO;
+                    if (!loggedOnce) {
+                        os_log(hevc_log(), "Keyframe: prepended %zu param sets (%zu bytes) + %zu slice = %zu total",
+                               paramSetCount, paramTotalSize, sliceLength, totalLength);
+                        loggedOnce = YES;
+                    }
+                }
+            }
+        }
+    }
 
     /* Get timestamp */
     CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
@@ -258,7 +341,11 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
     header.ts_us = tsUs;
     header.crc32 = 0;  /* CRC computed by transport layer if needed */
 
-    encoder.onEncodedFrame(dataPointer, totalLength, header);
+    encoder.onEncodedFrame(outputData, totalLength, header);
+
+    if (keyframeBuf) {
+        free(keyframeBuf);
+    }
 }
 
 @end

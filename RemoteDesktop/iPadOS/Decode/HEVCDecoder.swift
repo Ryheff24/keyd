@@ -35,17 +35,26 @@ final class HEVCDecoder {
     ///   - data: Encoded H.265 NAL unit data.
     ///   - header: Parsed MediaFrameHeader for this frame.
     /// - Returns: Decoded CVPixelBuffer in BGRA format, or nil on error.
+    private var decodeLogCount = 0
+
     func decode(data: Data, header: MediaFrameHeader) -> CVPixelBuffer? {
         // If this is a keyframe, extract SPS/PPS and ensure session exists
         if header.isKeyframe {
             if !ensureSession(from: data) {
+                print("[CONSOLE] HEVCDecoder: ensureSession FAILED for keyframe (data=\(data.count) bytes)")
                 return nil
+            }
+            if decodeLogCount < 3 {
+                print("[CONSOLE] HEVCDecoder: session ready after keyframe")
             }
         }
 
         guard let session = decompressionSession,
               let fmtDesc = formatDescription else {
-            os_log(.error, log: Self.log, "No decompression session -- awaiting keyframe")
+            if decodeLogCount < 3 {
+                print("[CONSOLE] HEVCDecoder: no session (awaiting keyframe)")
+            }
+            decodeLogCount += 1
             return nil
         }
 
@@ -146,7 +155,9 @@ final class HEVCDecoder {
     private func ensureSession(from data: Data) -> Bool {
         // Extract parameter sets (SPS, PPS) from HEVC keyframe
         guard let fmtDesc = createFormatDescription(from: data) else {
-            os_log(.error, log: Self.log, "Failed to extract SPS/PPS from keyframe")
+            // Log first few bytes for debugging NAL unit format
+            let preview = data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("[CONSOLE] HEVCDecoder: createFormatDescription FAILED, data[\(data.count)]= \(preview)...")
             return false
         }
 

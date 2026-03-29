@@ -615,8 +615,10 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     os_log(pairing_log(), "ECDH key exchange successful -- shared secret stored in Keychain");
 
     /* Clean up ECDH private key (no longer needed after exchange) */
-    CFRelease(_ecdhPrivateKey);
-    _ecdhPrivateKey = NULL;
+    if (_ecdhPrivateKey) {
+        CFRelease(_ecdhPrivateKey);
+        _ecdhPrivateKey = NULL;
+    }
 
     return YES;
 }
@@ -686,6 +688,18 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 
 #pragma mark - IP Address
 
+/**
+ * Select the best IPv4 address for the QR pairing payload.
+ *
+ * Priority order:
+ *   1. USB NCM link-local (169.254.x.x) on bridge or enN -- iPad is physically connected
+ *   2. Wi-Fi (en0) -- common fallback when not wired
+ *   3. Any other non-loopback interface
+ *
+ * When iPad is plugged in via USB-C, macOS creates a bridge or enN interface with a
+ * 169.254.x.x link-local address. This is the fastest, most reliable path and
+ * should be preferred over Wi-Fi for the QR payload so the iPad connects over USB NCM.
+ */
 - (nullable NSString *)bestRoutableIPv4Address {
     struct ifaddrs *ifaddrs = NULL;
     if (getifaddrs(&ifaddrs) != 0) {
@@ -693,8 +707,11 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         return nil;
     }
 
-    NSString *en0IP = nil;
-    NSString *fallbackIP = nil;
+    NSString *usbNCMIP = nil;       /* 169.254.x.x on bridge or enN -- highest priority */
+    NSString *usbNCMIfName = nil;
+    NSString *en0IP = nil;           /* Wi-Fi -- second priority */
+    NSString *fallbackIP = nil;      /* anything else -- last resort */
+    NSString *fallbackIfName = nil;
 
     for (struct ifaddrs *ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
         if (ifa->ifa_addr == NULL) continue;
@@ -709,20 +726,59 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         inet_ntop(AF_INET, &addr->sin_addr, ipStr, sizeof(ipStr));
         NSString *ip = [NSString stringWithUTF8String:ipStr];
 
-        os_log(pairing_log(), "Found interface %{public}@: %{public}@", name, ip);
+        /* Check if this is a link-local address (169.254.0.0/16) */
+        uint32_t ipAddr = ntohl(addr->sin_addr.s_addr);
+        BOOL isLinkLocal = ((ipAddr & 0xFFFF0000) == 0xA9FE0000); /* 169.254.x.x */
 
-        if ([name isEqualToString:@"en0"]) {
+        os_log(pairing_log(), "Found interface %{public}@: %{public}@ (link-local=%{public}s)",
+               name, ip, isLinkLocal ? "YES" : "NO");
+
+        /* USB NCM detection: link-local on bridge* or enN (N >= 1) */
+        if (isLinkLocal && !usbNCMIP) {
+            BOOL isNCMCandidate = [name hasPrefix:@"bridge"];
+            if (!isNCMCandidate && [name hasPrefix:@"en"]) {
+                NSString *suffix = [name substringFromIndex:2];
+                NSInteger n = suffix.integerValue;
+                /* en1+ could be USB NCM; en0 is typically Wi-Fi */
+                if (n >= 1 && suffix.length > 0) {
+                    isNCMCandidate = YES;
+                }
+            }
+            if (isNCMCandidate) {
+                usbNCMIP = ip;
+                usbNCMIfName = name;
+            }
+        }
+
+        if ([name isEqualToString:@"en0"] && !isLinkLocal) {
             en0IP = ip;
-        } else if (!fallbackIP) {
+        } else if (!fallbackIP && !isLinkLocal) {
             fallbackIP = ip;
+            fallbackIfName = name;
         }
     }
 
     freeifaddrs(ifaddrs);
 
-    NSString *result = en0IP ?: fallbackIP;
+    /* Priority: USB NCM > Wi-Fi > fallback */
+    NSString *result = nil;
+    NSString *reason = nil;
+
+    if (usbNCMIP) {
+        result = usbNCMIP;
+        reason = [NSString stringWithFormat:@"USB NCM link-local on %@", usbNCMIfName];
+    } else if (en0IP) {
+        result = en0IP;
+        reason = @"Wi-Fi (en0)";
+    } else if (fallbackIP) {
+        result = fallbackIP;
+        reason = [NSString stringWithFormat:@"fallback on %@", fallbackIfName];
+    }
+
     if (result) {
-        os_log(pairing_log(), "Best routable IPv4: %{public}@", result);
+        os_log(pairing_log(), "Best routable IPv4: %{public}@ (reason: %{public}@)", result, reason);
+    } else {
+        os_log_error(pairing_log(), "No routable IPv4 address found on any interface");
     }
     return result;
 }

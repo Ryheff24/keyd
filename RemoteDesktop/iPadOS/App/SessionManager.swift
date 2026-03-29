@@ -22,7 +22,12 @@ final class SessionManager {
     }
 
     /// Current session state.
-    private(set) var state: State = .awaitingPairing
+    private(set) var state: State = .awaitingPairing {
+        didSet {
+            print("[CONSOLE] SessionManager state: \(oldValue.rawValue) -> \(state.rawValue)")
+            Self.log.info("[SessionManager] state changed: \(oldValue.rawValue) -> \(self.state.rawValue)")
+        }
+    }
 
     // MARK: - Owned Components
 
@@ -41,6 +46,7 @@ final class SessionManager {
     // MARK: - Display Geometry (from handshake)
 
     private var macDisplayWidth: Int = 0
+    private var frameRecvCount: Int = 0
     private var macDisplayHeight: Int = 0
     private var macScaleFactor: Float = 2.0
 
@@ -62,15 +68,40 @@ final class SessionManager {
     private static let maxReconnectDelay: TimeInterval = 8.0
     private static let baseReconnectDelay: TimeInterval = 0.5
 
+    // MARK: - Test Mode
+
+    /// Whether running in test mode (--test-mode flag). Skips QR camera, auto-pairs, runs E2E tests.
+    let isTestMode: Bool = ProcessInfo.processInfo.arguments.contains("--test-mode")
+
+    /// E2E test runner (created in test mode only).
+    private(set) var testRunner: DeviceTestRunner?
+
     // MARK: - Logging
 
     private static let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "Session")
+
+    // MARK: - Init
+
+    init() {
+        Self.log.info("[SessionManager] init called, initial state=\(self.state.rawValue)")
+        Self.log.info("[SessionManager] qrPairing.isPaired=\(self.qrPairing.isPaired)")
+        if isTestMode {
+            print("[CONSOLE] SessionManager: TEST MODE enabled")
+            testRunner = DeviceTestRunner(sessionManager: self)
+        }
+    }
 
     // MARK: - Public API
 
     /// Start the session. Check pairing state and begin monitoring transports.
     func start() {
-        Self.log.info("SessionManager starting")
+        Self.log.info("[SessionManager] start() called, current state=\(self.state.rawValue)")
+
+        // Mac regenerates TLS identity on every dev launch (avoids keychain ACL
+        // issues from code-signature changes). Clear iPad side too so both start
+        // fresh — auto-reconnect across Mac relaunches isn't possible anyway.
+        qrPairing.resetPairing()
+        print("[CONSOLE] start(): cleared stale pairing (Mac regenerates TLS identity each launch)")
 
         // Set up HUD callbacks
         hudViewModel.onEcoModeChanged = { [weak self] isEco in
@@ -83,22 +114,40 @@ final class SessionManager {
             self?.requestResolutionMatch()
         }
 
+        // Test mode: skip QR camera, auto-pair via Bonjour discovery
+        if isTestMode {
+            print("[CONSOLE] start(): TEST MODE -- skipping QR, starting auto-pair via Bonjour")
+            testRunner?.runAllTests()
+            state = .awaitingPairing
+            qrPairing.autoPairViaBonjourForTestMode(testRunner: testRunner) { [weak self] in
+                print("[CONSOLE] TEST MODE: auto-pair complete, starting transport monitoring")
+                self?.onPairingComplete()
+            }
+            return
+        }
+
         // Check if already paired
         if qrPairing.isPaired {
-            Self.log.info("Already paired -- starting transport monitoring")
+            Self.log.info("[SessionManager] start(): already paired -- setting state to .connecting and starting transport monitoring")
             state = .connecting
             startTransportMonitoring()
         } else {
-            Self.log.info("Not paired -- awaiting QR scan")
+            Self.log.info("[SessionManager] start(): not paired -- setting state to .awaitingPairing (QR scanner should appear)")
             state = .awaitingPairing
         }
     }
 
     /// Called when QR pairing completes successfully.
     func onPairingComplete() {
-        Self.log.info("Pairing complete -- starting transport monitoring")
+        print("[CONSOLE] SessionManager.onPairingComplete() called, current state=\(state.rawValue)")
+        Self.log.info("[SessionManager] onPairingComplete() called, current state=\(self.state.rawValue)")
         state = .connecting
+        print("[CONSOLE] starting transport monitoring")
         startTransportMonitoring()
+        print("[CONSOLE] transport monitoring started")
+
+        // E2E test: now that pairing is done and Mac is advertising, test Bonjour discovery
+        testRunner?.runBonjourDiscoveryTestAfterPairing()
     }
 
     /// Force an immediate reconnect attempt (user tapped "Retry Now").
@@ -111,9 +160,12 @@ final class SessionManager {
 
     /// Resume session after app returns to foreground.
     func resumeFromBackground() {
-        Self.log.info("App foregrounded -- resuming session")
+        Self.log.info("[SessionManager] resumeFromBackground() called, state=\(self.state.rawValue), isPaired=\(self.qrPairing.isPaired)")
 
-        guard qrPairing.isPaired else { return }
+        guard qrPairing.isPaired else {
+            Self.log.info("[SessionManager] resumeFromBackground(): not paired, returning early")
+            return
+        }
 
         switch state {
         case .disconnected, .reconnecting:
@@ -219,12 +271,15 @@ final class SessionManager {
     // MARK: - Private: Transport FSM
 
     private func handleTransportEvent(_ event: TransportEvent) {
+        print("[CONSOLE] handleTransportEvent: \(event) (current: \(currentTransport.rawValue))")
         let transition = TransportFSM.transition(from: currentTransport, on: event)
 
         guard transition.state != currentTransport || !transition.effects.isEmpty else {
+            print("[CONSOLE] handleTransportEvent: no state change, skipping")
             return
         }
 
+        print("[CONSOLE] Transport FSM: \(currentTransport.rawValue) -> \(transition.state.rawValue), effects=\(transition.effects)")
         Self.log.info("Transport: \(self.currentTransport.rawValue) -> \(transition.state.rawValue)")
         currentTransport = transition.state
 
@@ -240,6 +295,8 @@ final class SessionManager {
                 // Don't transition to streaming yet -- wait for handshake
                 Self.log.info("Transport connected, awaiting handshake")
             }
+            // E2E test: report transport detection
+            testRunner?.reportTransportDetected(type: transition.state.rawValue)
         case .disconnected:
             if state == .streaming {
                 state = .reconnecting
@@ -286,24 +343,37 @@ final class SessionManager {
     /// 4. Send decoded pixels to MetalRenderer.
     private func handleReceivedFrame(_ data: Data) {
         guard data.count > MediaFrameHeader.size else {
-            Self.log.error("Frame too small: \(data.count) bytes")
+            print("[CONSOLE] handleReceivedFrame: too small (\(data.count) bytes)")
             return
         }
 
         // Parse header
         guard let header = MediaFrameHeader.parse(from: data) else {
-            Self.log.error("Invalid frame header (magic mismatch)")
+            print("[CONSOLE] handleReceivedFrame: magic mismatch")
             return
         }
 
         // Extract payload (everything after the 24-byte header)
         let payload = data.subdata(in: MediaFrameHeader.size..<data.count)
 
+        frameRecvCount += 1
+        if frameRecvCount <= 3 {
+            print("[CONSOLE] handleReceivedFrame: seq=\(header.seq) flags=0x\(String(header.flags, radix: 16)) payload=\(payload.count) isHEVC=\(header.isHEVC) isKey=\(header.isKeyframe)")
+        }
+
         // Route to decoder based on flags
+        var decompressedSize = 0
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
             guard let pixelBuffer = hevcDecoder.decode(data: payload, header: header) else {
+                if frameRecvCount <= 5 {
+                    print("[CONSOLE] handleReceivedFrame: HEVC decode FAILED for seq=\(header.seq)")
+                }
                 return
+            }
+            decompressedSize = CVPixelBufferGetDataSize(pixelBuffer)
+            if frameRecvCount <= 3 {
+                print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes")
             }
             renderCVPixelBuffer(pixelBuffer)
         } else {
@@ -320,11 +390,15 @@ final class SessionManager {
                 return
             }
 
+            decompressedSize = frameBytes
             metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight)
         }
 
         // Record frame timestamp for FPS calculation
         recordFrameTimestamp()
+
+        // E2E test: report frame received + decompressed
+        testRunner?.reportFrameReceived(header: header, decompressedSize: decompressedSize)
 
         // Transition to streaming on first frame
         if state == .connecting || state == .reconnecting {
@@ -369,6 +443,9 @@ final class SessionManager {
         startFPSUpdateTimer()
 
         state = .streaming
+
+        // E2E test: report handshake
+        testRunner?.reportSessionHandshake(handshake)
     }
 
     /// Render a CVPixelBuffer from HEVC decode to Metal.
@@ -389,10 +466,20 @@ final class SessionManager {
     // MARK: - Private: Input Event Handling (from Mac)
 
     /// Handle input data received from Mac (handshakes, latency probes, control messages).
+    /// Also routes media frames that arrive over TCP (wireless HEVC exceeds UDP MTU).
     private func handleInputReceived(_ data: Data) {
-        // First check if it's a session handshake (different struct format)
+        // Check handshake FIRST — both handshake and media frame share KEYDRD_MAGIC,
+        // but handshake has a more specific discriminator (magic + msgType at offset 2)
         if let handshake = SessionHandshakeMessage.parse(from: data) {
+            print("[CONSOLE] handleInputReceived: parsed as SESSION HANDSHAKE \(handshake.displayWidth)x\(handshake.displayHeight)")
             handleSessionHandshake(handshake)
+            return
+        }
+
+        // Check if this is a media frame sent over TCP (wireless HEVC exceeds UDP MTU)
+        if data.count >= MediaFrameHeader.size,
+           let _ = MediaFrameHeader.parse(from: data) {
+            handleReceivedFrame(data)
             return
         }
 
@@ -449,6 +536,9 @@ final class SessionManager {
         DispatchQueue.main.async {
             self.hudViewModel.updateLatency(oneWayMs)
         }
+
+        // E2E test: report latency probe response
+        testRunner?.reportLatencyProbeResponse(rttUs: roundTripUs)
     }
 
     // MARK: - Private: Mode Change from Mac

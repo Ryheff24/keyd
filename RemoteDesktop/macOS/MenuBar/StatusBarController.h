@@ -34,6 +34,11 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)updateResolution:(uint32_t)width height:(uint32_t)height;
 
+/**
+ * Re-check and update the permission status menu items (Screen Recording, Accessibility).
+ */
+- (void)updatePermissionStatus;
+
 @end
 
 NS_ASSUME_NONNULL_END

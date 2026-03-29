@@ -19,8 +19,12 @@ NS_ASSUME_NONNULL_BEGIN
  * stops (e.g. Sequoia re-authorization, display sleep).
  */
 
-/* Callback block type — called on compress queue with compressed output. */
+/* Callback block type — called on compress queue with compressed output (LZ4 mode). */
 typedef void (^ScreenCaptureFrameCallback)(CompressOutput *output);
+
+/* Callback block type — called with raw pixel buffer for HEVC encoding.
+ * pixelBuffer + sampleBuffer are retained for the callback duration. */
+typedef void (^ScreenCapturePixelBufferCallback)(CVPixelBufferRef pixelBuffer, CMTime timestamp);
 
 /* Callback block type — called when watchdog detects no frames for >2s. */
 typedef void (^ScreenCaptureReauthCallback)(void);
@@ -33,8 +37,13 @@ typedef void (^ScreenCaptureReauthCallback)(void);
 /* Whether screen recording permission has been granted. */
 @property (nonatomic, assign, readonly) BOOL hasPermission;
 
-/* Called after compression with ready-to-send frame. */
+/* Called after compression with ready-to-send frame (LZ4 mode). */
 @property (nonatomic, copy, nullable) ScreenCaptureFrameCallback onFrame;
+
+/* Called with raw pixel buffer before compression (HEVC mode).
+ * Set this when HEVC encoding is active. When set AND onFrame is set,
+ * BOTH callbacks fire — onPixelBuffer first, then onFrame. */
+@property (nonatomic, copy, nullable) ScreenCapturePixelBufferCallback onPixelBuffer;
 
 /* Called when watchdog detects no frames for >2s and display is not asleep. */
 @property (nonatomic, copy, nullable) ScreenCaptureReauthCallback onReauthorizationNeeded;

@@ -47,22 +47,52 @@ struct MediaFrameHeader {
 
     static let size = 24
 
-    /// Parse a MediaFrameHeader from raw bytes.
-    /// Returns nil if data is too small or magic doesn't match.
+    /// Parse a MediaFrameHeader from raw bytes using manual byte offsets.
+    /// C struct is `__attribute__((packed))` (24 bytes) but Swift's MemoryLayout
+    /// adds padding (28 bytes), so we cannot use direct struct load.
     static func parse(from data: Data) -> MediaFrameHeader? {
         guard data.count >= Self.size else { return nil }
-        return data.withUnsafeBytes { buffer -> MediaFrameHeader? in
-            guard let base = buffer.baseAddress else { return nil }
-            let header = base.assumingMemoryBound(to: MediaFrameHeader.self).pointee
-            guard header.magic == keydrdMagic else { return nil }
-            return header
+        return data.withUnsafeBytes { buf -> MediaFrameHeader? in
+            guard let p = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+
+            // C packed offsets: magic(0), flags(2), seq(3), chunkIdx(5),
+            // chunkTotal(6), reserved(7), payloadSize(8), tsUs(12), crc32(20)
+            var magic: UInt16 = 0;       memcpy(&magic,       p + 0,  2)
+            guard magic == keydrdMagic else { return nil }
+
+            let flags = p[2]
+            var seq: UInt16 = 0;         memcpy(&seq,         p + 3,  2)
+            let chunkIdx = p[5]
+            let chunkTotal = p[6]
+            let reserved = p[7]
+            var payloadSize: UInt32 = 0; memcpy(&payloadSize, p + 8,  4)
+            var tsUs: UInt64 = 0;        memcpy(&tsUs,        p + 12, 8)
+            var crc32Val: UInt32 = 0;    memcpy(&crc32Val,    p + 20, 4)
+
+            return MediaFrameHeader(
+                magic: magic, flags: flags, seq: seq,
+                chunkIdx: chunkIdx, chunkTotal: chunkTotal, reserved: reserved,
+                payloadSize: payloadSize, tsUs: tsUs, crc32: crc32Val
+            )
         }
     }
 
-    /// Serialize this header to raw bytes.
+    /// Serialize this header to packed bytes matching C layout (24 bytes).
     func serialize() -> Data {
-        var copy = self
-        return Data(bytes: &copy, count: Self.size)
+        var buf = Data(count: Self.size)
+        buf.withUnsafeMutableBytes { p in
+            let base = p.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            var m = magic;           memcpy(base + 0,  &m, 2)
+            base[2] = flags
+            var s = seq;             memcpy(base + 3,  &s, 2)
+            base[5] = chunkIdx
+            base[6] = chunkTotal
+            base[7] = reserved
+            var ps = payloadSize;    memcpy(base + 8,  &ps, 4)
+            var ts = tsUs;           memcpy(base + 12, &ts, 8)
+            var c = crc32;           memcpy(base + 20, &c, 4)
+        }
+        return buf
     }
 }
 
@@ -89,19 +119,27 @@ struct InputEventHeader {
 
     static let size = 9
 
-    /// Parse an InputEventHeader from raw bytes.
+    /// Parse an InputEventHeader from raw bytes (manual packed offsets).
+    /// C packed: type(0), tsUs(1) = 9 bytes. Swift pads to 16.
     static func parse(from data: Data) -> InputEventHeader? {
         guard data.count >= Self.size else { return nil }
-        return data.withUnsafeBytes { buffer -> InputEventHeader? in
-            guard let base = buffer.baseAddress else { return nil }
-            return base.assumingMemoryBound(to: InputEventHeader.self).pointee
+        return data.withUnsafeBytes { buf -> InputEventHeader? in
+            guard let p = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            let type = p[0]
+            var tsUs: UInt64 = 0; memcpy(&tsUs, p + 1, 8)
+            return InputEventHeader(type: type, tsUs: tsUs)
         }
     }
 
-    /// Serialize this header to raw bytes.
+    /// Serialize this header to packed bytes (9 bytes).
     func serialize() -> Data {
-        var copy = self
-        return Data(bytes: &copy, count: Self.size)
+        var buf = Data(count: Self.size)
+        buf.withUnsafeMutableBytes { p in
+            let base = p.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            base[0] = type
+            var ts = tsUs; memcpy(base + 1, &ts, 8)
+        }
+        return buf
     }
 }
 
@@ -131,26 +169,60 @@ struct SessionHandshakeMessage {
 
     static let msgTypeValue: UInt8 = 0x01
 
-    static var size: Int {
-        MemoryLayout<SessionHandshakeMessage>.size
-    }
+    /// Packed wire size matching C __attribute__((packed)) struct: 26 bytes.
+    static let packedSize = 26
 
-    /// Parse a SessionHandshakeMessage from raw bytes.
+    static var size: Int { packedSize }
+
+    /// Parse a SessionHandshakeMessage from raw packed bytes (C __attribute__((packed)) layout).
+    /// Offsets match the C struct exactly: magic(2) + msgType(1) + width(4) + height(4)
+    /// + scale(4) + aspect(4) + caps(1) + fps(1) + version(1) + reserved(4) = 26.
     static func parse(from data: Data) -> SessionHandshakeMessage? {
-        guard data.count >= Self.size else { return nil }
-        return data.withUnsafeBytes { buffer -> SessionHandshakeMessage? in
-            guard let base = buffer.baseAddress else { return nil }
-            let msg = base.assumingMemoryBound(to: SessionHandshakeMessage.self).pointee
-            guard msg.magic == keydrdMagic,
-                  msg.msgType == Self.msgTypeValue else { return nil }
-            return msg
+        guard data.count >= packedSize else { return nil }
+        return data.withUnsafeBytes { buf -> SessionHandshakeMessage? in
+            guard let base = buf.baseAddress else { return nil }
+            let p = base.assumingMemoryBound(to: UInt8.self)
+
+            let magic = UInt16(p[0]) | (UInt16(p[1]) << 8)  // little-endian
+            let msgType = p[2]
+            guard magic == keydrdMagic, msgType == Self.msgTypeValue else { return nil }
+
+            var width: UInt32 = 0;  memcpy(&width,  p + 3,  4)
+            var height: UInt32 = 0; memcpy(&height, p + 7,  4)
+            var scale: Float = 0;   memcpy(&scale,  p + 11, 4)
+            var aspect: Float = 0;  memcpy(&aspect, p + 15, 4)
+            let caps = p[19]
+            let fps = p[20]
+            let ver = p[21]
+            var res: UInt32 = 0;    memcpy(&res,    p + 22, 4)
+
+            return SessionHandshakeMessage(
+                magic: magic, msgType: msgType,
+                displayWidth: width, displayHeight: height,
+                scaleFactor: scale, aspectRatio: aspect,
+                capabilities: caps, maxFps: fps, agentVersion: ver,
+                reserved: res
+            )
         }
     }
 
-    /// Serialize this message to raw bytes.
+    /// Serialize this message to packed bytes matching C layout.
     func serialize() -> Data {
-        var copy = self
-        return Data(bytes: &copy, count: Self.size)
+        var buf = Data(count: Self.packedSize)
+        buf.withUnsafeMutableBytes { p in
+            let base = p.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            var m = magic;           memcpy(base + 0,  &m, 2)
+            base[2] = msgType
+            var w = displayWidth;    memcpy(base + 3,  &w, 4)
+            var h = displayHeight;   memcpy(base + 7,  &h, 4)
+            var s = scaleFactor;     memcpy(base + 11, &s, 4)
+            var a = aspectRatio;     memcpy(base + 15, &a, 4)
+            base[19] = capabilities
+            base[20] = maxFps
+            base[21] = agentVersion
+            var r = reserved;        memcpy(base + 22, &r, 4)
+        }
+        return buf
     }
 }
 

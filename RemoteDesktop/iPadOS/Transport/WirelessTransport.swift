@@ -38,6 +38,15 @@ final class WirelessTransport {
     private var mediaConnection: NWConnection?
     private var inputConnection: NWConnection?
 
+    /// TCP reassembly buffer for length-prefixed messages.
+    /// Mac prepends 4-byte big-endian length before each message.
+    private var tcpBuffer = Data()
+
+    /// Tracks the Bonjour service name we are connected/connecting to,
+    /// preventing duplicate connections when NWBrowser fires multiple `.added`
+    /// events for the same service on different interfaces (Wi-Fi + AWDL).
+    private var connectedServiceName: String?
+
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "WirelessTransport")
 
     private let keychainService = "com.ryheff.keyd.remote.app"
@@ -50,6 +59,7 @@ final class WirelessTransport {
 
         guard let certChain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate],
               let peerCert = certChain.first else {
+            print("[CONSOLE] WirelessTransport cert verify: NO peer certificate")
             log.error("Certificate verify: no peer certificate")
             return false
         }
@@ -59,14 +69,17 @@ final class WirelessTransport {
         let peerFingerprint = Data(fingerprint)
 
         guard let storedFingerprint = loadStoredPeerFingerprint() else {
+            print("[CONSOLE] WirelessTransport cert verify: NO stored fingerprint (not paired?)")
             log.error("Certificate verify: no stored peer fingerprint (not paired)")
             return false
         }
 
         let match = peerFingerprint == storedFingerprint
         if !match {
+            print("[CONSOLE] WirelessTransport cert verify: MISMATCH -- rejecting")
             log.error("Certificate verify: peer cert fingerprint MISMATCH -- rejecting")
         } else {
+            print("[CONSOLE] WirelessTransport cert verify: MATCH -- trusted")
             log.info("Certificate verify: peer cert fingerprint matches stored -- trusted")
         }
         return match
@@ -151,12 +164,16 @@ final class WirelessTransport {
             guard let self = self else { return }
             switch state {
             case .ready:
+                print("[CONSOLE] Bonjour browser ready for \(keydrdService)")
                 self.log.info("Bonjour browser ready")
             case .failed(let error):
+                print("[CONSOLE] Bonjour browser FAILED: \(error)")
                 self.log.error("Bonjour browser failed: \(error)")
             case .cancelled:
+                print("[CONSOLE] Bonjour browser cancelled")
                 self.log.info("Bonjour browser cancelled")
             default:
+                print("[CONSOLE] Bonjour browser state: \(state)")
                 break
             }
         }
@@ -164,14 +181,40 @@ final class WirelessTransport {
         newBrowser.browseResultsChangedHandler = { [weak self] results, changes in
             guard let self = self else { return }
 
+            print("[CONSOLE] Bonjour browse results changed: \(results.count) results, \(changes.count) changes")
             for change in changes {
                 switch change {
                 case .added(let result):
+                    print("[CONSOLE] Bonjour service FOUND: \(result.endpoint.debugDescription)")
                     self.log.info("Bonjour service found: \(result.endpoint.debugDescription)")
+
+                    // Guard against re-entry: NWBrowser fires .added for every
+                    // interface (Wi-Fi, AWDL) the same service appears on.
+                    // Only connect on the first event; ignore the rest.
+                    if self.isConnected || self.connectedServiceName != nil {
+                        print("[CONSOLE] Bonjour: ignoring duplicate .added (already connected/connecting to '\(self.connectedServiceName ?? "?")')")
+                        self.log.info("Ignoring duplicate .added — already connected/connecting")
+                        continue
+                    }
+
+                    if case .service(let name, _, _, _) = result.endpoint {
+                        self.connectedServiceName = name
+                    }
                     self.connectToService(endpoint: result.endpoint)
+
                 case .removed(let result):
+                    print("[CONSOLE] Bonjour service LOST: \(result.endpoint.debugDescription)")
                     self.log.info("Bonjour service lost: \(result.endpoint.debugDescription)")
-                    // Connection state changes will handle teardown
+
+                    // Only tear down if the removed service is the one we are connected to.
+                    if case .service(let name, _, _, _) = result.endpoint,
+                       name == self.connectedServiceName {
+                        print("[CONSOLE] Bonjour: connected service '\(name)' removed — tearing down")
+                        self.log.info("Connected service removed — tearing down")
+                        self.tearDownConnections()
+                        self.onConnectionChanged?(false, false)
+                    }
+
                 default:
                     break
                 }
@@ -213,6 +256,7 @@ final class WirelessTransport {
     private func connectToService(endpoint: NWEndpoint) {
         tearDownConnections()
 
+        print("[CONSOLE] WirelessTransport: connecting to \(endpoint.debugDescription)")
         log.info("Connecting with TLS to discovered Mac service: \(endpoint.debugDescription)")
 
         // TLS 1.3-encrypted TCP connection for input
@@ -226,6 +270,7 @@ final class WirelessTransport {
 
             switch state {
             case .ready:
+                print("[CONSOLE] WirelessTransport: TLS TCP connection READY")
                 self.log.info("TLS wireless TCP connection ready")
 
                 // Determine if AWDL or Wi-Fi via connection path interface type
@@ -233,6 +278,7 @@ final class WirelessTransport {
                 self.isAWDL = detectedAWDL
                 self.isConnected = true
 
+                print("[CONSOLE] WirelessTransport: AWDL=\(detectedAWDL), calling onConnectionChanged")
                 self.log.info("Wireless transport: AWDL=\(detectedAWDL)")
                 self.onConnectionChanged?(true, detectedAWDL)
 
@@ -240,6 +286,7 @@ final class WirelessTransport {
                 self.establishMediaConnection(from: inputConn)
 
             case .failed(let error):
+                print("[CONSOLE] WirelessTransport: TLS TCP connection FAILED: \(error)")
                 self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
                 self.isConnected = false
@@ -294,9 +341,11 @@ final class WirelessTransport {
             guard let self = self else { return }
             switch state {
             case .ready:
+                print("[CONSOLE] WirelessTransport: DTLS UDP media connection READY")
                 self.log.info("DTLS wireless media UDP connection ready")
                 self.scheduleMediaReceive(mediaConn)
             case .failed(let error):
+                print("[CONSOLE] WirelessTransport: DTLS UDP media FAILED: \(error)")
                 self.log.error("DTLS wireless media UDP connection failed: \(error)")
             default:
                 break
@@ -347,16 +396,55 @@ final class WirelessTransport {
     }
 
     private func scheduleInputReceive(_ connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) {
+        // Read up to 256KB at a time — large enough for most HEVC frames.
+        // Data arrives with 4-byte big-endian length prefix per message.
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
 
             if let data = content, !data.isEmpty {
-                self.onInputReceived?(data)
+                self.tcpBuffer.append(data)
+                self.drainTCPBuffer()
             }
 
-            if error != nil || isComplete { return }
+            if let error = error {
+                print("[CONSOLE] WirelessTransport: TCP receive error: \(error)")
+                return
+            }
+            if isComplete {
+                print("[CONSOLE] WirelessTransport: TCP receive complete (EOF)")
+                return
+            }
             self.scheduleInputReceive(connection)
+        }
+    }
+
+    /// Extract complete length-prefixed messages from the TCP reassembly buffer.
+    /// Format: [4 bytes big-endian length][payload of that length]
+    private func drainTCPBuffer() {
+        while tcpBuffer.count >= 4 {
+            let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
+                let raw = buf.load(as: UInt32.self)
+                return Int(UInt32(bigEndian: raw))
+            }
+
+            guard msgLen > 0, msgLen < 4_000_000 else {
+                // Invalid length — likely corrupt data, clear buffer
+                print("[CONSOLE] WirelessTransport: invalid TCP frame length \(msgLen), clearing buffer")
+                tcpBuffer.removeAll()
+                return
+            }
+
+            guard tcpBuffer.count >= 4 + msgLen else {
+                // Incomplete message — wait for more data
+                return
+            }
+
+            // Extract complete message
+            let message = tcpBuffer.subdata(in: 4..<(4 + msgLen))
+            tcpBuffer.removeSubrange(0..<(4 + msgLen))
+
+            onInputReceived?(message)
         }
     }
 
@@ -367,6 +455,8 @@ final class WirelessTransport {
         mediaConnection = nil
         inputConnection?.cancel()
         inputConnection = nil
+        connectedServiceName = nil
+        tcpBuffer.removeAll()
         isConnected = false
         isAWDL = false
     }

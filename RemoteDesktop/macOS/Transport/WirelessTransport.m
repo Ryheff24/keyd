@@ -21,6 +21,7 @@ static const char *kInputPortStr = "14568";
 @interface WirelessTransport ()
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t bonjourListener;
+@property (nonatomic, nullable) nw_listener_t mediaListener;
 @property (nonatomic, nullable) nw_connection_t mediaConnection;
 @property (nonatomic, nullable) nw_connection_t inputConnection;
 @property (nonatomic, readwrite) BOOL isConnected;
@@ -281,11 +282,27 @@ static const char *kInputPortStr = "14568";
 
 - (void)sendInputEvent:(const void *)data length:(size_t)len {
     nw_connection_t conn = _inputConnection;
-    if (!conn) return;
+    if (!conn) {
+        os_log_error(wireless_log(), "sendInputEvent: no input connection (len=%zu)", len);
+        return;
+    }
 
-    dispatch_data_t ddata = dispatch_data_create(data, len, _transportQueue,
-                                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+    static int sendCount = 0;
+    if (sendCount < 5) {
+        os_log(wireless_log(), "sendInputEvent: sending %zu bytes over TCP (framed)", len);
+    }
+    sendCount++;
+
+    /* Prepend 4-byte big-endian length prefix for TCP message framing.
+     * iPad reassembles using this prefix to handle large HEVC frames. */
+    uint32_t netLen = htonl((uint32_t)len);
+    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
+                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
+                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+
+    nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
         if (error) {
             os_log_error(wireless_log(), "Wireless input send error: %{public}@", error);
@@ -297,6 +314,13 @@ static const char *kInputPortStr = "14568";
 
 - (void)handleNewConnection:(nw_connection_t)connection {
     os_log(wireless_log(), "TLS wireless connection accepted from iPad");
+
+    /* Reject duplicate connections if we already have a live one */
+    if (_inputConnection && _isConnected) {
+        os_log(wireless_log(), "Already have a live connection -- rejecting duplicate");
+        nw_connection_cancel(connection);
+        return;
+    }
 
     /* Replace existing input connection */
     if (_inputConnection) {
@@ -372,57 +396,80 @@ static const char *kInputPortStr = "14568";
 
 - (void)establishMediaConnection:(nw_connection_t)tcpConnection {
     /*
-     * After the TLS TCP control connection is established, create a DTLS-encrypted
-     * UDP connection to the iPad's address for media frames.
+     * Create a DTLS-encrypted UDP LISTENER on the media port.
+     * The iPad connects to this port after its TCP connection is ready.
+     * Mac is the LISTENER, iPad is the CONNECTOR (same pattern as TCP).
      */
-    nw_path_t path = nw_connection_copy_current_path(tcpConnection);
-    if (!path) return;
-
-    nw_endpoint_t remoteEndpoint = nw_path_copy_effective_remote_endpoint(path);
-    if (!remoteEndpoint) return;
-
-    const char *host = nw_endpoint_get_hostname(remoteEndpoint);
-    if (!host) return;
-
-    nw_endpoint_t mediaEndpoint = nw_endpoint_create_host(host, kMediaPortStr);
+    if (_mediaListener) {
+        nw_listener_cancel(_mediaListener);
+        _mediaListener = nil;
+    }
 
     nw_parameters_t udpParams = [self createSecureUDPParameters];
     nw_parameters_set_include_peer_to_peer(udpParams, true);
+    nw_parameters_set_reuse_local_address(udpParams, true);
+    nw_parameters_set_local_endpoint(udpParams,
+        nw_endpoint_create_host("::", kMediaPortStr));
 
-    /* Bind to the same interface as the TCP connection */
-    __block nw_interface_t pathInterface = nil;
-    nw_path_enumerate_interfaces(path, ^bool(nw_interface_t interface) {
-        pathInterface = interface;
-        return false;
-    });
-    if (pathInterface) {
-        nw_parameters_require_interface(udpParams, pathInterface);
+    /* Bind to same interface as TCP */
+    nw_path_t path = nw_connection_copy_current_path(tcpConnection);
+    if (path) {
+        __block nw_interface_t pathInterface = nil;
+        nw_path_enumerate_interfaces(path, ^bool(nw_interface_t interface) {
+            pathInterface = interface;
+            return false;
+        });
+        if (pathInterface) {
+            nw_parameters_require_interface(udpParams, pathInterface);
+        }
     }
 
-    nw_connection_t mediaConn = nw_connection_create(mediaEndpoint, udpParams);
-    if (_mediaConnection) {
-        nw_connection_cancel(_mediaConnection);
-    }
-    _mediaConnection = mediaConn;
+    nw_listener_t mediaListener = nw_listener_create(udpParams);
+    _mediaListener = mediaListener;
 
-    nw_connection_set_queue(mediaConn, _transportQueue);
+    nw_listener_set_queue(mediaListener, _transportQueue);
 
     __weak WirelessTransport *weakSelf = self;
-    nw_connection_set_state_changed_handler(mediaConn, ^(nw_connection_state_t state,
-                                                          nw_error_t _Nullable error) {
-        if (state == nw_connection_state_ready) {
-            os_log(wireless_log(), "DTLS wireless media UDP connection ready");
-            WirelessTransport *self2 = weakSelf;
-            if (self2) {
-                [self2 scheduleMediaReceive:mediaConn];
-            }
-        } else if (state == nw_connection_state_failed) {
-            os_log_error(wireless_log(), "DTLS wireless media UDP connection failed: %{public}@",
+
+    nw_listener_set_state_changed_handler(mediaListener, ^(nw_listener_state_t state,
+                                                            nw_error_t _Nullable error) {
+        if (state == nw_listener_state_ready) {
+            os_log(wireless_log(), "DTLS media listener ready on port %{public}s", kMediaPortStr);
+        } else if (state == nw_listener_state_failed) {
+            os_log_error(wireless_log(), "DTLS media listener failed: %{public}@",
                          error ?: (nw_error_t)@"unknown");
         }
     });
 
-    nw_connection_start(mediaConn);
+    nw_listener_set_new_connection_handler(mediaListener, ^(nw_connection_t conn) {
+        WirelessTransport *self2 = weakSelf;
+        if (!self2) return;
+
+        os_log(wireless_log(), "DTLS media connection accepted from iPad");
+
+        if (self2->_mediaConnection) {
+            nw_connection_cancel(self2->_mediaConnection);
+        }
+        self2->_mediaConnection = conn;
+
+        nw_connection_set_queue(conn, self2->_transportQueue);
+        nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t cState,
+                                                         nw_error_t _Nullable cError) {
+            if (cState == nw_connection_state_ready) {
+                os_log(wireless_log(), "DTLS wireless media UDP connection ready");
+                WirelessTransport *self3 = weakSelf;
+                if (self3) {
+                    [self3 scheduleMediaReceive:conn];
+                }
+            } else if (cState == nw_connection_state_failed) {
+                os_log_error(wireless_log(), "DTLS wireless media connection failed: %{public}@",
+                             cError ?: (nw_error_t)@"unknown");
+            }
+        });
+        nw_connection_start(conn);
+    });
+
+    nw_listener_start(mediaListener);
 }
 
 #pragma mark - Private: Receive Loops
@@ -482,6 +529,10 @@ static const char *kInputPortStr = "14568";
 #pragma mark - Private: Teardown
 
 - (void)tearDownConnections {
+    if (_mediaListener) {
+        nw_listener_cancel(_mediaListener);
+        _mediaListener = nil;
+    }
     if (_mediaConnection) {
         nw_connection_cancel(_mediaConnection);
         _mediaConnection = nil;

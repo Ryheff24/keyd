@@ -12,8 +12,18 @@ static os_log_t sLog;
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     sLog = os_log_create("com.ryheff.keyd.remote.agent", "AppDelegate");
 
+    /* ---- Skip heavy initialization when running as XCTest host ---- */
+    if (NSClassFromString(@"XCTestCase") != nil ||
+        [NSProcessInfo processInfo].environment[@"XCTestConfigurationFilePath"] != nil) {
+        os_log(sLog, "Running as XCTest host -- skipping app initialization");
+        return;
+    }
+
     /* ---- No dock icon (RD-AGENT-01) ---- */
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+
+    /* ---- Prevent macOS from auto-terminating our menu-bar-only agent ---- */
+    [[NSProcessInfo processInfo] disableAutomaticTermination:@"Menu bar agent must stay running"];
 
     /* ---- Detect --test-mode flag (pattern from keyd v1.0) ---- */
     _testMode = [[NSProcessInfo processInfo].arguments containsObject:@"--test-mode"];
@@ -43,6 +53,9 @@ static os_log_t sLog;
     _sessionManager.onResolutionChanged = ^(uint32_t width, uint32_t height) {
         [weakBar updateResolution:width height:height];
     };
+    _sessionManager.onPermissionStatusChanged = ^(BOOL screenGranted, BOOL accessibilityGranted) {
+        [weakBar updatePermissionStatus];
+    };
 
     /* Wire StatusBarController actions back to SessionManager */
     __weak SessionManager *weakSession = _sessionManager;
@@ -52,12 +65,26 @@ static os_log_t sLog;
     _statusBar.onResetPairingRequested = ^{
         [weakSession resetPairing];
     };
+    __weak AppDelegate *weakSelf = self;
     _statusBar.onFixLoginItemRequested = ^{
-        [self registerLoginItem];
+        AppDelegate *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        os_log(sLog, "Fix Launch at Login requested from menu");
+        [strongSelf registerLoginItem];
     };
 
     /* ---- Start permission check flow ---- */
     [_sessionManager start];
+
+    /* ---- Test mode: auto-show QR for iPad auto-pair ---- */
+    if (_testMode) {
+        os_log(sLog, "Test mode: auto-showing QR (writes payload to /tmp/keydrd-test-qr.json)");
+        /* Delay slightly to ensure TLS identity is ready */
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            [self->_sessionManager showPairingQR];
+        });
+    }
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
@@ -70,6 +97,8 @@ static os_log_t sLog;
 - (void)registerLoginItem {
     if (@available(macOS 13.0, *)) {
         SMAppService *service = [SMAppService mainAppService];
+        os_log(sLog, "Login item current status before register: %ld", (long)service.status);
+
         NSError *error = nil;
         BOOL registered = [service registerAndReturnError:&error];
 
@@ -79,12 +108,19 @@ static os_log_t sLog;
         }
 
         /* Check status after registration per Pitfall 8 */
-        if (service.status != SMAppServiceStatusEnabled) {
-            os_log(sLog, "Login item registration may be stuck (status=%ld)",
-                   (long)service.status);
+        SMAppServiceStatus status = service.status;
+        if (status != SMAppServiceStatusEnabled) {
+            os_log(sLog, "Login item registration may be stuck (status=%ld)", (long)status);
+            if (status == SMAppServiceStatusRequiresApproval) {
+                os_log(sLog, "Login item requires user approval in System Settings > General > Login Items");
+                [[NSWorkspace sharedWorkspace] openURL:
+                    [NSURL URLWithString:@"x-apple.systempreferences:com.apple.LoginItems-Settings.extension"]];
+            }
         } else {
-            os_log(sLog, "Login item registered successfully");
+            os_log(sLog, "Login item registered successfully (status=enabled)");
         }
+    } else {
+        os_log_error(sLog, "Login item registration requires macOS 13.0+");
     }
 }
 

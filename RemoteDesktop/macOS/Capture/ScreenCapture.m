@@ -89,12 +89,17 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
         return;
     }
 
+    os_log(sc_log(), "startCapture: requesting shareable content (hasPermission=%{public}s, onPixelBuffer=%{public}s)",
+           [self hasPermission] ? "YES" : "NO",
+           self.onPixelBuffer ? "SET" : "nil");
+
     /* Fetch shareable content on background queue — can block 3-10s on Sequoia (Pitfall 1) */
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content, NSError * _Nullable error) {
             if (error || !content) {
-                os_log_error(sc_log(), "Failed to get shareable content: %{public}@",
-                             error ? error.localizedDescription : @"nil content");
+                os_log_error(sc_log(), "Failed to get shareable content: %{public}@ (error code: %ld)",
+                             error ? error.localizedDescription : @"nil content",
+                             (long)(error ? error.code : 0));
                 return;
             }
 
@@ -130,11 +135,16 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
     config.minimumFrameInterval = CMTimeMake(1, 120); /* RD-CAP-02: 120fps */
     config.queueDepth = 3;
     config.showsCursor = YES;
-    config.width = (NSUInteger)display.width;
-    config.height = (NSUInteger)display.height;
+    /* SCDisplay.width/height returns points. Use CGDisplay API for actual
+     * pixel dimensions to capture at full Retina resolution. */
+    size_t pixelWidth  = CGDisplayPixelsWide(display.displayID);
+    size_t pixelHeight = CGDisplayPixelsHigh(display.displayID);
+    config.width = pixelWidth;
+    config.height = pixelHeight;
 
-    os_log_info(sc_log(), "Setting up capture: %lux%lu @120fps BGRA",
-                (unsigned long)config.width, (unsigned long)config.height);
+    os_log_info(sc_log(), "Setting up capture: %lux%lu @120fps BGRA (display points: %lux%lu)",
+                (unsigned long)pixelWidth, (unsigned long)pixelHeight,
+                (unsigned long)display.width, (unsigned long)display.height);
 
     /* Create content filter with the display — no excluded apps */
     SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display
@@ -157,8 +167,8 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
         return;
     }
 
-    /* Initialize compressor: BGRA = 4 bytes/pixel */
-    size_t frameBytes = (size_t)(display.width * display.height * 4);
+    /* Initialize compressor: BGRA = 4 bytes/pixel at full Retina resolution */
+    size_t frameBytes = pixelWidth * pixelHeight * 4;
     if (frame_compressor_init(&self->_compressor, frameBytes) != 0) {
         os_log_error(sc_log(), "Failed to initialize frame compressor");
         _stream = nil;
@@ -167,15 +177,17 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
     _compressorInitialized = YES;
 
     /* Start capture */
+    os_log(sc_log(), "Starting SCStream capture (stream=%{public}p)", _stream);
     [_stream startCaptureWithCompletionHandler:^(NSError * _Nullable error) {
         if (error) {
-            os_log_error(sc_log(), "Failed to start capture: %{public}@",
-                         error.localizedDescription);
+            os_log_error(sc_log(), "Failed to start capture: %{public}@ (code=%ld, domain=%{public}@)",
+                         error.localizedDescription, (long)error.code,
+                         error.domain);
             self->_stream = nil;
             return;
         }
 
-        os_log_info(sc_log(), "Screen capture started successfully");
+        os_log(sc_log(), "Screen capture started successfully — waiting for first frame");
         self->_isCapturing = YES;
         self->_lastFrameTime = [NSDate timeIntervalSinceReferenceDate];
 
@@ -229,13 +241,48 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
         return;
     }
 
+    /*
+     * Check SCStreamFrameInfo status — SCStream delivers "idle" frames
+     * (no pixel data) when the screen hasn't changed. Only process
+     * frames with status == SCFrameStatusComplete.
+     */
+    CFArrayRef attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+    if (attachmentsArray && CFArrayGetCount(attachmentsArray) > 0) {
+        CFDictionaryRef dict = CFArrayGetValueAtIndex(attachmentsArray, 0);
+        CFNumberRef statusRef = NULL;
+        if (CFDictionaryGetValueIfPresent(dict,
+                                          SCStreamFrameInfoStatus,
+                                          (const void **)&statusRef)) {
+            int64_t status = 0;
+            CFNumberGetValue(statusRef, kCFNumberSInt64Type, &status);
+            if (status != SCFrameStatusComplete) {
+                /* Idle/blank/suspended frame — no pixel data, skip silently */
+                static int idleCount = 0;
+                if (idleCount < 3) {
+                    os_log_info(sc_log(), "Skipping non-complete frame (status=%lld, idle_count=%d)",
+                                status, idleCount);
+                }
+                idleCount++;
+                return;
+            }
+        }
+    }
+
+    /* Log first few complete frames */
+    static int totalFrameCount = 0;
+    if (totalFrameCount < 5) {
+        os_log(sc_log(), "didOutputSampleBuffer: complete frame #%d (onPixelBuffer=%{public}s)",
+               totalFrameCount, self.onPixelBuffer ? "SET" : "nil");
+    }
+    totalFrameCount++;
+
     /* Update watchdog timestamp */
     _lastFrameTime = [NSDate timeIntervalSinceReferenceDate];
 
     /* Get pixel buffer and IOSurface */
     CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!pixelBuffer) {
-        os_log_error(sc_log(), "Nil pixel buffer from sample buffer");
+        os_log_error(sc_log(), "Nil pixel buffer from COMPLETE frame — this should not happen");
         return;
     }
 
@@ -251,6 +298,20 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
      * compress_frame returns. This prevents IOSurface recycling.
      */
     CFRetain(sampleBuffer);
+
+    /* HEVC mode: deliver raw pixel buffer for hardware encoding.
+     * Skip LZ4 compression entirely — the HEVC encoder handles the frame. */
+    if (self.onPixelBuffer) {
+        static int hevcFrameCount = 0;
+        if (hevcFrameCount < 3) {
+            os_log(sc_log(), "onPixelBuffer: delivering frame %d to HEVC encoder", hevcFrameCount);
+        }
+        hevcFrameCount++;
+        CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+        self.onPixelBuffer(pixelBuffer, pts);
+        CFRelease(sampleBuffer);
+        return;
+    }
 
     dispatch_async(_compressQueue, ^{
         if (!self->_compressorInitialized || !self->_isCapturing) {

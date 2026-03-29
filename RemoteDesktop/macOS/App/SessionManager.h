@@ -44,6 +44,7 @@ typedef NS_ENUM(NSInteger, SessionState) {
 @property (nonatomic, copy, nullable) void (^onModeChanged)(BOOL isEco);
 @property (nonatomic, copy, nullable) void (^onResolutionChanged)(uint32_t width, uint32_t height);
 @property (nonatomic, copy, nullable) void (^onSessionStateChanged)(SessionState state);
+@property (nonatomic, copy, nullable) void (^onPermissionStatusChanged)(BOOL screenGranted, BOOL accessibilityGranted);
 
 - (instancetype)initWithTestMode:(BOOL)testMode;
 

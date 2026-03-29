@@ -1,0 +1,272 @@
+#!/bin/bash
+# End-to-end test harness: builds both Mac + iPad apps, launches them in test mode,
+# and captures structured test results from the iPad console.
+#
+# Usage: ./RemoteDesktop/scripts/run-e2e-tests.sh [timeout_seconds]
+# Default timeout: 90 seconds. Exit code 0 = all tests passed, 1 = failures.
+#
+# Prerequisites:
+#   - iPad physically connected via USB or on same Wi-Fi network
+#   - Screen Recording and Accessibility permissions granted for RemoteDesktopAgent
+#
+# What happens:
+#   1. Build Mac agent + iPad app
+#   2. Kill existing RemoteDesktopAgent
+#   3. Generate fresh TLS identity (PKCS12)
+#   4. Launch Mac agent with --test-mode (auto-shows QR, writes payload to /tmp)
+#   5. Install + launch iPad app with --test-mode (auto-pairs, runs test suite)
+#   6. Capture iPad console output, parse [TEST] lines
+#   7. Print summary and exit
+
+set -euo pipefail
+
+# ---- Configuration ----
+IPAD_DEVICE_ID="00000000-0000-0000-0000-00000000000A"
+TIMEOUT="${1:-90}"
+WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
+IPAD_SCHEME="RemoteDesktopApp"
+MAC_PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
+MAC_SCHEME="RemoteDesktopAgent"
+BUNDLE_ID="com.ryheff.keyd.remote.app"
+MAC_SUBSYSTEM="com.ryheff.keyd.remote.agent"
+DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
+LOG_FILE="/tmp/e2e-results.log"
+MAC_LOG_FILE="/tmp/keyd-e2e-mac.log"
+
+cd "$(git rev-parse --show-toplevel)"
+
+# ---- Lockfile (prevent concurrent runs) ----
+LOCKFILE="/tmp/keyd-e2e-test.lock"
+if [ -f "$LOCKFILE" ]; then
+  OLD_PID=$(cat "$LOCKFILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "Killing previous run-e2e-tests.sh (PID $OLD_PID)"
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$LOCKFILE"
+fi
+echo $$ > "$LOCKFILE"
+
+# ---- Cleanup ----
+MAC_PID=""
+IPAD_PID=""
+MAC_LOG_PID=""
+
+cleanup() {
+  echo ""
+  echo "=== Cleaning up ==="
+  # SIGTERM first, then SIGKILL after 2s if still alive
+  for pid in "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID"; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done
+  sleep 2
+  for pid in "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID"; do
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  done
+  # Don't wait — processes are killed, just proceed
+  rm -f "$LOCKFILE"
+  rm -f /tmp/keydrd-test-qr.json
+}
+trap cleanup EXIT
+
+# ---- Clean state ----
+rm -f "$LOG_FILE" "$MAC_LOG_FILE" /tmp/keydrd-test-qr.json
+
+# Write progress to log file so user can monitor it
+log_progress() { echo "$1"; echo "$1" >> "$LOG_FILE"; }
+
+log_progress "============================================"
+log_progress "  keyd-rd End-to-End Test Harness"
+log_progress "  Timeout: ${TIMEOUT}s"
+log_progress "============================================"
+log_progress ""
+
+# ---- Step 1: Build Mac agent ----
+log_progress "=== [1/6] Building Mac agent ==="
+BUILD_OUT=$(xcodebuild \
+  -project "$MAC_PROJECT" \
+  -scheme "$MAC_SCHEME" \
+  -destination "platform=macOS,arch=arm64" \
+  -configuration Debug \
+  build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
+log_progress "$BUILD_OUT"
+log_progress ""
+
+# ---- Step 2: Build iPad app ----
+log_progress "=== [2/6] Building iPad app ==="
+BUILD_OUT=$(xcodebuild \
+  -workspace "$WORKSPACE" \
+  -scheme "$IPAD_SCHEME" \
+  -destination "id=$IPAD_DEVICE_ID" \
+  -configuration Debug \
+  build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
+log_progress "$BUILD_OUT"
+log_progress ""
+
+# ---- Step 3: Kill existing agents, generate TLS identity ----
+log_progress "=== [3/6] Preparing Mac agent ==="
+pkill -f "RemoteDesktopAgent" 2>/dev/null || true
+sleep 1
+
+# Delete old keydrd TLS items from login keychain to avoid ACL prompts
+security delete-certificate -c "keydrd-agent" 2>/dev/null || true
+security delete-identity -c "keydrd-agent" 2>/dev/null || true
+
+# Generate fresh TLS identity (PKCS12) for the pairing handshake
+CERT_DIR="/tmp/keydrd-tls"
+mkdir -p "$CERT_DIR"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
+  -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
+openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
+  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd 2>/dev/null
+rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
+log_progress "TLS identity generated"
+log_progress ""
+
+# ---- Step 4: Launch Mac agent in test mode ----
+log_progress "=== [4/6] Launching Mac agent in test mode ==="
+MAC_APP=$(find "$DERIVED_DATA" -path "*RemoteDesktopAgent*" -name "RemoteDesktopAgent.app" -path "*/Debug/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+if [ -z "$MAC_APP" ]; then
+  echo "ERROR: Could not find built Mac .app bundle"
+  exit 1
+fi
+
+"$MAC_APP/Contents/MacOS/RemoteDesktopAgent" --test-mode &
+MAC_PID=$!
+echo "Mac agent PID: $MAC_PID"
+
+# Stream Mac logs in background (capture all agent subsystems including ScreenCapture's com.keydrd)
+log stream --predicate "subsystem == '$MAC_SUBSYSTEM' OR subsystem BEGINSWITH 'com.keydrd'" --style compact > "$MAC_LOG_FILE" 2>&1 &
+MAC_LOG_PID=$!
+
+# Wait for Mac to be ready and write the QR payload file
+echo "Waiting for Mac to write QR payload..."
+QR_PAYLOAD_B64=""
+for i in $(seq 1 15); do
+  if [ -f /tmp/keydrd-test-qr.json ]; then
+    # Base64-encode the QR payload (single line, no wrapping) to pass to iPad
+    QR_PAYLOAD_B64=$(base64 -i /tmp/keydrd-test-qr.json | tr -d '\n')
+    echo "QR payload ready (waited ${i}s, b64 length: ${#QR_PAYLOAD_B64})"
+    break
+  fi
+  if [ "$i" -eq 15 ]; then
+    echo "ERROR: Mac did not write QR payload within 15s"
+    echo "--- Mac logs ---"
+    tail -20 "$MAC_LOG_FILE" 2>/dev/null
+    exit 1
+  fi
+  sleep 1
+done
+echo ""
+
+# ---- Step 5: Install and launch iPad app ----
+log_progress "=== [5/6] Installing iPad app ==="
+IPAD_APP=$(find "$DERIVED_DATA" -path "*RemoteDesktop*" -name "RemoteDesktopApp.app" -path "*/Debug-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+if [ -z "$IPAD_APP" ]; then
+  echo "ERROR: Could not find built iPad .app bundle"
+  exit 1
+fi
+
+xcrun devicectl device install app --device "$IPAD_DEVICE_ID" "$IPAD_APP" 2>&1 | grep -E "(bundleID|error|ERROR)" || true
+echo ""
+
+log_progress "=== [6/6] Launching iPad in test mode ==="
+# Pass the QR payload as a launch argument (--qr-payload <base64>)
+# iPad reads this instead of scanning a physical QR code
+xcrun devicectl device process launch \
+  --device "$IPAD_DEVICE_ID" \
+  --terminate-existing \
+  --console \
+  "$BUNDLE_ID" \
+  -- --test-mode --qr-payload "$QR_PAYLOAD_B64" \
+  2>&1 | tee -a "$LOG_FILE" &
+IPAD_PID=$!
+
+# ---- Wait for test results ----
+echo ""
+log_progress "=== Waiting for test results (timeout: ${TIMEOUT}s) ==="
+START=$(date +%s)
+while true; do
+  NOW=$(date +%s)
+  ELAPSED=$((NOW - START))
+
+  if [ $ELAPSED -ge "$TIMEOUT" ]; then
+    echo ""
+    echo "TIMEOUT after ${TIMEOUT}s -- killing test"
+    break
+  fi
+
+  if grep -q "\[TEST\] COMPLETE:" "$LOG_FILE" 2>/dev/null; then
+    # Give a moment for any remaining output
+    sleep 1
+    break
+  fi
+
+  sleep 1
+done
+
+# ---- Parse and display results ----
+echo ""
+echo "============================================"
+echo "  TEST RESULTS"
+echo "============================================"
+echo ""
+
+if [ -f "$LOG_FILE" ]; then
+  # Extract [TEST] lines
+  grep "\[TEST\]" "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+    # Color output: green for PASS, red for FAIL, yellow for others
+    if echo "$line" | grep -q "\[TEST\] PASS:"; then
+      printf "\033[32m%s\033[0m\n" "$line"
+    elif echo "$line" | grep -q "\[TEST\] FAIL:"; then
+      printf "\033[31m%s\033[0m\n" "$line"
+    elif echo "$line" | grep -q "\[TEST\] COMPLETE:"; then
+      printf "\033[1m%s\033[0m\n" "$line"
+    else
+      echo "$line"
+    fi
+  done
+
+  PASSED=$(grep -c "\[TEST\] PASS:" "$LOG_FILE" 2>/dev/null) || PASSED=0
+  FAILED=$(grep -c "\[TEST\] FAIL:" "$LOG_FILE" 2>/dev/null) || FAILED=0
+  TOTAL=$((PASSED + FAILED))
+
+  echo ""
+  echo "--------------------------------------------"
+  printf "  Passed: \033[32m%s\033[0m\n" "$PASSED"
+  printf "  Failed: \033[31m%s\033[0m\n" "$FAILED"
+  echo "  Total:  $TOTAL"
+  echo "--------------------------------------------"
+
+  if [ "$FAILED" -gt 0 ]; then
+    echo ""
+    echo "--- Mac agent logs (capture + transport + streaming) ---"
+    grep -i "capture\|HEVC\|onPixelBuffer\|onEncoded\|sendMedia\|sendInput.*sent\|STREAMING\|CONNECTING\|media.*ready\|media.*fail\|DTLS" "$MAC_LOG_FILE" 2>/dev/null | tail -30 || echo "(no relevant Mac logs)"
+    echo ""
+    echo "--- Mac agent logs (last 30 lines) ---"
+    tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
+    echo ""
+    exit 1
+  fi
+
+  if [ "$TOTAL" -eq 0 ]; then
+    echo ""
+    echo "WARNING: No test output found"
+    echo ""
+    echo "--- iPad console (last 50 lines) ---"
+    tail -50 "$LOG_FILE" 2>/dev/null || echo "(no output)"
+    echo ""
+    echo "--- Mac agent logs (last 30 lines) ---"
+    tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
+    exit 1
+  fi
+else
+  echo "ERROR: No iPad log output captured"
+  exit 1
+fi
+
+echo ""
+echo "All tests passed."
+exit 0

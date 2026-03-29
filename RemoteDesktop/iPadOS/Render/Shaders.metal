@@ -26,11 +26,14 @@ vertex VertexOut vertexShader(uint vertexID [[vertex_id]],
         float2(1.0, 1.0), // bottom-right
     };
 
+    // Flip V to correct for NDC Y-up vs texture Y-down mismatch:
+    // NDC bottom (unit y=0) → texture bottom (v=1)
+    // NDC top    (unit y=1) → texture top    (v=0)
     float2 texCoords[4] = {
-        float2(0.0, 0.0),
-        float2(1.0, 0.0),
-        float2(0.0, 1.0),
-        float2(1.0, 1.0),
+        float2(0.0, 1.0), // NDC bottom-left  → tex bottom-left
+        float2(1.0, 1.0), // NDC bottom-right → tex bottom-right
+        float2(0.0, 0.0), // NDC top-left     → tex top-left
+        float2(1.0, 0.0), // NDC top-right    → tex top-right
     };
 
     float2 unit = unitPositions[vertexID];

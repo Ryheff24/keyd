@@ -244,6 +244,22 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     os_log(sLog, "QR pairing payload generated (length=%lu)", (unsigned long)payload.length);
     os_log_debug(sLog, "QR payload: %{public}@", payload);
 
+    /* In test mode, write the QR payload to a file for the iPad to read
+     * instead of requiring a physical QR scan. */
+    if (_testMode) {
+        NSError *writeError = nil;
+        [payload writeToFile:@"/tmp/keydrd-test-qr.json"
+                  atomically:YES
+                    encoding:NSUTF8StringEncoding
+                       error:&writeError];
+        if (writeError) {
+            os_log_error(sLog, "Test mode: failed to write QR payload to file: %{public}@",
+                         writeError.localizedDescription);
+        } else {
+            os_log(sLog, "Test mode: QR payload written to /tmp/keydrd-test-qr.json");
+        }
+    }
+
     /* Generate QR code image using CIFilter */
     NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
     CIFilter *qrFilter = [CIFilter filterWithName:@"CIQRCodeGenerator"];
@@ -462,6 +478,24 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
         _compressorInitialized = NO;
     }
 
+    /* Ensure display dimensions are available — they may not be set yet
+     * if switchToHEVCMode fires from transport FSM effects before
+     * sendSessionHandshake runs in onTransportConnected. */
+    if (_captureWidth == 0 || _captureHeight == 0) {
+        CGDirectDisplayID mainDisplay = CGMainDisplayID();
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(mainDisplay);
+        if (mode) {
+            _captureWidth = (uint32_t)CGDisplayModeGetPixelWidth(mode);
+            _captureHeight = (uint32_t)CGDisplayModeGetPixelHeight(mode);
+            size_t logicalWidth = CGDisplayModeGetWidth(mode);
+            _captureScale = (logicalWidth > 0) ? (float)_captureWidth / (float)logicalWidth : 2.0f;
+            CGDisplayModeRelease(mode);
+            os_log(sLog, "HEVC: resolved display dimensions %ux%u @%.1fx",
+                   _captureWidth, _captureHeight, _captureScale);
+        }
+    }
+
+    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps 20Mbps", _captureWidth, _captureHeight);
     [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:20000000];
 
     /* Reconfigure frame delivery for HEVC */
@@ -487,14 +521,42 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     os_log(sLog, "Transport connected -- sending handshake and starting capture");
     [self transitionTo:SESSION_STREAMING];
 
-    /* Send session handshake */
+    /* Send session handshake (also sets _captureWidth/_captureHeight) */
     [self sendSessionHandshake];
+
+    /* Re-start HEVC encoder with correct dimensions if it was started with 0x0
+     * (transport FSM effects fire before onTransportConnected) */
+    if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
+        os_log(sLog, "HEVC encoder already active — restarting with correct dimensions %ux%u",
+               _captureWidth, _captureHeight);
+        [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:20000000];
+    } else if (!_hevcEncoder.isActive) {
+        os_log(sLog, "HEVC encoder not active — check switchToHEVCMode");
+    }
 
     /* Set up frame delivery */
     [self configureFrameDelivery];
 
     /* Start capture */
     [_capture startCapture];
+
+    /* In test mode, briefly flash a window to force SCStream to deliver
+     * at least one complete frame (static desktops only produce idle frames). */
+    if (_testMode) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSWindow *flash = [[NSWindow alloc] initWithContentRect:NSMakeRect(100, 100, 200, 200)
+                                                          styleMask:NSWindowStyleMaskBorderless
+                                                            backing:NSBackingStoreBuffered
+                                                              defer:NO];
+            flash.backgroundColor = [NSColor redColor];
+            flash.level = NSFloatingWindowLevel;
+            [flash orderFront:nil];
+            os_log(sLog, "Test mode: flashed screen change window to force SCStream complete frame");
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [flash close];
+            });
+        });
+    }
 
     /* Start latency probe timer (every 1 second) */
     [self startLatencyProbeTimer];
@@ -546,12 +608,13 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 - (void)configureFrameDelivery {
     __weak SessionManager *weakSelf = self;
 
+    /* LZ4 compressed frame callback (wired/USB mode) */
     _capture.onFrame = ^(CompressOutput *output) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
 
-        if (strongSelf.isEcoMode && strongSelf.hevcEncoder.isActive) {
-            /* HEVC mode: encoded NAL from HEVCEncoder handles its own callback */
+        if (strongSelf->_hevcEncoder.isActive) {
+            /* HEVC mode: frames sent via onEncodedFrame callback instead */
             return;
         }
 
@@ -568,10 +631,26 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
         free(packet);
     };
 
+    /* Raw pixel buffer callback — feeds HEVC encoder when active */
+    _capture.onPixelBuffer = ^(CVPixelBufferRef pixelBuffer, CMTime timestamp) {
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
+        if (!strongSelf->_hevcEncoder.isActive) return;
+
+        [strongSelf->_hevcEncoder encodePixelBuffer:pixelBuffer timestamp:timestamp];
+    };
+
     /* HEVC encoder output callback */
     _hevcEncoder.onEncodedFrame = ^(const void *data, size_t len, MediaFrameHeader header) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
+
+        static int hevcSentCount = 0;
+        if (hevcSentCount < 3) {
+            os_log(sLog, "HEVC onEncodedFrame: seq=%u len=%zu flags=0x%02x, sending via TCP",
+                   header.seq, len, header.flags);
+        }
+        hevcSentCount++;
 
         size_t totalLen = sizeof(MediaFrameHeader) + len;
         uint8_t *packet = malloc(totalLen);
@@ -592,7 +671,9 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     if (_usbTransport.isConnected) {
         [_usbTransport sendMediaFrame:data length:len];
     } else if (_wirelessTransport.isConnected) {
-        [_wirelessTransport sendMediaFrame:data length:len];
+        /* HEVC frames can exceed UDP MTU (~65KB). Send via TCP for wireless.
+         * LZ4 delta frames are small enough for UDP but HEVC keyframes are not. */
+        [_wirelessTransport sendInputEvent:data length:len];
     }
 }
 

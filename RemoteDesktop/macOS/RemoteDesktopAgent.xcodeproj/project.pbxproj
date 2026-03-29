@@ -3,15 +3,13 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 55;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		A1000001000000000000000A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000000F /* main.m */; };
 		A1000002000000000000000A /* lz4.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000000F /* lz4.c */; };
 		A1000003000000000000000A /* delta.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000003000000000000000F /* delta.c */; };
-		A1000020000000000000000A /* FrameCompressor.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000020000000000000000F /* FrameCompressor.c */; };
-		A1000022000000000000000A /* ScreenCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000022000000000000000F /* ScreenCapture.m */; };
 		A1000010000000000000000A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000010000000000000000F /* Cocoa.framework */; };
 		A1000011000000000000000A /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000011000000000000000F /* ScreenCaptureKit.framework */; };
 		A1000012000000000000000A /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000012000000000000000F /* VideoToolbox.framework */; };
@@ -20,6 +18,9 @@
 		A1000015000000000000000A /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000015000000000000000F /* IOSurface.framework */; };
 		A1000016000000000000000A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000016000000000000000F /* Network.framework */; };
 		A1000017000000000000000A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000017000000000000000F /* Security.framework */; };
+		A1000018000000000000000A /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000018000000000000000F /* ServiceManagement.framework */; };
+		A1000020000000000000000A /* FrameCompressor.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000020000000000000000F /* FrameCompressor.c */; };
+		A1000022000000000000000A /* ScreenCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000022000000000000000F /* ScreenCapture.m */; };
 		A1000024000000000000000A /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000024000000000000000F /* libz.tbd */; };
 		A1000030000000000000000A /* TransportFSM.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000030000000000000000F /* TransportFSM.c */; };
 		A1000032000000000000000A /* USBNetworkTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000032000000000000000F /* USBNetworkTransport.m */; };
@@ -29,15 +30,32 @@
 		A1000060000000000000000A /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000060000000000000000F /* AppDelegate.m */; };
 		A1000062000000000000000A /* SessionManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000062000000000000000F /* SessionManager.m */; };
 		A1000064000000000000000A /* StatusBarController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000064000000000000000F /* StatusBarController.m */; };
-		A1000018000000000000000A /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000018000000000000000F /* ServiceManagement.framework */; };
+/* -- Test target build files -- */
+		B1000001000000000000000A /* ProtocolTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000000000F /* ProtocolTests.m */; };
+		B1000002000000000000000A /* CompressionTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000002000000000000000F /* CompressionTests.m */; };
+		B1000003000000000000000A /* TransportTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000003000000000000000F /* TransportTests.m */; };
+		B1000004000000000000000A /* PairingTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000004000000000000000F /* PairingTests.m */; };
+		B1000005000000000000000A /* PipelineTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000005000000000000000F /* PipelineTests.m */; };
+		B1000006000000000000000A /* E2ETests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000006000000000000000F /* E2ETests.m */; };
+		B1000007000000000000000A /* WireFormatTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000007000000000000000F /* WireFormatTests.m */; };
+		B1000003000000000000000A /* lz4.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000000F /* lz4.c */; };
+		B1000004000000000000000A /* delta.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000003000000000000000F /* delta.c */; };
+		B1000005000000000000000A /* FrameCompressor.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000020000000000000000F /* FrameCompressor.c */; };
+		B1000010000000000000000A /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000013000000000000000F /* CoreMedia.framework */; };
+		B1000011000000000000000A /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000014000000000000000F /* CoreVideo.framework */; };
+		B1000012000000000000000A /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000015000000000000000F /* IOSurface.framework */; };
+		B1000013000000000000000A /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000024000000000000000F /* libz.tbd */; };
+		B1AA0003000000000000000A /* TransportTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000003000000000000000F /* TransportTests.m */; };
+		B1AA0004000000000000000A /* PairingTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000004000000000000000F /* PairingTests.m */; };
+		B1AA0005000000000000000A /* PipelineTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000005000000000000000F /* PipelineTests.m */; };
+		B1AA0006000000000000000A /* E2ETests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000006000000000000000F /* E2ETests.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		A10000FF000000000000000F /* RemoteDesktopAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemoteDesktopAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000001000000000000000F /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		A1000002000000000000000F /* lz4.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = lz4.c; path = ../Shared/lz4.c; sourceTree = "<group>"; };
-		A1000004000000000000000F /* lz4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = lz4.h; path = ../Shared/lz4.h; sourceTree = "<group>"; };
 		A1000003000000000000000F /* delta.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = delta.c; path = ../Shared/delta.c; sourceTree = "<group>"; };
+		A1000004000000000000000F /* lz4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = lz4.h; path = ../Shared/lz4.h; sourceTree = "<group>"; };
 		A1000005000000000000000F /* delta.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = delta.h; path = ../Shared/delta.h; sourceTree = "<group>"; };
 		A1000006000000000000000F /* protocol.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = protocol.h; path = ../Shared/protocol.h; sourceTree = "<group>"; };
 		A1000007000000000000000F /* crypto.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = crypto.h; path = ../Shared/crypto.h; sourceTree = "<group>"; };
@@ -51,6 +69,7 @@
 		A1000015000000000000000F /* IOSurface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOSurface.framework; path = System/Library/Frameworks/IOSurface.framework; sourceTree = SDKROOT; };
 		A1000016000000000000000F /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		A1000017000000000000000F /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		A1000018000000000000000F /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		A1000020000000000000000F /* FrameCompressor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = FrameCompressor.c; sourceTree = "<group>"; };
 		A1000021000000000000000F /* FrameCompressor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FrameCompressor.h; sourceTree = "<group>"; };
 		A1000022000000000000000F /* ScreenCapture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ScreenCapture.m; sourceTree = "<group>"; };
@@ -72,7 +91,15 @@
 		A1000063000000000000000F /* SessionManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SessionManager.h; sourceTree = "<group>"; };
 		A1000064000000000000000F /* StatusBarController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = StatusBarController.m; sourceTree = "<group>"; };
 		A1000065000000000000000F /* StatusBarController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = StatusBarController.h; sourceTree = "<group>"; };
-		A1000018000000000000000F /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
+		A10000FF000000000000000F /* RemoteDesktopAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemoteDesktopAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000001000000000000000F /* ProtocolTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ProtocolTests.m; sourceTree = "<group>"; };
+		B1000002000000000000000F /* CompressionTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CompressionTests.m; sourceTree = "<group>"; };
+		B1000003000000000000000F /* TransportTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TransportTests.m; sourceTree = "<group>"; };
+		B1000004000000000000000F /* PairingTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PairingTests.m; sourceTree = "<group>"; };
+		B1000005000000000000000F /* PipelineTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PipelineTests.m; sourceTree = "<group>"; };
+		B1000006000000000000000F /* E2ETests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = E2ETests.m; sourceTree = "<group>"; };
+		B1000007000000000000000F /* WireFormatTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WireFormatTests.m; sourceTree = "<group>"; };
+		B10000FF000000000000000F /* RemoteDesktopAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemoteDesktopAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,20 +120,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B10000F1000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1000010000000000000000A /* CoreMedia.framework in Frameworks */,
+				B1000011000000000000000A /* CoreVideo.framework in Frameworks */,
+				B1000012000000000000000A /* IOSurface.framework in Frameworks */,
+				B1000013000000000000000A /* libz.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A10000E0000000000000000G /* = root = */ = {
+		A10000E0000000000000000G = {
 			isa = PBXGroup;
 			children = (
-				A10000E1000000000000000G /* RemoteDesktopAgent */,
+				A10000E1000000000000000G /* . */,
 				A10000E2000000000000000G /* Shared */,
+				B10000ED000000000000000G /* Tests */,
 				A10000E3000000000000000G /* Frameworks */,
 				A10000E4000000000000000G /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		A10000E1000000000000000G /* RemoteDesktopAgent */ = {
+		A10000E1000000000000000G /* . */ = {
 			isa = PBXGroup;
 			children = (
 				A1000001000000000000000F /* main.m */,
@@ -120,84 +159,6 @@
 				A10000E5000000000000000G /* Resources */,
 			);
 			path = .;
-			sourceTree = "<group>";
-		};
-		A10000EB000000000000000G /* App */ = {
-			isa = PBXGroup;
-			children = (
-				A1000061000000000000000F /* AppDelegate.h */,
-				A1000060000000000000000F /* AppDelegate.m */,
-				A1000063000000000000000F /* SessionManager.h */,
-				A1000062000000000000000F /* SessionManager.m */,
-			);
-			path = App;
-			sourceTree = "<group>";
-		};
-		A10000EC000000000000000G /* MenuBar */ = {
-			isa = PBXGroup;
-			children = (
-				A1000065000000000000000F /* StatusBarController.h */,
-				A1000064000000000000000F /* StatusBarController.m */,
-			);
-			path = MenuBar;
-			sourceTree = "<group>";
-		};
-		A10000EA000000000000000G /* Pairing */ = {
-			isa = PBXGroup;
-			children = (
-				A1000051000000000000000F /* PairingManager.h */,
-				A1000050000000000000000F /* PairingManager.m */,
-			);
-			path = Pairing;
-			sourceTree = "<group>";
-		};
-		A10000E8000000000000000G /* Transport */ = {
-			isa = PBXGroup;
-			children = (
-				A1000031000000000000000F /* TransportFSM.h */,
-				A1000030000000000000000F /* TransportFSM.c */,
-				A1000033000000000000000F /* USBNetworkTransport.h */,
-				A1000032000000000000000F /* USBNetworkTransport.m */,
-				A1000035000000000000000F /* WirelessTransport.h */,
-				A1000034000000000000000F /* WirelessTransport.m */,
-			);
-			path = Transport;
-			sourceTree = "<group>";
-		};
-		A10000E6000000000000000G /* Compress */ = {
-			isa = PBXGroup;
-			children = (
-				A1000021000000000000000F /* FrameCompressor.h */,
-				A1000020000000000000000F /* FrameCompressor.c */,
-			);
-			path = Compress;
-			sourceTree = "<group>";
-		};
-		A10000E7000000000000000G /* Capture */ = {
-			isa = PBXGroup;
-			children = (
-				A1000023000000000000000F /* ScreenCapture.h */,
-				A1000022000000000000000F /* ScreenCapture.m */,
-			);
-			path = Capture;
-			sourceTree = "<group>";
-		};
-		A10000E9000000000000000G /* Encode */ = {
-			isa = PBXGroup;
-			children = (
-				A1000041000000000000000F /* HEVCEncoder.h */,
-				A1000040000000000000000F /* HEVCEncoder.m */,
-			);
-			path = Encode;
-			sourceTree = "<group>";
-		};
-		A10000E5000000000000000G /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				A1000008000000000000000F /* Info.plist */,
-				A1000009000000000000000F /* RemoteDesktopAgent.entitlements */,
-			);
-			path = Resources;
 			sourceTree = "<group>";
 		};
 		A10000E2000000000000000G /* Shared */ = {
@@ -234,8 +195,101 @@
 			isa = PBXGroup;
 			children = (
 				A10000FF000000000000000F /* RemoteDesktopAgent.app */,
+				B10000FF000000000000000F /* RemoteDesktopAgentTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B10000ED000000000000000G /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				B1000001000000000000000F /* ProtocolTests.m */,
+				B1000002000000000000000F /* CompressionTests.m */,
+				B1000003000000000000000F /* TransportTests.m */,
+				B1000004000000000000000F /* PairingTests.m */,
+				B1000005000000000000000F /* PipelineTests.m */,
+				B1000006000000000000000F /* E2ETests.m */,
+				B1000007000000000000000F /* WireFormatTests.m */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		A10000E5000000000000000G /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A1000008000000000000000F /* Info.plist */,
+				A1000009000000000000000F /* RemoteDesktopAgent.entitlements */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A10000E6000000000000000G /* Compress */ = {
+			isa = PBXGroup;
+			children = (
+				A1000021000000000000000F /* FrameCompressor.h */,
+				A1000020000000000000000F /* FrameCompressor.c */,
+			);
+			path = Compress;
+			sourceTree = "<group>";
+		};
+		A10000E7000000000000000G /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				A1000023000000000000000F /* ScreenCapture.h */,
+				A1000022000000000000000F /* ScreenCapture.m */,
+			);
+			path = Capture;
+			sourceTree = "<group>";
+		};
+		A10000E8000000000000000G /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				A1000031000000000000000F /* TransportFSM.h */,
+				A1000030000000000000000F /* TransportFSM.c */,
+				A1000033000000000000000F /* USBNetworkTransport.h */,
+				A1000032000000000000000F /* USBNetworkTransport.m */,
+				A1000035000000000000000F /* WirelessTransport.h */,
+				A1000034000000000000000F /* WirelessTransport.m */,
+			);
+			path = Transport;
+			sourceTree = "<group>";
+		};
+		A10000E9000000000000000G /* Encode */ = {
+			isa = PBXGroup;
+			children = (
+				A1000041000000000000000F /* HEVCEncoder.h */,
+				A1000040000000000000000F /* HEVCEncoder.m */,
+			);
+			path = Encode;
+			sourceTree = "<group>";
+		};
+		A10000EA000000000000000G /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				A1000051000000000000000F /* PairingManager.h */,
+				A1000050000000000000000F /* PairingManager.m */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		A10000EB000000000000000G /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A1000061000000000000000F /* AppDelegate.h */,
+				A1000060000000000000000F /* AppDelegate.m */,
+				A1000063000000000000000F /* SessionManager.h */,
+				A1000062000000000000000F /* SessionManager.m */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A10000EC000000000000000G /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				A1000065000000000000000F /* StatusBarController.h */,
+				A1000064000000000000000F /* StatusBarController.m */,
+			);
+			path = MenuBar;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -258,7 +312,42 @@
 			productReference = A10000FF000000000000000F /* RemoteDesktopAgent.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B10000FE000000000000000T /* RemoteDesktopAgentTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B10000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopAgentTests" */;
+			buildPhases = (
+				B10000F0000000000000000B /* Sources */,
+				B10000F1000000000000000B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B10000DE000000000000000D /* PBXTargetDependency */,
+			);
+			name = RemoteDesktopAgentTests;
+			productName = RemoteDesktopAgentTests;
+			productReference = B10000FF000000000000000F /* RemoteDesktopAgentTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		B10000CP000000000000000P /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000FD000000000000000P /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000FE000000000000000T;
+			remoteInfo = RemoteDesktopAgent;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		B10000DE000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000FE000000000000000T /* RemoteDesktopAgent */;
+			targetProxy = B10000CP000000000000000P /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		A10000FD000000000000000P /* Project object */ = {
@@ -275,12 +364,13 @@
 				en,
 				Base,
 			);
-			mainGroup = A10000E0000000000000000G /* = root = */;
+			mainGroup = A10000E0000000000000000G;
 			productRefGroup = A10000E4000000000000000G /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				A10000FE000000000000000T /* RemoteDesktopAgent */,
+				B10000FE000000000000000T /* RemoteDesktopAgentTests */,
 			);
 		};
 /* End PBXProject section */
@@ -313,6 +403,20 @@
 				A1000060000000000000000A /* AppDelegate.m in Sources */,
 				A1000062000000000000000A /* SessionManager.m in Sources */,
 				A1000064000000000000000A /* StatusBarController.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000F0000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1000001000000000000000A /* ProtocolTests.m in Sources */,
+				B1000002000000000000000A /* CompressionTests.m in Sources */,
+				B1AA0003000000000000000A /* TransportTests.m in Sources */,
+				B1AA0004000000000000000A /* PairingTests.m in Sources */,
+				B1AA0005000000000000000A /* PipelineTests.m in Sources */,
+				B1AA0006000000000000000A /* E2ETests.m in Sources */,
+				B1000007000000000000000A /* WireFormatTests.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -426,10 +530,18 @@
 		A10000D3000000000000000D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = Resources/RemoteDesktopAgent.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/../Shared",
 					"$(SRCROOT)/App",
@@ -441,18 +553,32 @@
 					"$(SRCROOT)/Pairing",
 				);
 				INFOPLIST_FILE = Resources/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd.remote.agent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 			};
 			name = Debug;
 		};
 		A10000D4000000000000000D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = Resources/RemoteDesktopAgent.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/../Shared",
 					"$(SRCROOT)/App",
@@ -464,8 +590,49 @@
 					"$(SRCROOT)/Pairing",
 				);
 				INFOPLIST_FILE = Resources/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.ryheff.keyd.remote.agent";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd.remote.agent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+			};
+			name = Release;
+		};
+		B10000D3000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../Shared",
+					"$(SRCROOT)/Compress",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd.remote.agent.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RemoteDesktopAgent.app/Contents/MacOS/RemoteDesktopAgent";
+			};
+			name = Debug;
+		};
+		B10000D4000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../Shared",
+					"$(SRCROOT)/Compress",
+				);
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd.remote.agent.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RemoteDesktopAgent.app/Contents/MacOS/RemoteDesktopAgent";
 			};
 			name = Release;
 		};
@@ -490,8 +657,16 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		B10000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopAgentTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000D3000000000000000D /* Debug */,
+				B10000D4000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = A10000FD000000000000000P /* Project object */;
 }

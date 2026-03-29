@@ -308,9 +308,15 @@ static const char *kInputPortStr = "14568";
     nw_connection_t conn = _inputConnection;
     if (!conn) return;
 
-    dispatch_data_t ddata = dispatch_data_create(data, len, _transportQueue,
-                                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+    /* Prepend 4-byte big-endian length prefix for TCP message framing */
+    uint32_t netLen = htonl((uint32_t)len);
+    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
+                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
+                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+
+    nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
         if (error) {
             os_log_error(transport_log(), "Input send error: %{public}@",

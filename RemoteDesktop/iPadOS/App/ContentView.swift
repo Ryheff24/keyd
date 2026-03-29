@@ -1,5 +1,11 @@
 import SwiftUI
 import AVFoundation
+import os.log
+
+private let contentLog = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "ContentView")
+private let scannerPaneLog = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "QRScannerPane")
+private let scannerViewLog = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "QRScannerView")
+private let cameraPreviewLog = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "CameraPreviewView")
 
 // MARK: - ContentView
 
@@ -16,19 +22,33 @@ struct ContentView: View {
     @Bindable var sessionManager: SessionManager
 
     var body: some View {
+        let _ = contentLog.info("[ContentView] body evaluated, sessionManager.state = \(sessionManager.state.rawValue)")
         ZStack {
             // True black background for OLED letterbox (pixels off)
             Color.black.ignoresSafeArea()
 
             switch sessionManager.state {
             case .awaitingPairing:
-                QRScannerView(
+                if sessionManager.isTestMode {
+                    let _ = contentLog.info("[ContentView] rendering .awaitingPairing -> TEST MODE (no camera)")
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        Text("Test Mode: Auto-pairing...")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                    }
+                } else {
+                let _ = contentLog.info("[ContentView] rendering .awaitingPairing -> QRScannerPane")
+                QRScannerPane(
                     pairing: sessionManager.qrPairing,
                     onPaired: { sessionManager.onPairingComplete() }
                 )
-                .ignoresSafeArea()
+                }
 
             case .connecting:
+                let _ = contentLog.info("[ContentView] rendering .connecting")
                 VStack(spacing: 16) {
                     ProgressView()
                         .scaleEffect(1.5)
@@ -39,6 +59,7 @@ struct ContentView: View {
                 }
 
             case .streaming, .reconnecting:
+                let _ = contentLog.info("[ContentView] rendering .streaming/.reconnecting (state=\(sessionManager.state.rawValue))")
                 // Metal render view: plain UIView with CAMetalLayer (NOT MTKView)
                 MetalRenderView(renderer: sessionManager.metalRenderer)
                     .ignoresSafeArea()
@@ -52,6 +73,7 @@ struct ContentView: View {
                 HUDView(viewModel: sessionManager.hudViewModel)
 
             case .disconnected:
+                let _ = contentLog.info("[ContentView] rendering .disconnected")
                 VStack(spacing: 16) {
                     Image(systemName: "display.trianglebadge.exclamationmark")
                         .font(.system(size: 48))
@@ -65,6 +87,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
         .onAppear {
+            contentLog.info("[ContentView] onAppear fired, calling sessionManager.start()")
             sessionManager.start()
         }
     }
@@ -105,50 +128,175 @@ class MetalHostView: UIView {
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 }
 
+// MARK: - QRScannerPane
+
+/// Camera viewfinder in a glass-bordered pane, sized to the camera's native 4:3 aspect ratio.
+/// Shows a loading indicator while the camera initializes.
+struct QRScannerPane: View {
+
+    let pairing: QRPairing
+    let onPaired: () -> Void
+
+    @State private var cameraReady = false
+
+    var body: some View {
+        let _ = scannerPaneLog.info("[QRScannerPane] body evaluated, cameraReady = \(self.cameraReady)")
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
+            let pad: CGFloat = 48
+            let textSpace: CGFloat = 52
+            let availW = geo.size.width - pad * 2
+            let availH = geo.size.height - pad * 2 - textSpace
+            // Camera is 4:3 native — in portrait the rotated feed is 3:4
+            let ratio: CGFloat = isLandscape ? (4.0 / 3.0) : (3.0 / 4.0)
+
+            let fitW = availW
+            let fitH = fitW / ratio
+            let (viewW, viewH) = fitH <= availH
+                ? (fitW, fitH)
+                : (availH * ratio, availH)
+
+            let _ = scannerPaneLog.info("[QRScannerPane] GeometryReader: geo=\(geo.size.width)x\(geo.size.height), computed frame=\(viewW)x\(viewH), isLandscape=\(isLandscape)")
+
+            VStack(spacing: 16) {
+                ZStack {
+                    // Glass pane background — visible as border
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(.ultraThinMaterial)
+
+                    // Camera is always rendered (starts capture session)
+                    QRScannerView(pairing: pairing, onPaired: onPaired)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .padding(4)
+                        .opacity(cameraReady ? 1 : 0)
+
+                    // Loading overlay — shown until camera is running
+                    if !cameraReady {
+                        let _ = scannerPaneLog.info("[QRScannerPane] showing 'Starting camera...' overlay (cameraReady=false)")
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .tint(.secondary)
+                            Text("Starting camera...")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .frame(width: viewW, height: viewH)
+
+                Text("Scan QR code from Mac menu bar")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear {
+            print("[CONSOLE] QRScannerPane.onAppear, isSessionRunning=\(pairing.isSessionRunning)")
+            scannerPaneLog.info("[QRScannerPane] onAppear: checking isSessionRunning=\(pairing.isSessionRunning)")
+            if pairing.isSessionRunning {
+                print("[CONSOLE] session already running! setting cameraReady=true")
+                scannerPaneLog.info("[QRScannerPane] session already running, setting cameraReady=true immediately")
+                cameraReady = true
+            }
+            pairing.onSessionStarted = {
+                print("[CONSOLE] onSessionStarted callback fired! setting cameraReady=true")
+                scannerPaneLog.info("[QRScannerPane] onSessionStarted callback fired, setting cameraReady=true")
+                withAnimation(.easeIn(duration: 0.3)) {
+                    cameraReady = true
+                }
+            }
+        }
+    }
+}
+
 // MARK: - QRScannerView
 
 /// UIViewRepresentable wrapping AVCaptureVideoPreviewLayer for QR scanning.
-///
-/// Straight to camera viewfinder (no onboarding screen -- user decision).
-/// Uses QRPairing for capture session management and QR detection.
 struct QRScannerView: UIViewRepresentable {
 
     let pairing: QRPairing
     let onPaired: () -> Void
 
-    func makeUIView(context: Context) -> UIView {
-        let containerView = UIView()
-        containerView.backgroundColor = .black
+    func makeUIView(context: Context) -> CameraPreviewView {
+        scannerViewLog.info("[QRScannerView] makeUIView called")
+        let view = CameraPreviewView()
+        view.backgroundColor = .black
 
         pairing.onPairingComplete = { [onPaired] in
+            scannerViewLog.info("[QRScannerView] onPairingComplete callback fired")
             onPaired()
         }
 
-        // Start camera session
+        scannerViewLog.info("[QRScannerView] calling pairing.startScanning()")
         if let captureSession = pairing.startScanning() {
-            let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
-            previewLayer.videoGravity = .resizeAspectFill
-            previewLayer.frame = containerView.bounds
-            containerView.layer.addSublayer(previewLayer)
-
-            // Store preview layer for bounds updates
-            context.coordinator.previewLayer = previewLayer
+            scannerViewLog.info("[QRScannerView] captureSession obtained: \(String(describing: captureSession)), isRunning=\(captureSession.isRunning)")
+            view.previewLayer.session = captureSession
+            view.previewLayer.videoGravity = .resizeAspectFill
+            scannerViewLog.info("[QRScannerView] previewLayer.session assigned, now calling beginRunning()")
+            // Start AFTER preview layer assignment to avoid beginConfiguration race
+            pairing.beginRunning()
+        } else {
+            scannerViewLog.error("[QRScannerView] pairing.startScanning() returned nil -- no capture session")
         }
 
-        return containerView
+        return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        // Update preview layer frame on bounds change
-        context.coordinator.previewLayer?.frame = uiView.bounds
+    func updateUIView(_ uiView: CameraPreviewView, context: Context) {
+        scannerViewLog.info("[QRScannerView] updateUIView called, previewLayer.session=\(String(describing: uiView.previewLayer.session)), connection=\(String(describing: uiView.previewLayer.connection))")
+    }
+}
+
+/// UIView whose backing layer IS an AVCaptureVideoPreviewLayer.
+/// The layer resizes automatically with the view — no manual frame updates needed.
+/// Updates videoRotationAngle on orientation change via layoutSubviews.
+class CameraPreviewView: UIView {
+    override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+    var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        cameraPreviewLog.info("[CameraPreviewView] init(frame:) called, frame=\(frame.debugDescription)")
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        cameraPreviewLog.info("[CameraPreviewView] init(coder:) called")
     }
 
-    class Coordinator {
-        var previewLayer: AVCaptureVideoPreviewLayer?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        cameraPreviewLog.info("[CameraPreviewView] layoutSubviews called, bounds=\(self.bounds.debugDescription), window=\(String(describing: self.window))")
+
+        guard let connection = previewLayer.connection else {
+            cameraPreviewLog.warning("[CameraPreviewView] layoutSubviews: previewLayer.connection is nil, session=\(String(describing: self.previewLayer.session)), session.isRunning=\(self.previewLayer.session?.isRunning ?? false)")
+            return
+        }
+
+        cameraPreviewLog.info("[CameraPreviewView] layoutSubviews: connection exists, isActive=\(connection.isActive), isEnabled=\(connection.isEnabled)")
+
+        let angle: CGFloat
+        if let scene = window?.windowScene {
+            switch scene.interfaceOrientation {
+            case .portrait:            angle = 90
+            case .portraitUpsideDown:   angle = 270
+            case .landscapeLeft:        angle = 180
+            case .landscapeRight:       angle = 0
+            @unknown default:           angle = 90
+            }
+            cameraPreviewLog.info("[CameraPreviewView] layoutSubviews: orientation=\(scene.interfaceOrientation.rawValue), computed angle=\(angle)")
+        } else {
+            angle = 90
+            cameraPreviewLog.info("[CameraPreviewView] layoutSubviews: no windowScene, defaulting angle=90")
+        }
+
+        if connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
+            cameraPreviewLog.info("[CameraPreviewView] layoutSubviews: set videoRotationAngle=\(angle)")
+        } else {
+            cameraPreviewLog.warning("[CameraPreviewView] layoutSubviews: angle \(angle) NOT supported")
+        }
     }
 }
 

@@ -193,14 +193,25 @@ static os_log_t sLog;
 - (void)updatePermissionStatus {
     dispatch_async(dispatch_get_main_queue(), ^{
         BOOL screenGranted = CGPreflightScreenCaptureAccess();
-        self.screenRecordingItem.title = screenGranted
+        NSString *screenTitle = screenGranted
             ? @"Screen Recording: Granted"
             : @"Screen Recording: Required";
 
         BOOL accessibilityGranted = AXIsProcessTrustedWithOptions(NULL);
-        self.accessibilityItem.title = accessibilityGranted
+        NSString *accessTitle = accessibilityGranted
             ? @"Accessibility: Granted"
             : @"Accessibility: Required";
+
+        /* Only log when status actually changes */
+        if (![self.screenRecordingItem.title isEqualToString:screenTitle] ||
+            ![self.accessibilityItem.title isEqualToString:accessTitle]) {
+            os_log(sLog, "Permission status updated: Screen Recording=%{public}s, Accessibility=%{public}s",
+                   screenGranted ? "granted" : "required",
+                   accessibilityGranted ? "granted" : "required");
+        }
+
+        self.screenRecordingItem.title = screenTitle;
+        self.accessibilityItem.title = accessTitle;
     });
 }
 
@@ -219,8 +230,12 @@ static os_log_t sLog;
 }
 
 - (void)fixLoginItemAction:(NSMenuItem *)sender {
+    os_log(sLog, "fixLoginItemAction: triggered, callback=%{public}s",
+           self.onFixLoginItemRequested ? "set" : "nil");
     if (self.onFixLoginItemRequested) {
         self.onFixLoginItemRequested();
+    } else {
+        os_log_error(sLog, "fixLoginItemAction: onFixLoginItemRequested callback is nil!");
     }
 }
 

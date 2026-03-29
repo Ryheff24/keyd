@@ -33,11 +33,15 @@ final class USBNetworkTransport {
     // MARK: - Private
 
     private var pathMonitor: NWPathMonitor?
+    private var fallbackPathMonitor: NWPathMonitor?
     private let monitorQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.monitor")
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.transport")
 
     private var mediaConnection: NWConnection?
     private var inputConnection: NWConnection?
+
+    /// TCP reassembly buffer for length-prefixed messages.
+    private var tcpBuffer = Data()
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
@@ -136,57 +140,185 @@ final class USBNetworkTransport {
         return params
     }
 
+    // MARK: - USB NCM Interface Detection
+
+    /// Check if an interface looks like a USB NCM interface.
+    /// USB NCM on iPad may report as `.wiredEthernet` OR `.other` depending on
+    /// iOS version and how the USB-C Ethernet gadget driver presents itself.
+    /// We match by: type is wiredEthernet, OR name starts with "en" / "bridge"
+    /// and type is `.other` (excluding known non-NCM like awdl0, llw0, utun*, lo0).
+    private func isUSBNCMInterface(_ interface: NWInterface) -> Bool {
+        let name = interface.name
+
+        // Definite match: wiredEthernet type
+        if interface.type == .wiredEthernet {
+            return true
+        }
+
+        // Heuristic match: type == .other with NCM-like interface name
+        // USB NCM commonly appears as en2..en15 or bridgeXXX on iPad
+        if interface.type == .other {
+            // Exclude known non-USB interfaces that also report as .other
+            let excluded = ["awdl0", "llw0", "anpi0", "anpi1"]
+            if excluded.contains(name) { return false }
+            if name.hasPrefix("utun") { return false }
+            if name.hasPrefix("ipsec") { return false }
+
+            // Match enN where N >= 1 (en0 is typically built-in Wi-Fi on Mac,
+            // but on iPad there is no en0 -- USB NCM is enN with N >= 1)
+            if name.hasPrefix("en") {
+                let suffix = String(name.dropFirst(2))
+                if let n = Int(suffix), n >= 1 {
+                    return true
+                }
+            }
+
+            // bridge interfaces used by NCM
+            if name.hasPrefix("bridge") {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /// Log every interface in a path for debugging.
+    private func logAllInterfaces(in path: NWPath, label: String) {
+        var count = 0
+        for interface in path.availableInterfaces {
+            let typeName: String
+            switch interface.type {
+            case .wifi: typeName = "wifi"
+            case .cellular: typeName = "cellular"
+            case .wiredEthernet: typeName = "wiredEthernet"
+            case .loopback: typeName = "loopback"
+            case .other: typeName = "other"
+            @unknown default: typeName = "unknown"
+            }
+            print("[CONSOLE] [\(label)] interface[\(count)]: name=\(interface.name) type=\(typeName) index=\(interface.index)")
+            count += 1
+        }
+        if count == 0 {
+            print("[CONSOLE] [\(label)] no interfaces available")
+        }
+    }
+
     // MARK: - Public API
 
     /// Start monitoring for USB NCM interfaces.
+    ///
+    /// Uses TWO monitors to catch USB NCM regardless of how the OS classifies it:
+    ///   1. NWPathMonitor(requiredInterfaceType: .wiredEthernet) -- ideal case
+    ///   2. NWPathMonitor() (unfiltered) -- fallback for when NCM reports as .other
+    ///
     /// When an interface is detected, connections are created automatically.
     func startMonitoring() {
         guard pathMonitor == nil else { return }
 
-        log.info("Starting USB NCM path monitor (TLS/DTLS enabled)")
+        print("[CONSOLE] Starting USB NCM path monitors (TLS/DTLS enabled)")
+        log.info("Starting USB NCM path monitors (TLS/DTLS enabled)")
 
-        let monitor = NWPathMonitor(requiredInterfaceType: .wiredEthernet)
-        pathMonitor = monitor
+        // Primary monitor: wiredEthernet type (works when OS correctly types USB NCM)
+        let wiredMonitor = NWPathMonitor(requiredInterfaceType: .wiredEthernet)
+        pathMonitor = wiredMonitor
 
-        monitor.pathUpdateHandler = { [weak self] path in
-            guard let self = self else { return }
+        wiredMonitor.pathUpdateHandler = { [weak self] path in
+            self?.handlePathUpdate(path, source: "wiredEthernet")
+        }
+        wiredMonitor.start(queue: monitorQueue)
 
-            self.log.info("USB NCM path update: status=\(String(describing: path.status))")
+        // Fallback monitor: unfiltered, manually checks for NCM-like interfaces
+        // This catches the case where USB NCM reports as .other instead of .wiredEthernet
+        let fallbackMonitor = NWPathMonitor()
+        fallbackPathMonitor = fallbackMonitor
 
-            if path.status == .satisfied || path.status == .requiresConnection {
-                // Extract the exact NWInterface object -- NEVER just use type
-                guard let interface = path.availableInterfaces.first(where: {
-                    $0.type == .wiredEthernet
-                }) else {
-                    return
+        fallbackMonitor.pathUpdateHandler = { [weak self] path in
+            self?.handlePathUpdate(path, source: "fallback")
+        }
+        fallbackMonitor.start(queue: monitorQueue)
+    }
+
+    /// Unified handler for path updates from either monitor.
+    private func handlePathUpdate(_ path: NWPath, source: String) {
+        let statusStr: String
+        switch path.status {
+        case .satisfied: statusStr = "satisfied"
+        case .unsatisfied: statusStr = "unsatisfied"
+        case .requiresConnection: statusStr = "requiresConnection"
+        @unknown default: statusStr = "unknown"
+        }
+
+        print("[CONSOLE] [\(source)] path update: status=\(statusStr)")
+        log.info("[\(source)] path update: status=\(statusStr)")
+
+        // Log ALL interfaces for debugging
+        logAllInterfaces(in: path, label: source)
+
+        if path.status == .satisfied || path.status == .requiresConnection {
+            // Find the first USB NCM interface using our detection heuristic
+            let ncmInterface = path.availableInterfaces.first(where: { isUSBNCMInterface($0) })
+
+            guard let interface = ncmInterface else {
+                // This monitor fired but no NCM interface found -- not an error for
+                // the fallback monitor since it sees all interface changes
+                if source == "wiredEthernet" {
+                    print("[CONSOLE] [\(source)] path satisfied but no NCM interface found in available interfaces")
                 }
+                return
+            }
 
-                self.log.info("USB NCM interface found: \(interface.debugDescription)")
+            let typeName: String
+            switch interface.type {
+            case .wifi: typeName = "wifi"
+            case .cellular: typeName = "cellular"
+            case .wiredEthernet: typeName = "wiredEthernet"
+            case .loopback: typeName = "loopback"
+            case .other: typeName = "other"
+            @unknown default: typeName = "unknown"
+            }
 
-                if self.activeInterface == nil ||
-                   self.activeInterface?.index != interface.index {
-                    self.activeInterface = interface
-                    self.connectOverUSBNCM(interface: interface)
-                    self.onInterfaceChanged?(true, interface)
-                }
-            } else {
-                if self.activeInterface != nil {
-                    self.log.info("USB NCM interface disappeared")
-                    self.tearDownConnections()
-                    self.activeInterface = nil
-                    self.isConnected = false
-                    self.onInterfaceChanged?(false, nil)
+            print("[CONSOLE] [\(source)] USB NCM interface found: name=\(interface.name) type=\(typeName) index=\(interface.index)")
+            log.info("[\(source)] USB NCM interface found: \(interface.name) type=\(typeName) index=\(interface.index)")
+
+            if activeInterface == nil || activeInterface?.index != interface.index {
+                activeInterface = interface
+                connectOverUSBNCM(interface: interface)
+                onInterfaceChanged?(true, interface)
+            }
+        } else {
+            // Only process disconnection if this source was the one that originally
+            // detected the interface. The fallback monitor fires unsatisfied for many
+            // unrelated changes, so we only tear down if we actually had an active interface
+            // AND the wiredEthernet monitor says unsatisfied (or we detected via fallback).
+            if activeInterface != nil && source == "wiredEthernet" {
+                print("[CONSOLE] [\(source)] USB NCM interface disappeared")
+                log.info("[\(source)] USB NCM interface disappeared")
+                tearDownConnections()
+                activeInterface = nil
+                isConnected = false
+                onInterfaceChanged?(false, nil)
+            } else if activeInterface != nil && source == "fallback" {
+                // For fallback, verify the NCM interface is truly gone by checking
+                // if ANY remaining interface matches our NCM heuristic
+                let stillHasNCM = path.availableInterfaces.contains(where: { isUSBNCMInterface($0) })
+                if !stillHasNCM {
+                    print("[CONSOLE] [\(source)] USB NCM interface disappeared (confirmed via fallback)")
+                    log.info("[\(source)] USB NCM interface disappeared (confirmed via fallback)")
+                    tearDownConnections()
+                    activeInterface = nil
+                    isConnected = false
+                    onInterfaceChanged?(false, nil)
                 }
             }
         }
-
-        monitor.start(queue: monitorQueue)
     }
 
     /// Stop monitoring and tear down all connections.
     func stopMonitoring() {
         pathMonitor?.cancel()
         pathMonitor = nil
+        fallbackPathMonitor?.cancel()
+        fallbackPathMonitor = nil
         tearDownConnections()
         activeInterface = nil
         isConnected = false
@@ -297,16 +429,38 @@ final class USBNetworkTransport {
     }
 
     private func scheduleInputReceive(_ connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
 
             if let data = content, !data.isEmpty {
-                self.onInputReceived?(data)
+                self.tcpBuffer.append(data)
+                self.drainUSBTCPBuffer()
             }
 
             if error != nil || isComplete { return }
             self.scheduleInputReceive(connection)
+        }
+    }
+
+    /// Extract complete length-prefixed messages from the USB TCP reassembly buffer.
+    private func drainUSBTCPBuffer() {
+        while tcpBuffer.count >= 4 {
+            let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
+                let raw = buf.load(as: UInt32.self)
+                return Int(UInt32(bigEndian: raw))
+            }
+
+            guard msgLen > 0, msgLen < 4_000_000 else {
+                tcpBuffer.removeAll()
+                return
+            }
+
+            guard tcpBuffer.count >= 4 + msgLen else { return }
+
+            let message = tcpBuffer.subdata(in: 4..<(4 + msgLen))
+            tcpBuffer.removeSubrange(0..<(4 + msgLen))
+            onInputReceived?(message)
         }
     }
 
@@ -317,6 +471,7 @@ final class USBNetworkTransport {
         mediaConnection = nil
         inputConnection?.cancel()
         inputConnection = nil
+        tcpBuffer.removeAll()
     }
 
     deinit {
