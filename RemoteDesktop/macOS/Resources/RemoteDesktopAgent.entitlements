@@ -4,13 +4,9 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
-	<key>com.apple.security.network.server</key>
-	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<!-- com.apple.developer.persistent-content-capture requires an organization team.
-	     Personal dev teams cannot provision this entitlement.
-	     Re-enable when enrolled in Apple Developer Program (organization).
-	     Fallback: frame watchdog + menu bar re-auth prompt. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 </dict>
 </plist>
