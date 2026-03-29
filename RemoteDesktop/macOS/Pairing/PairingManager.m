@@ -490,10 +490,11 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                         return true;
                     });
 
+                    /* Extract Mac's public key BEFORE completePairing
+                     * (completePairing releases _ecdhPrivateKey) */
+                    NSData *macPubKey = [self2 ecdhPublicKeyData];
                     BOOL success = [self2 completePairing:receivedData];
                     if (success) {
-                        /* Send Mac's ECDH public key back to iPad */
-                        NSData *macPubKey = [self2 ecdhPublicKeyData];
                         if (macPubKey) {
                             os_log(pairing_log(), "Sending Mac ECDH public key (%lu bytes)", (unsigned long)macPubKey.length);
                             void *buf = malloc(macPubKey.length);
