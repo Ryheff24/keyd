@@ -474,16 +474,17 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         }
 
         /* Step 1: Send iPad's public key to Mac */
+        print("[CONSOLE] ECDH: sending iPad public key (\(iPadPubKeyData.count) bytes)")
         connection.send(content: iPadPubKeyData, completion: .contentProcessed { [weak self] sendError in
             guard let self = self else { return }
 
             if let sendError = sendError {
-                self.log.error("Failed to send iPad public key: \(sendError)")
+                print("[CONSOLE] ECDH: send FAILED: \(sendError)")
                 self.onPairingFailed?("Failed to send public key")
                 return
             }
 
-            self.log.info("Sent iPad ECDH public key to Mac (\(iPadPubKeyData.count) bytes)")
+            print("[CONSOLE] ECDH: sent iPad public key, now receiving Mac key...")
 
             /* Step 2: Receive Mac's ECDH public key */
             connection.receive(minimumIncompleteLength: 1, maximumLength: 256) {
@@ -491,18 +492,18 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 guard let self = self else { return }
 
                 if let recvError = recvError {
-                    self.log.error("Failed to receive Mac public key: \(recvError)")
+                    print("[CONSOLE] ECDH: receive FAILED: \(recvError)")
                     self.onPairingFailed?("Failed to receive Mac's key")
                     return
                 }
 
                 guard let macECDHPubKeyData = content, !macECDHPubKeyData.isEmpty else {
-                    self.log.error("Empty Mac public key received")
+                    print("[CONSOLE] ECDH: empty Mac public key received")
                     self.onPairingFailed?("Empty response from Mac")
                     return
                 }
 
-                self.log.info("Received Mac ECDH public key (\(macECDHPubKeyData.count) bytes)")
+                print("[CONSOLE] ECDH: received Mac public key (\(macECDHPubKeyData.count) bytes)")
 
                 /* Step 3: Perform ECDH key agreement */
                 let pubKeyAttrs: [CFString: Any] = [

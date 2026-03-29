@@ -501,7 +501,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
                             nw_connection_send(conn, sendData,
                                 NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
-                                true, ^(nw_error_t _Nullable sendError) {
+                                false, ^(nw_error_t _Nullable sendError) {
                                 PairingManager *self3 = weakSelf;
                                 if (sendError) {
                                     os_log_error(pairing_log(), "Failed to send Mac public key: %{public}@", sendError);
