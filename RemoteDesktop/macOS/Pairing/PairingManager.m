@@ -495,10 +495,12 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                         /* Send Mac's ECDH public key back to iPad */
                         NSData *macPubKey = [self2 ecdhPublicKeyData];
                         if (macPubKey) {
+                            os_log(pairing_log(), "Sending Mac ECDH public key (%lu bytes)", (unsigned long)macPubKey.length);
+                            void *buf = malloc(macPubKey.length);
+                            memcpy(buf, macPubKey.bytes, macPubKey.length);
                             dispatch_data_t sendData = dispatch_data_create(
-                                macPubKey.bytes, macPubKey.length,
-                                dispatch_get_main_queue(),
-                                DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+                                buf, macPubKey.length,
+                                NULL, DISPATCH_DATA_DESTRUCTOR_FREE);
                             nw_connection_send(conn, sendData,
                                 NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                                 false, ^(nw_error_t _Nullable sendError) {
