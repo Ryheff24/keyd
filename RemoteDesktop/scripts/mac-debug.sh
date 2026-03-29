@@ -59,9 +59,19 @@ pkill -f "RemoteDesktopAgent" 2>/dev/null || true
 sleep 1
 
 # Delete old keydrd TLS items from login keychain to avoid ACL prompts
-# (each rebuild changes code signature, old items have stale ACL)
 security delete-certificate -c "keydrd-agent" 2>/dev/null || true
 security delete-identity -c "keydrd-agent" 2>/dev/null || true
+
+# Generate fresh TLS identity (PKCS12) for the pairing handshake
+# Using OpenSSL ensures a properly formatted cert that Network.framework accepts
+CERT_DIR="/tmp/keydrd-tls"
+mkdir -p "$CERT_DIR"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
+  -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
+openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
+  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd 2>/dev/null
+rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
 
 # Launch the app
 "$APP_PATH/Contents/MacOS/RemoteDesktopAgent" &
