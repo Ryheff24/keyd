@@ -66,4 +66,5 @@ void frame_compressor_destroy(FrameCompressorState *state);
 int compress_frame(FrameCompressorState *state,
                    IOSurfaceRef surface,
                    CMSampleBufferRef sampleBuf,
+                   uint64_t capture_ts_us,
                    CompressOutput *out);

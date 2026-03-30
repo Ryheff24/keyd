@@ -444,7 +444,7 @@ final class SessionManager {
             testRunner?.reportDecodedFrameDimensions(width: decodedW, height: decodedH)
 
             // Zero-copy: pass CVPixelBuffer directly to Metal via IOSurface
-            metalRenderer.updateFrameFromPixelBuffer(pixelBuffer)
+            metalRenderer.updateFrameFromPixelBuffer(pixelBuffer, captureTimestampUs: header.tsUs)
         } else {
             // LZ4 decode path (wired mode)
             guard let decompressor = lz4Decompressor else {
@@ -464,7 +464,7 @@ final class SessionManager {
             // Report decoded dimensions for resolution test (LZ4 uses handshake dimensions)
             testRunner?.reportDecodedFrameDimensions(width: macDisplayWidth, height: macDisplayHeight)
 
-            metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight)
+            metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight, captureTimestampUs: header.tsUs)
         }
 
         // Record frame timestamp for FPS calculation
@@ -564,6 +564,9 @@ final class SessionManager {
         case InputEventType.latencyProbe.rawValue:
             handleLatencyProbeResponse(header)
 
+        case InputEventType.clockSyncResp.rawValue:
+            handleClockSyncResponse(data)
+
         case InputEventType.modeChange.rawValue:
             handleModeChangeFromMac(data)
 
@@ -613,6 +616,23 @@ final class SessionManager {
 
         // E2E test: report latency probe response
         testRunner?.reportLatencyProbeResponse(rttUs: roundTripUs)
+    }
+
+    // MARK: - Private: Clock Sync (Cristian's Algorithm)
+
+    /// Handle clock sync response from Mac. Routes to test runner for offset calibration.
+    private func handleClockSyncResponse(_ data: Data) {
+        // t4: iPad receive time (immediately on arrival)
+        var ts = timespec()
+        clock_gettime(CLOCK_REALTIME, &ts)
+        let t4Us = UInt64(ts.tv_sec) * 1_000_000 + UInt64(ts.tv_nsec / 1000)
+
+        // Parse payload after 9-byte InputEventHeader
+        let payloadData = data.dropFirst(InputEventHeader.size)
+        guard let resp = ClockSyncResponse.parse(from: Data(payloadData)) else { return }
+
+        testRunner?.reportClockSyncResponse(t1Us: resp.t1iPadUs, t2Us: resp.t2MacUs,
+                                            t3Us: resp.t3MacUs, t4Us: t4Us)
     }
 
     // MARK: - Private: Mode Change from Mac

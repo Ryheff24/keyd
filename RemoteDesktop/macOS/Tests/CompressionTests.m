@@ -342,7 +342,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
     /* Compress on the compressor's queue */
     __block int compressRet = -1;
     dispatch_sync(state.compress_queue, ^{
-        compressRet = compress_frame(&state, surface, sampleBuf, &state.output);
+        compressRet = compress_frame(&state, surface, sampleBuf, 0, &state.output);
     });
 
     XCTAssertEqual(compressRet, 0, @"First compress_frame must succeed");
@@ -386,7 +386,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
     CMSampleBufferRef sb1 = createSampleBuffer(surface1, 1, &pb1, &fd1);
 
     dispatch_sync(state.compress_queue, ^{
-        compress_frame(&state, surface1, sb1, &state.output);
+        compress_frame(&state, surface1, sb1, 0, &state.output);
     });
     XCTAssertTrue(state.output.header.flags & KEYDRD_FLAG_KEYFRAME,
                   @"First frame must be keyframe");
@@ -411,7 +411,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
     CMSampleBufferRef sb2 = createSampleBuffer(surface2, 2, &pb2, &fd2);
 
     dispatch_sync(state.compress_queue, ^{
-        compress_frame(&state, surface2, sb2, &state.output);
+        compress_frame(&state, surface2, sb2, 0, &state.output);
     });
 
     /* Second frame should be delta (not keyframe) since the change is tiny */
@@ -447,7 +447,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
     CMSampleBufferRef sb1 = createSampleBuffer(surface1, 1, &pb1, &fd1);
 
     dispatch_sync(state.compress_queue, ^{
-        compress_frame(&state, surface1, sb1, &state.output);
+        compress_frame(&state, surface1, sb1, 0, &state.output);
     });
     XCTAssertTrue(state.output.header.flags & KEYDRD_FLAG_KEYFRAME);
     size_t keyframeSize = state.output.compressed_size;
@@ -472,7 +472,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
     CMSampleBufferRef sb2 = createSampleBuffer(surface2, 2, &pb2, &fd2);
 
     dispatch_sync(state.compress_queue, ^{
-        compress_frame(&state, surface2, sb2, &state.output);
+        compress_frame(&state, surface2, sb2, 0, &state.output);
     });
 
     /* The compressed delta of (random XOR zeros) = random, which is much larger
@@ -537,7 +537,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
     /* Compress must not crash even when allocSize > frame_bytes */
     __block int ret = -1;
     dispatch_sync(state.compress_queue, ^{
-        ret = compress_frame(&state, surface, sb, &state.output);
+        ret = compress_frame(&state, surface, sb, 0, &state.output);
     });
     XCTAssertEqual(ret, 0, @"compress_frame must succeed with mismatched allocSize");
     XCTAssertGreaterThan(state.output.compressed_size, 0u);
@@ -572,7 +572,7 @@ static CMSampleBufferRef createSampleBuffer(IOSurfaceRef surface,
 
         __block int ret = -1;
         dispatch_sync(state.compress_queue, ^{
-            ret = compress_frame(&state, surface, sb, &state.output);
+            ret = compress_frame(&state, surface, sb, 0, &state.output);
         });
         XCTAssertEqual(ret, 0);
         XCTAssertEqual(state.output.header.seq, i,

@@ -44,6 +44,8 @@ _Static_assert(sizeof(MediaFrameHeader) == 25,
 #define KEYDRD_INPUT_RES_MATCH_RESPONSE   0x22  /* Mac -> iPad: resolution match result */
 #define KEYDRD_INPUT_GEOMETRY_UPDATE      0x23  /* Mac -> iPad: new display geometry */
 #define KEYDRD_INPUT_KEEPALIVE            0x30
+#define KEYDRD_INPUT_CLOCK_SYNC_REQ       0xFE  /* iPad -> Mac: Cristian's algorithm probe */
+#define KEYDRD_INPUT_CLOCK_SYNC_RESP      0xFD  /* Mac -> iPad: clock sync response */
 #define KEYDRD_INPUT_LATENCY_PROBE        0xFF
 
 /* ---- InputEventHeader (9 bytes, packed) ---- */
@@ -54,6 +56,24 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(InputEventHeader) == 9,
                "InputEventHeader must be exactly 9 bytes");
+
+/* ---- ClockSyncResponse (24 bytes, packed) ----
+ * Sent after InputEventHeader (type=CLOCK_SYNC_RESP).
+ * Carries three timestamps for Cristian's algorithm:
+ *   t1 = iPad send time (echoed from request ts_us)
+ *   t2 = Mac receive time (CLOCK_REALTIME)
+ *   t3 = Mac send time (CLOCK_REALTIME, just before send)
+ * iPad records t4 on receipt, then:
+ *   offset = ((t2-t1) + (t3-t4)) / 2   (Mac clock - iPad clock)
+ */
+typedef struct __attribute__((packed)) {
+    uint64_t t1_ipad_us;     /* iPad send time, echoed */
+    uint64_t t2_mac_us;      /* Mac receive time */
+    uint64_t t3_mac_us;      /* Mac send time */
+} ClockSyncResponse;
+
+_Static_assert(sizeof(ClockSyncResponse) == 24,
+               "ClockSyncResponse must be exactly 24 bytes");
 
 /* ---- SessionHandshakeMessage (packed) ---- */
 #define KEYDRD_MSG_SESSION_HANDSHAKE 0x01

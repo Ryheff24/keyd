@@ -47,9 +47,10 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 - (void)startWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate;
 
 /// Encode a single pixel buffer. Must be called on the compress queue.
-/// @param pixelBuffer CVPixelBuffer in BGRA format.
-/// @param timestamp   Capture timestamp for this frame.
-- (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp;
+/// @param pixelBuffer       CVPixelBuffer in BGRA format.
+/// @param timestamp         Capture presentation timestamp (CMTime).
+/// @param captureTimestampUs Wall-clock capture time in microseconds (CLOCK_REALTIME).
+- (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp captureTimestampUs:(uint64_t)captureTimestampUs;
 
 /// Stop the encoder and release the compression session.
 - (void)stop;

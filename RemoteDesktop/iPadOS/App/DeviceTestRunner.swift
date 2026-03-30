@@ -82,8 +82,20 @@ final class DeviceTestRunner {
     private static let tieredLatencyProbeCount = 20
     private static let tieredLatencyProbeSpacingMs: Int = 50
 
-    // Pipeline latency (capture-to-receive, using wall clock ts_us)
+    // Pipeline latency (capture-to-decode, using wall clock ts_us)
     private var pipelineLatenciesUs: [Int64] = []
+
+    // Glass-to-glass latency (capture-to-presented, via addPresentedHandler)
+    private var glassToGlassLatenciesUs: [Int64] = []
+
+    // Clock offset calibration (Cristian's algorithm)
+    private var clockOffsetUs: Int64 = 0  // Mac clock - iPad clock (microseconds)
+    private var clockOffsetCalibrated = false
+    private var clockSyncSamples: [(offset: Int64, rtt: Int64)] = []
+    private var clockSyncProbesSent = 0
+    private var clockSyncComplete = false
+    private static let clockSyncProbeCount = 10
+    private static let clockSyncProbeSpacingMs = 20
 
     // Throughput benchmark
     private var throughputTestActive = false
@@ -150,6 +162,18 @@ final class DeviceTestRunner {
         // Wire renderer callback — this is the source of truth for "frame shown on screen"
         sessionManager.metalRenderer.onFrameRendered = { [weak self] in
             self?.onRenderedFrame()
+        }
+
+        // Glass-to-glass latency: capture wall-clock → presented wall-clock.
+        // Corrected by Cristian's algorithm clock offset.
+        // latency = iPad_presented - (Mac_capture - offset)
+        //         = iPad_presented - Mac_capture + offset
+        sessionManager.metalRenderer.onFramePresented = { [weak self] captureTimestampUs, presentedWallClockUs in
+            guard let self = self else { return }
+            let latencyUs = presentedWallClockUs - Int64(captureTimestampUs) + self.clockOffsetUs
+            if latencyUs > 0 && latencyUs < 10_000_000 { // sanity: 0-10s
+                self.glassToGlassLatenciesUs.append(latencyUs)
+            }
         }
     }
 
@@ -312,12 +336,15 @@ final class DeviceTestRunner {
             totalDecompressedBytes += decompressedSize
         }
 
-        // Pipeline latency: Mac embeds wall clock in ts_us, compare to iPad clock
+        // Pipeline latency (capture-to-decode): Mac embeds wall clock in ts_us.
+        // Apply Cristian's algorithm clock offset to remove Mac-iPad clock skew.
+        // latency = iPad_now - (Mac_capture_time - offset)
+        //         = iPad_now - Mac_capture_time + offset
         if header.tsUs > 0 {
             var ts = timespec()
             clock_gettime(CLOCK_REALTIME, &ts)
             let nowUs = Int64(ts.tv_sec) * 1_000_000 + Int64(ts.tv_nsec / 1000)
-            let latencyUs = nowUs - Int64(header.tsUs)
+            let latencyUs = nowUs - Int64(header.tsUs) + clockOffsetUs
             if latencyUs > 0 && latencyUs < 10_000_000 { // sanity: 0-10s
                 pipelineLatenciesUs.append(latencyUs)
             }
@@ -476,8 +503,116 @@ final class DeviceTestRunner {
         let delay = 5.0 + Double.random(in: 0..<1.0)
         print("[CONSOLE] Extended tests: waiting \(String(format: "%.1f", delay))s for stream to stabilize")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.runTransportAssertionTest()
+            self?.runClockSyncCalibration()
         }
+    }
+
+    // MARK: - Clock Offset Calibration (Cristian's Algorithm)
+
+    private func runClockSyncCalibration() {
+        print("[TEST] RUNNING: clock-sync")
+
+        guard let sm = sessionManager, sm.usbTransport.isConnected || sm.wirelessTransport.isConnected else {
+            print("[TEST] INFO: clock-sync skipped (no transport)")
+            runTransportAssertionTest()
+            return
+        }
+
+        clockSyncSamples = []
+        clockSyncProbesSent = 0
+        clockSyncComplete = false
+        sendNextClockSyncProbe()
+    }
+
+    private func sendNextClockSyncProbe() {
+        guard !clockSyncComplete, clockSyncProbesSent < Self.clockSyncProbeCount else {
+            return
+        }
+
+        guard let sm = sessionManager else {
+            completeClockSyncCalibration()
+            return
+        }
+
+        // t1: iPad send time (CLOCK_REALTIME)
+        var ts = timespec()
+        clock_gettime(CLOCK_REALTIME, &ts)
+        let t1Us = UInt64(ts.tv_sec) * 1_000_000 + UInt64(ts.tv_nsec / 1000)
+
+        let header = InputEventHeader(type: InputEventType.clockSyncReq.rawValue, tsUs: t1Us)
+        let data = header.serialize()
+
+        if sm.usbTransport.isConnected {
+            sm.usbTransport.sendInputEvent(data)
+        } else if sm.wirelessTransport.isConnected {
+            sm.wirelessTransport.sendInputEvent(data)
+        }
+
+        clockSyncProbesSent += 1
+
+        // Timeout for this probe
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self, !self.clockSyncComplete else { return }
+            if self.clockSyncProbesSent >= Self.clockSyncProbeCount {
+                self.completeClockSyncCalibration()
+            }
+        }
+    }
+
+    /// Called by SessionManager when a CLOCK_SYNC_RESP arrives
+    func reportClockSyncResponse(t1Us: UInt64, t2Us: UInt64, t3Us: UInt64, t4Us: UInt64) {
+        guard !clockSyncComplete else { return }
+
+        // Cristian's algorithm:
+        // RTT = (t4 - t1) - (t3 - t2)  [subtract Mac processing time]
+        // offset = ((t2 - t1) + (t3 - t4)) / 2  [Mac clock - iPad clock]
+        let rtt = (Int64(t4Us) - Int64(t1Us)) - (Int64(t3Us) - Int64(t2Us))
+        let offset = (Int64(t2Us) - Int64(t1Us) + Int64(t3Us) - Int64(t4Us)) / 2
+
+        clockSyncSamples.append((offset: offset, rtt: rtt))
+
+        if clockSyncSamples.count >= Self.clockSyncProbeCount {
+            completeClockSyncCalibration()
+        } else {
+            // Send next probe after spacing
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(Self.clockSyncProbeSpacingMs) / 1000.0) { [weak self] in
+                self?.sendNextClockSyncProbe()
+            }
+        }
+    }
+
+    private func completeClockSyncCalibration() {
+        guard !clockSyncComplete else { return }
+        clockSyncComplete = true
+
+        guard !clockSyncSamples.isEmpty else {
+            print("[TEST] INFO: clock-sync (no responses — offset unknown)")
+            recordResult(name: "clock-sync", passed: true, detail: "no responses (calibration skipped)")
+            runTransportAssertionTest()
+            return
+        }
+
+        // Sort by RTT, take samples with lowest RTT (most symmetric, most accurate)
+        let sortedByRtt = clockSyncSamples.sorted { $0.rtt < $1.rtt }
+
+        // Use median offset from the best-RTT half of samples
+        let bestHalf = Array(sortedByRtt.prefix(max(sortedByRtt.count / 2, 1)))
+        let offsets = bestHalf.map { $0.offset }.sorted()
+        let medianOffset = offsets[offsets.count / 2]
+
+        clockOffsetUs = medianOffset
+        clockOffsetCalibrated = true
+
+        let offsetMs = medianOffset / 1000
+        let rttSorted = clockSyncSamples.map { $0.rtt / 1000 }.sorted()
+        let minRttMs = rttSorted.first!
+        let medianRttMs = rttSorted[rttSorted.count / 2]
+
+        print("[TEST] INFO: clock-sync (\(clockSyncSamples.count) probes, offset=\(offsetMs)ms, rtt: min=\(minRttMs)ms median=\(medianRttMs)ms)")
+        recordResult(name: "clock-sync", passed: true,
+                    detail: "offset=\(offsetMs)ms (\(clockSyncSamples.count) probes, rtt: min=\(minRttMs)ms median=\(medianRttMs)ms)")
+
+        runTransportAssertionTest()
     }
 
     // MARK: - Test 10: Transport Type Assertion
@@ -900,6 +1035,7 @@ final class DeviceTestRunner {
                             detail: "recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames (\(String(format: "%.1f", avgFPS)) fps) in \(String(format: "%.1f", elapsed))s")
 
             self.reportPipelineLatency()
+            self.reportGlassToGlassLatency()
             self.runTransportRotationTests()
         }
     }
@@ -921,12 +1057,55 @@ final class DeviceTestRunner {
         let p95Ms = sorted[p95Idx] / 1000
         let avgMs = sorted.reduce(0, +) / Int64(count) / 1000
 
-        print("[TEST] INFO: pipeline-latency (capture-to-decode, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms)")
+        let calibrated = clockOffsetCalibrated ? "calibrated, offset=\(clockOffsetUs/1000)ms" : "uncalibrated"
+        print("[TEST] INFO: pipeline-latency (capture-to-decode, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, clock=\(calibrated))")
 
-        // Pass if median is under 200ms (generous — includes clock skew)
-        let passed = medianMs < 200
+        // With clock offset calibrated, pipeline median is ~120ms over USB at native
+        // resolution (dominated by VTCompressionSession frame buffering at 3600x2338).
+        // Threshold catches regressions while reflecting current encoder configuration.
+        let threshold: Int64 = clockOffsetCalibrated ? 150 : 200
+        let passed = medianMs < threshold
         recordResult(name: "pipeline-latency", passed: passed,
-                    detail: "capture-to-decode: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames)")
+                    detail: "capture-to-decode: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
+    }
+
+    // MARK: - Glass-to-Glass Latency Report
+
+    private func reportGlassToGlassLatency() {
+        guard !glassToGlassLatenciesUs.isEmpty else {
+            print("[TEST] INFO: glass-to-glass-latency (no samples — presentedHandler not firing or clock skew)")
+            recordResult(name: "glass-to-glass-latency", passed: true,
+                        detail: "no samples collected (informational)")
+            return
+        }
+
+        let sorted = glassToGlassLatenciesUs.sorted()
+        let count = sorted.count
+        let minMs = sorted.first! / 1000
+        let maxMs = sorted.last! / 1000
+        let medianMs = sorted[count / 2] / 1000
+        let p95Idx = min(Int(Double(count) * 0.95), count - 1)
+        let p95Ms = sorted[p95Idx] / 1000
+        let avgMs = sorted.reduce(0, +) / Int64(count) / 1000
+
+        let calibrated = clockOffsetCalibrated ? "calibrated, offset=\(clockOffsetUs/1000)ms" : "uncalibrated"
+        print("[TEST] INFO: glass-to-glass-latency (capture-to-presented, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, clock=\(calibrated))")
+
+        // Compare to pipeline (capture-to-decode) to show the render/present overhead
+        if !pipelineLatenciesUs.isEmpty {
+            let pipelineSorted = pipelineLatenciesUs.sorted()
+            let pipelineMedianMs = pipelineSorted[pipelineSorted.count / 2] / 1000
+            let overheadMs = medianMs - pipelineMedianMs
+            print("[TEST] INFO: glass-to-glass overhead vs decode: \(overheadMs)ms (present+display-link)")
+        }
+
+        // With clock offset calibrated, glass-to-glass median is ~140ms over USB
+        // (pipeline ~120ms + render/display-link ~20ms).
+        // Threshold catches regressions while reflecting current encoder configuration.
+        let threshold: Int64 = clockOffsetCalibrated ? 180 : 200
+        let passed = medianMs < threshold
+        recordResult(name: "glass-to-glass-latency", passed: passed,
+                    detail: "capture-to-presented: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
     }
 
     // MARK: - Multi-Transport Rotation Tests

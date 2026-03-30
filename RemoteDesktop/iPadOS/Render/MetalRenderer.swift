@@ -50,12 +50,22 @@ final class MetalRenderer: NSObject {
     /// Timestamps of each NEW rendered frame (for FPS/jitter analysis by tests).
     private(set) var renderedFrameTimestamps: [CFAbsoluteTime] = []
 
-    /// Callback fired each time a NEW frame is rendered to the display.
+    /// Callback fired each time a NEW frame is confirmed presented on display.
     /// Tests hook into this to count real rendered frames.
     var onFrameRendered: (() -> Void)?
 
+    /// Callback fired with glass-to-glass timing data after GPU confirms presentation.
+    /// Parameters: (captureTimestampUs: UInt64, presentedTime: CFTimeInterval)
+    /// captureTimestampUs = Mac wall-clock capture time from MediaFrameHeader.ts_us
+    /// presentedTime = CAMetalDrawable.presentedTime (mach_absolute_time-based)
+    var onFramePresented: ((_ captureTimestampUs: UInt64, _ presentedWallClockUs: Int64) -> Void)?
+
     /// Dirty flag: set when updateFrame uploads new pixel data, cleared after render.
     private var frameDirty = false
+
+    /// Capture timestamp (Mac wall-clock microseconds) of the current frame texture.
+    /// Set in updateFrame alongside texture data, read during render for latency tracking.
+    private var frameCaptureTimestampUs: UInt64 = 0
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -169,9 +179,10 @@ final class MetalRenderer: NSObject {
     ///   - data: Raw BGRA pixel data pointer.
     ///   - width: Frame width in pixels.
     ///   - height: Frame height in pixels.
-    func updateFrame(_ data: UnsafeRawPointer, width: Int, height: Int) {
+    func updateFrame(_ data: UnsafeRawPointer, width: Int, height: Int, captureTimestampUs: UInt64 = 0) {
         textureLock.lock()
         defer { textureLock.unlock() }
+        frameCaptureTimestampUs = captureTimestampUs
 
         // Recreate texture if dimensions changed
         if frameTexture == nil
@@ -208,7 +219,7 @@ final class MetalRenderer: NSObject {
     /// Uses CVMetalTextureCache to create an MTLTexture backed by the pixel buffer's
     /// IOSurface — no CPU→GPU memcpy. This eliminates ~5ms per frame for 3600x2338
     /// and preserves exact pixel data from the hardware decoder.
-    func updateFrameFromPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
+    func updateFrameFromPixelBuffer(_ pixelBuffer: CVPixelBuffer, captureTimestampUs: UInt64 = 0) {
         guard let cache = textureCache else {
             // Fallback to copy path
             CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -216,7 +227,8 @@ final class MetalRenderer: NSObject {
             guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
             updateFrame(UnsafeRawPointer(base),
                         width: CVPixelBufferGetWidth(pixelBuffer),
-                        height: CVPixelBufferGetHeight(pixelBuffer))
+                        height: CVPixelBufferGetHeight(pixelBuffer),
+                        captureTimestampUs: captureTimestampUs)
             return
         }
 
@@ -242,13 +254,15 @@ final class MetalRenderer: NSObject {
             CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
             defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
             guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
-            updateFrame(UnsafeRawPointer(base), width: width, height: height)
+            updateFrame(UnsafeRawPointer(base), width: width, height: height,
+                        captureTimestampUs: captureTimestampUs)
             return
         }
 
         textureLock.lock()
         frameTexture = texture
         cvTextureRef = cvTex  // retain so IOSurface stays valid until next frame
+        frameCaptureTimestampUs = captureTimestampUs
         frameDirty = true
         textureLock.unlock()
     }
@@ -405,24 +419,60 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             // Re-drawing the same stale texture at 120Hz doesn't count as a new frame.
             if frameDirty {
                 frameDirty = false
-                renderedFrameCount += 1
-                renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
-                onFrameRendered?()
+                // Snapshot capture timestamp for this frame before present
+                let captureTsUs = frameCaptureTimestampUs
+
+                // Step 8: End encoding
+                encoder.endEncoding()
+
+                // Step 9: Present drawable
+                commandBuffer.present(drawable)
+
+                // Track actual on-screen presentation via addPresentedHandler.
+                // This fires AFTER the display controller scans out the frame —
+                // the closest to "photons on screen" we can get without a camera.
+                drawable.addPresentedHandler { [weak self] presentedDrawable in
+                    guard let self = self else { return }
+                    self.renderedFrameCount += 1
+                    self.renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+                    self.onFrameRendered?()
+
+                    // Glass-to-glass: convert presentedTime to wall-clock for
+                    // comparison with Mac's CLOCK_REALTIME capture timestamp.
+                    if captureTsUs > 0 {
+                        let presentedMach = presentedDrawable.presentedTime
+                        if presentedMach > 0 {
+                            // Convert mach presentedTime to wall clock:
+                            // wallNow - machNow + presentedMach = presented wall clock
+                            var ts = timespec()
+                            clock_gettime(CLOCK_REALTIME, &ts)
+                            let wallNowUs = Int64(ts.tv_sec) * 1_000_000 + Int64(ts.tv_nsec / 1000)
+                            let machNowUs = Int64(CACurrentMediaTime() * 1_000_000)
+                            let presentedWallUs = wallNowUs - machNowUs + Int64(presentedMach * 1_000_000)
+                            self.onFramePresented?(captureTsUs, presentedWallUs)
+                        }
+                    }
+                }
+
+                // Step 10: Signal semaphore on completion (triple buffering)
+                commandBuffer.addCompletedHandler { [weak self] _ in
+                    self?.inflightSemaphore.signal()
+                }
+
+                // Step 11: Commit
+                commandBuffer.commit()
+                return
             }
         }
 
-        // Step 8: End encoding
+        // No new frame — still need to present the stale redraw
         encoder.endEncoding()
-
-        // Step 9: Present drawable
         commandBuffer.present(drawable)
 
-        // Step 10: Signal semaphore on completion (triple buffering)
         commandBuffer.addCompletedHandler { [weak self] _ in
             self?.inflightSemaphore.signal()
         }
 
-        // Step 11: Commit
         commandBuffer.commit()
     }
 }

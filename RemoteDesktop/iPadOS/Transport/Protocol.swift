@@ -104,6 +104,8 @@ enum InputEventType: UInt8 {
     case resMatchResponse   = 0x22  // Mac -> iPad: resolution match result
     case geometryUpdate     = 0x23  // Mac -> iPad: new display geometry
     case keepalive          = 0x30
+    case clockSyncReq       = 0xFE  // iPad -> Mac: Cristian's algorithm probe
+    case clockSyncResp      = 0xFD  // Mac -> iPad: clock sync response
     case latencyProbe       = 0xFF
 }
 
@@ -135,6 +137,29 @@ struct InputEventHeader {
             var ts = tsUs; memcpy(base + 1, &ts, 8)
         }
         return buf
+    }
+}
+
+// MARK: - ClockSyncResponse (24 bytes, mirrors protocol.h)
+
+/// Cristian's algorithm response payload, sent after InputEventHeader.
+/// Carries t1 (iPad send, echoed), t2 (Mac receive), t3 (Mac send).
+struct ClockSyncResponse {
+    let t1iPadUs: UInt64
+    let t2MacUs: UInt64
+    let t3MacUs: UInt64
+
+    static let size = 24
+
+    static func parse(from data: Data) -> ClockSyncResponse? {
+        guard data.count >= Self.size else { return nil }
+        return data.withUnsafeBytes { buf -> ClockSyncResponse? in
+            guard let p = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            var t1: UInt64 = 0; memcpy(&t1, p + 0, 8)
+            var t2: UInt64 = 0; memcpy(&t2, p + 8, 8)
+            var t3: UInt64 = 0; memcpy(&t3, p + 16, 8)
+            return ClockSyncResponse(t1iPadUs: t1, t2MacUs: t2, t3MacUs: t3)
+        }
     }
 }
 

@@ -300,7 +300,7 @@ static void e2eReceiveMin(nw_connection_t conn, size_t minLen, size_t maxLen,
             CMSampleBufferRef sb = e2eCreateSampleBuffer(surface, CMTimeMake(0, 1000000));
 
             dispatch_sync(comp.compress_queue, ^{
-                compress_frame(&comp, surface, sb, &out);
+                compress_frame(&comp, surface, sb, 0, &out);
                 frameHdr = out.header;
             });
 
@@ -619,7 +619,7 @@ static void e2eReceiveMin(nw_connection_t conn, size_t minLen, size_t maxLen,
         __block MediaFrameHeader hdr;
 
         dispatch_sync(compressor.compress_queue, ^{
-            compress_frame(&compressor, surface, sb, &out);
+            compress_frame(&compressor, surface, sb, 0, &out);
             hdr = out.header;
         });
 
@@ -969,7 +969,7 @@ static void e2eReceiveMin(nw_connection_t conn, size_t minLen, size_t maxLen,
     __block MediaFrameHeader hdr;
 
     dispatch_sync(compressor.compress_queue, ^{
-        compress_frame(&compressor, surface, sb, &out);
+        compress_frame(&compressor, surface, sb, 0, &out);
         hdr = out.header;
     });
 

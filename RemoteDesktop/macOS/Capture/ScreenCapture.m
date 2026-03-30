@@ -302,6 +302,16 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
     }
 
     /*
+     * Stamp wall-clock capture time ONCE at frame arrival — used by both
+     * HEVC and LZ4 paths so ts_us is consistent and comparable to
+     * iPad's clock_gettime(CLOCK_REALTIME).
+     */
+    struct timespec capTs;
+    clock_gettime(CLOCK_REALTIME, &capTs);
+    uint64_t captureTimestampUs = (uint64_t)capTs.tv_sec * 1000000ULL
+                                + (uint64_t)(capTs.tv_nsec / 1000);
+
+    /*
      * RD-COMP-05: Hold CMSampleBuffer retain for entire compression duration.
      * CFRetain before dispatching to compress queue, CFRelease after
      * compress_frame returns. This prevents IOSurface recycling.
@@ -317,7 +327,7 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
         }
         hevcFrameCount++;
         CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-        self.onPixelBuffer(pixelBuffer, pts);
+        self.onPixelBuffer(pixelBuffer, pts, captureTimestampUs);
         CFRelease(sampleBuffer);
         return;
     }
@@ -340,7 +350,7 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
          * re-use _compressor.compress_queue by dispatching there.
          */
         dispatch_sync(self->_compressor.compress_queue, ^{
-            int result = compress_frame(&self->_compressor, surface, sampleBuffer, &output);
+            int result = compress_frame(&self->_compressor, surface, sampleBuffer, captureTimestampUs, &output);
             if (result != 0) {
                 os_log_error(sc_log(), "compress_frame failed for seq %u", self->_compressor.seq);
             } else {

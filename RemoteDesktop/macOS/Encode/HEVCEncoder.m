@@ -157,7 +157,7 @@ static const int kEcoMaxHeight720 = 720;
 
 #pragma mark - Encoding
 
-- (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp {
+- (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp captureTimestampUs:(uint64_t)captureTimestampUs {
     if (!_isActive || !_session) {
         static int skipCount = 0;
         if (skipCount < 3) {
@@ -177,6 +177,13 @@ static const int kEcoMaxHeight720 = 720;
     }
     encodeCount++;
 
+    /* Pass capture wall-clock timestamp through sourceFrameRefcon so the
+     * output callback can stamp ts_us at capture time, not encode-output time. */
+    uint64_t *tsRef = malloc(sizeof(uint64_t));
+    if (tsRef) {
+        *tsRef = captureTimestampUs;
+    }
+
     /* frameProperties: nil = let encoder decide keyframe placement */
     OSStatus status = VTCompressionSessionEncodeFrame(
         _session,
@@ -184,12 +191,13 @@ static const int kEcoMaxHeight720 = 720;
         timestamp,
         kCMTimeInvalid,  /* duration -- invalid = encoder decides */
         NULL,            /* frameProperties -- nil */
-        NULL,            /* sourceFrameRefcon */
+        tsRef,           /* sourceFrameRefcon -- capture timestamp */
         NULL             /* infoFlagsOut */
     );
 
     if (status != noErr) {
         os_log_error(hevc_log(), "VTCompressionSessionEncodeFrame failed: %d", (int)status);
+        free(tsRef);
     }
 }
 
@@ -242,6 +250,13 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
                                  OSStatus status,
                                  VTEncodeInfoFlags infoFlags,
                                  CMSampleBufferRef sampleBuffer) {
+    /* Extract capture timestamp passed via sourceFrameRefcon, free in all paths */
+    uint64_t captureTimestampUs = 0;
+    if (sourceFrameRefCon) {
+        captureTimestampUs = *(uint64_t *)sourceFrameRefCon;
+        free(sourceFrameRefCon);
+    }
+
     if (status != noErr) {
         os_log_error(hevc_log(), "HEVC encode callback error: %d", (int)status);
         return;
@@ -337,12 +352,10 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
         }
     }
 
-    /* Wall clock timestamp for pipeline latency measurement.
-     * iPad compares this to its own clock to compute capture-to-render latency.
-     * Devices on the same USB link have <1ms clock skew via NTP. */
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    uint64_t tsUs = (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)(ts.tv_nsec / 1000);
+    /* Capture-time wall clock (CLOCK_REALTIME microseconds) stamped in
+     * ScreenCapture.didOutputSampleBuffer, threaded via sourceFrameRefcon.
+     * Consistent with LZ4 path and comparable to iPad's clock_gettime. */
+    uint64_t tsUs = captureTimestampUs;
 
     /* Build MediaFrameHeader */
     MediaFrameHeader header;

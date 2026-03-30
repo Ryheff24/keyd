@@ -23,8 +23,9 @@ NS_ASSUME_NONNULL_BEGIN
 typedef void (^ScreenCaptureFrameCallback)(CompressOutput *output);
 
 /* Callback block type — called with raw pixel buffer for HEVC encoding.
- * pixelBuffer + sampleBuffer are retained for the callback duration. */
-typedef void (^ScreenCapturePixelBufferCallback)(CVPixelBufferRef pixelBuffer, CMTime timestamp);
+ * pixelBuffer + sampleBuffer are retained for the callback duration.
+ * captureTimestampUs: wall-clock microseconds (CLOCK_REALTIME) at capture arrival. */
+typedef void (^ScreenCapturePixelBufferCallback)(CVPixelBufferRef pixelBuffer, CMTime timestamp, uint64_t captureTimestampUs);
 
 /* Callback block type — called when watchdog detects no frames for >2s. */
 typedef void (^ScreenCaptureReauthCallback)(void);

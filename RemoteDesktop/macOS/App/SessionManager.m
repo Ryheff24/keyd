@@ -711,12 +711,12 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     };
 
     /* Raw pixel buffer callback — feeds HEVC encoder when active */
-    _capture.onPixelBuffer = ^(CVPixelBufferRef pixelBuffer, CMTime timestamp) {
+    _capture.onPixelBuffer = ^(CVPixelBufferRef pixelBuffer, CMTime timestamp, uint64_t captureTimestampUs) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
         if (!strongSelf->_hevcEncoder.isActive) return;
 
-        [strongSelf->_hevcEncoder encodePixelBuffer:pixelBuffer timestamp:timestamp];
+        [strongSelf->_hevcEncoder encodePixelBuffer:pixelBuffer timestamp:timestamp captureTimestampUs:captureTimestampUs];
     };
 
     /* HEVC encoder output callback */
@@ -819,6 +819,10 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
             [self handleModeChangeFromiPad:data length:length];
             break;
 
+        case KEYDRD_INPUT_CLOCK_SYNC_REQ:
+            [self handleClockSyncRequest:data length:length];
+            break;
+
         case KEYDRD_INPUT_LATENCY_PROBE:
             /* Echo latency probe back to iPad immediately */
             [self sendInputEventToiPad:data length:length];
@@ -832,6 +836,44 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
             os_log_debug(sLog, "Unhandled input event type: 0x%02x", header->type);
             break;
     }
+}
+
+#pragma mark - Clock Sync (Cristian's Algorithm)
+
+- (void)handleClockSyncRequest:(const void *)data length:(size_t)length {
+    if (length < sizeof(InputEventHeader)) return;
+
+    /* t2: Mac receive time (as close to reception as possible) */
+    struct timespec ts2;
+    clock_gettime(CLOCK_REALTIME, &ts2);
+    uint64_t t2Us = (uint64_t)ts2.tv_sec * 1000000ULL + (uint64_t)(ts2.tv_nsec / 1000);
+
+    /* Extract t1 from request (iPad send time, stored in ts_us) */
+    const InputEventHeader *reqHeader = (const InputEventHeader *)data;
+    uint64_t t1Us = reqHeader->ts_us;
+
+    /* Build response: InputEventHeader + ClockSyncResponse */
+    size_t totalLen = sizeof(InputEventHeader) + sizeof(ClockSyncResponse);
+    uint8_t packet[sizeof(InputEventHeader) + sizeof(ClockSyncResponse)];
+
+    /* t3: Mac send time (just before send) */
+    struct timespec ts3;
+    clock_gettime(CLOCK_REALTIME, &ts3);
+    uint64_t t3Us = (uint64_t)ts3.tv_sec * 1000000ULL + (uint64_t)(ts3.tv_nsec / 1000);
+
+    InputEventHeader respHeader;
+    respHeader.type = KEYDRD_INPUT_CLOCK_SYNC_RESP;
+    respHeader.ts_us = t3Us;
+
+    ClockSyncResponse resp;
+    resp.t1_ipad_us = t1Us;
+    resp.t2_mac_us = t2Us;
+    resp.t3_mac_us = t3Us;
+
+    memcpy(packet, &respHeader, sizeof(InputEventHeader));
+    memcpy(packet + sizeof(InputEventHeader), &resp, sizeof(ClockSyncResponse));
+
+    [self sendInputEventToiPad:packet length:totalLen];
 }
 
 #pragma mark - Mode Change from iPad

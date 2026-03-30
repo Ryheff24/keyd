@@ -215,7 +215,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     XCTAssertTrue(sb != NULL, @"Sample buffer creation must succeed");
 
     dispatch_sync(compressor.compress_queue, ^{
-        int result = compress_frame(&compressor, surface, sb, &output);
+        int result = compress_frame(&compressor, surface, sb, 0, &output);
         XCTAssertEqual(result, 0, @"compress_frame must succeed");
 
         sentHeader = output.header;
@@ -335,11 +335,11 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     CMSampleBufferRef sb2 = createFakeSampleBuffer(surface2, CMTimeMake(33333, 1000000));
 
     dispatch_sync(compressor.compress_queue, ^{
-        compress_frame(&compressor, surface1, sb1, &out1);
+        compress_frame(&compressor, surface1, sb1, 0, &out1);
         hdr1 = out1.header;
         payload1 = [NSData dataWithBytes:out1.buf length:out1.compressed_size];
 
-        compress_frame(&compressor, surface2, sb2, &out2);
+        compress_frame(&compressor, surface2, sb2, 0, &out2);
         hdr2 = out2.header;
         payload2 = [NSData dataWithBytes:out2.buf length:out2.compressed_size];
     });
@@ -451,7 +451,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
         __block MediaFrameHeader hdr;
 
         dispatch_sync(compressor.compress_queue, ^{
-            compress_frame(&compressor, surface, sb, &out);
+            compress_frame(&compressor, surface, sb, 0, &out);
             hdr = out.header;
         });
 
@@ -566,7 +566,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     CVPixelBufferRef pb = createPixelBufferFromSurface(surface);
     XCTAssertTrue(pb != NULL);
 
-    [encoder encodePixelBuffer:pb timestamp:CMTimeMake(0, 1000000)];
+    [encoder encodePixelBuffer:pb timestamp:CMTimeMake(0, 1000000) captureTimestampUs:0];
 
     /* The encoder callback is async, give it time */
     [self waitForExpectations:@[encodedExpect] timeout:5.0];
@@ -616,7 +616,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
 
     /* Encode several frames to get at least one keyframe out */
     for (int i = 0; i < 5; i++) {
-        [encoder encodePixelBuffer:pb timestamp:CMTimeMake(i * 33333, 1000000)];
+        [encoder encodePixelBuffer:pb timestamp:CMTimeMake(i * 33333, 1000000) captureTimestampUs:0];
     }
 
     /* Wait for encoder output */
@@ -950,7 +950,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     XCTAssertTrue(sb != NULL, @"Sample buffer creation must succeed");
 
     dispatch_sync(compressor.compress_queue, ^{
-        int result = compress_frame(&compressor, surface, sb, &output);
+        int result = compress_frame(&compressor, surface, sb, 100000, &output);
         XCTAssertEqual(result, 0, @"compress_frame must succeed");
         hdr = output.header;
         compressedPayload = [NSData dataWithBytes:output.buf length:output.compressed_size];
@@ -985,9 +985,8 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
                                            (uInt)compressedPayload.length);
     XCTAssertEqual(hdr.crc32, expectedCRC, @"CRC32 must match actual payload CRC");
 
-    /* Timestamp must be > 0 (we set pts to 100000/1000000 = 0.1s = 100000 us) */
-    XCTAssertGreaterThan(hdr.ts_us, (uint64_t)0, @"Timestamp must be > 0");
-    XCTAssertEqual(hdr.ts_us, (uint64_t)100000, @"Timestamp must match input PTS");
+    /* Timestamp must match the capture_ts_us we passed to compress_frame */
+    XCTAssertEqual(hdr.ts_us, (uint64_t)100000, @"Timestamp must match capture_ts_us");
 
     /* ---- Decompress and verify pixels match original exactly ---- */
     uint8_t *decompressed = (uint8_t *)malloc(frame_bytes);
@@ -1044,11 +1043,11 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     CMSampleBufferRef sb2 = createFakeSampleBuffer(surface2, CMTimeMake(33333, 1000000));
 
     dispatch_sync(compressor.compress_queue, ^{
-        compress_frame(&compressor, surface1, sb1, &out1);
+        compress_frame(&compressor, surface1, sb1, 0, &out1);
         hdr1 = out1.header;
         payload1 = [NSData dataWithBytes:out1.buf length:out1.compressed_size];
 
-        compress_frame(&compressor, surface2, sb2, &out2);
+        compress_frame(&compressor, surface2, sb2, 0, &out2);
         hdr2 = out2.header;
         payload2 = [NSData dataWithBytes:out2.buf length:out2.compressed_size];
     });
@@ -1144,10 +1143,10 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     CMSampleBufferRef sbB = createFakeSampleBuffer(surfaceB, CMTimeMake(33333, 1000000));
 
     dispatch_sync(compressor.compress_queue, ^{
-        compress_frame(&compressor, surfaceA, sbA, &outA);
+        compress_frame(&compressor, surfaceA, sbA, 0, &outA);
         hdrA = outA.header;
 
-        compress_frame(&compressor, surfaceB, sbB, &outB);
+        compress_frame(&compressor, surfaceB, sbB, 0, &outB);
         hdrB = outB.header;
         payloadB = [NSData dataWithBytes:outB.buf length:outB.compressed_size];
     });
@@ -1219,7 +1218,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
     CVPixelBufferRef pb = createPixelBufferFromSurface(surface);
     XCTAssertTrue(pb != NULL);
 
-    [encoder encodePixelBuffer:pb timestamp:CMTimeMake(0, 1000000)];
+    [encoder encodePixelBuffer:pb timestamp:CMTimeMake(0, 1000000) captureTimestampUs:0];
 
     [self waitForExpectations:@[encodedExpect] timeout:3.0];
 
@@ -1398,7 +1397,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
     XCTAssertTrue(sb != NULL);
 
     dispatch_sync(compressor.compress_queue, ^{
-        int result = compress_frame(&compressor, surface, sb, &output);
+        int result = compress_frame(&compressor, surface, sb, 0, &output);
         XCTAssertEqual(result, 0);
         sentHeader = output.header;
         compressedPayload = [NSData dataWithBytes:output.buf length:output.compressed_size];
@@ -1508,7 +1507,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
         __block MediaFrameHeader hdr;
 
         dispatch_sync(compressor.compress_queue, ^{
-            compress_frame(&compressor, surface, sb, &out);
+            compress_frame(&compressor, surface, sb, 0, &out);
             hdr = out.header;
         });
 
@@ -1655,7 +1654,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
     IOSurfaceUnlock(surface, 0, NULL);
 
     CVPixelBufferRef pb = createPixelBufferFromSurface(surface);
-    [encoder encodePixelBuffer:pb timestamp:CMTimeMake(0, 1000000)];
+    [encoder encodePixelBuffer:pb timestamp:CMTimeMake(0, 1000000) captureTimestampUs:0];
 
     [self waitForExpectations:@[encodedExpect] timeout:3.0];
     XCTAssertNotNil(sentPayload);
@@ -1759,7 +1758,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
 
     CMSampleBufferRef sb = createFakeSampleBuffer(surface, CMTimeMake(0, 1000000));
     dispatch_sync(compressor.compress_queue, ^{
-        compress_frame(&compressor, surface, sb, &output);
+        compress_frame(&compressor, surface, sb, 0, &output);
         frameHdr = output.header;
         framePayload = [NSData dataWithBytes:output.buf length:output.compressed_size];
     });
@@ -1876,7 +1875,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
         __block MediaFrameHeader hdr;
 
         dispatch_sync(compressor.compress_queue, ^{
-            compress_frame(&compressor, surface, sb, &out);
+            compress_frame(&compressor, surface, sb, 0, &out);
             hdr = out.header;
         });
 
@@ -1936,7 +1935,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
 
     CVPixelBufferRef pb = createPixelBufferFromSurface(hevcSurface);
     for (int i = 0; i < 5; i++) { /* encode extra to guarantee 3 output frames */
-        [encoder encodePixelBuffer:pb timestamp:CMTimeMake(i * 33333 + 100000, 1000000)];
+        [encoder encodePixelBuffer:pb timestamp:CMTimeMake(i * 33333 + 100000, 1000000) captureTimestampUs:0];
     }
 
     [self waitForExpectations:@[hevcDone] timeout:5.0];

@@ -88,6 +88,7 @@ void frame_compressor_destroy(FrameCompressorState *state) {
 int compress_frame(FrameCompressorState *state,
                    IOSurfaceRef surface,
                    CMSampleBufferRef sampleBuf,
+                   uint64_t capture_ts_us,
                    CompressOutput *out) {
     /* Enforce single-threaded access on compress queue */
     dispatch_assert_queue(state->compress_queue);
@@ -207,12 +208,10 @@ int compress_frame(FrameCompressorState *state,
     /* Fill output */
     out->compressed_size = (size_t)compressed;
 
-    /* Extract presentation timestamp in microseconds */
-    CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuf);
-    uint64_t ts_us = 0;
-    if (CMTIME_IS_VALID(pts)) {
-        ts_us = (uint64_t)(CMTimeGetSeconds(pts) * 1000000.0);
-    }
+    /* Use capture-time wall clock (CLOCK_REALTIME microseconds) stamped
+     * in ScreenCapture.didOutputSampleBuffer — consistent with HEVC path
+     * and comparable to iPad's clock_gettime(CLOCK_REALTIME). */
+    uint64_t ts_us = capture_ts_us;
 
     /* Compute CRC-32 of compressed payload */
     uint32_t payload_crc = (uint32_t)crc32(0L, out->buf, (uInt)compressed);
