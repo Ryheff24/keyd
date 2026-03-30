@@ -21,6 +21,7 @@
 		B2000021000000000000000A /* TransportFSM.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000000F /* TransportFSM.swift */; };
 		B2000022000000000000000A /* USBNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000022000000000000000F /* USBNetworkTransport.swift */; };
 		B2000023000000000000000A /* WirelessTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000023000000000000000F /* WirelessTransport.swift */; };
+		B2000024000000000000000A /* UDPReassembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000024000000000000000F /* UDPReassembler.swift */; };
 		B2000030000000000000000A /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = B2000030000000000000000F /* Shaders.metal */; };
 		B2000031000000000000000A /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000031000000000000000F /* MetalRenderer.swift */; };
 		B2000040000000000000000A /* HEVCDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000040000000000000000F /* HEVCDecoder.swift */; };
@@ -54,6 +55,7 @@
 		B2000021000000000000000F /* TransportFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportFSM.swift; sourceTree = "<group>"; };
 		B2000022000000000000000F /* USBNetworkTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBNetworkTransport.swift; sourceTree = "<group>"; };
 		B2000023000000000000000F /* WirelessTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessTransport.swift; sourceTree = "<group>"; };
+		B2000024000000000000000F /* UDPReassembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UDPReassembler.swift; sourceTree = "<group>"; };
 		B2000030000000000000000F /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		B2000031000000000000000F /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 		B2000040000000000000000F /* HEVCDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCDecoder.swift; sourceTree = "<group>"; };
@@ -171,6 +173,7 @@
 				B2000021000000000000000F /* TransportFSM.swift */,
 				B2000022000000000000000F /* USBNetworkTransport.swift */,
 				B2000023000000000000000F /* WirelessTransport.swift */,
+				B2000024000000000000000F /* UDPReassembler.swift */,
 			);
 			path = Transport;
 			sourceTree = "<group>";
@@ -279,6 +282,7 @@
 				B2000021000000000000000A /* TransportFSM.swift in Sources */,
 				B2000022000000000000000A /* USBNetworkTransport.swift in Sources */,
 				B2000023000000000000000A /* WirelessTransport.swift in Sources */,
+				B2000024000000000000000A /* UDPReassembler.swift in Sources */,
 				B2000030000000000000000A /* Shaders.metal in Sources */,
 				B2000031000000000000000A /* MetalRenderer.swift in Sources */,
 				B2000040000000000000000A /* HEVCDecoder.swift in Sources */,

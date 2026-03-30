@@ -25,17 +25,16 @@ struct MediaFrameFlags: OptionSet {
     static let delta     = MediaFrameFlags(rawValue: 1 << 6)
 }
 
-// MARK: - MediaFrameHeader (24 bytes, mirrors protocol.h)
+// MARK: - MediaFrameHeader (25 bytes, mirrors protocol.h)
 
-/// Swift mirror of the C MediaFrameHeader struct (24 bytes packed).
+/// Swift mirror of the C MediaFrameHeader struct (25 bytes packed).
 /// Use `parse(from:)` for safe deserialization from network data.
 struct MediaFrameHeader {
     let magic: UInt16       // KEYDRD_MAGIC
     let flags: UInt8        // MediaFrameFlags
     let seq: UInt16         // frame sequence number (wrapping)
-    let chunkIdx: UInt8     // chunk index within frame
-    let chunkTotal: UInt8   // total chunks in frame
-    let reserved: UInt8     // reserved, set to 0
+    let chunkIdx: UInt16    // chunk index within frame (u16 for large keyframes)
+    let chunkTotal: UInt16  // total chunks in frame (u16: up to 65535)
     let payloadSize: UInt32 // compressed payload bytes
     let tsUs: UInt64        // capture timestamp (microseconds)
     let crc32: UInt32       // CRC-32 of payload
@@ -45,39 +44,36 @@ struct MediaFrameHeader {
     var isLastChunk: Bool { flags & 0x04 != 0 }
     var isDelta: Bool { flags & 0x40 != 0 }
 
-    static let size = 24
+    static let size = 25
 
     /// Parse a MediaFrameHeader from raw bytes using manual byte offsets.
-    /// C struct is `__attribute__((packed))` (24 bytes) but Swift's MemoryLayout
-    /// adds padding (28 bytes), so we cannot use direct struct load.
+    /// C packed offsets: magic(0,2), flags(2,1), seq(3,2), chunkIdx(5,2),
+    /// chunkTotal(7,2), payloadSize(9,4), tsUs(13,8), crc32(21,4) = 25 bytes
     static func parse(from data: Data) -> MediaFrameHeader? {
         guard data.count >= Self.size else { return nil }
         return data.withUnsafeBytes { buf -> MediaFrameHeader? in
             guard let p = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
 
-            // C packed offsets: magic(0), flags(2), seq(3), chunkIdx(5),
-            // chunkTotal(6), reserved(7), payloadSize(8), tsUs(12), crc32(20)
             var magic: UInt16 = 0;       memcpy(&magic,       p + 0,  2)
             guard magic == keydrdMagic else { return nil }
 
             let flags = p[2]
             var seq: UInt16 = 0;         memcpy(&seq,         p + 3,  2)
-            let chunkIdx = p[5]
-            let chunkTotal = p[6]
-            let reserved = p[7]
-            var payloadSize: UInt32 = 0; memcpy(&payloadSize, p + 8,  4)
-            var tsUs: UInt64 = 0;        memcpy(&tsUs,        p + 12, 8)
-            var crc32Val: UInt32 = 0;    memcpy(&crc32Val,    p + 20, 4)
+            var chunkIdx: UInt16 = 0;    memcpy(&chunkIdx,    p + 5,  2)
+            var chunkTotal: UInt16 = 0;  memcpy(&chunkTotal,  p + 7,  2)
+            var payloadSize: UInt32 = 0; memcpy(&payloadSize, p + 9,  4)
+            var tsUs: UInt64 = 0;        memcpy(&tsUs,        p + 13, 8)
+            var crc32Val: UInt32 = 0;    memcpy(&crc32Val,    p + 21, 4)
 
             return MediaFrameHeader(
                 magic: magic, flags: flags, seq: seq,
-                chunkIdx: chunkIdx, chunkTotal: chunkTotal, reserved: reserved,
+                chunkIdx: chunkIdx, chunkTotal: chunkTotal,
                 payloadSize: payloadSize, tsUs: tsUs, crc32: crc32Val
             )
         }
     }
 
-    /// Serialize this header to packed bytes matching C layout (24 bytes).
+    /// Serialize this header to packed bytes matching C layout (25 bytes).
     func serialize() -> Data {
         var buf = Data(count: Self.size)
         buf.withUnsafeMutableBytes { p in
@@ -85,12 +81,11 @@ struct MediaFrameHeader {
             var m = magic;           memcpy(base + 0,  &m, 2)
             base[2] = flags
             var s = seq;             memcpy(base + 3,  &s, 2)
-            base[5] = chunkIdx
-            base[6] = chunkTotal
-            base[7] = reserved
-            var ps = payloadSize;    memcpy(base + 8,  &ps, 4)
-            var ts = tsUs;           memcpy(base + 12, &ts, 8)
-            var c = crc32;           memcpy(base + 20, &c, 4)
+            var ci = chunkIdx;       memcpy(base + 5,  &ci, 2)
+            var ct = chunkTotal;     memcpy(base + 7,  &ct, 2)
+            var ps = payloadSize;    memcpy(base + 9,  &ps, 4)
+            var ts = tsUs;           memcpy(base + 13, &ts, 8)
+            var c = crc32;           memcpy(base + 21, &c, 4)
         }
         return buf
     }

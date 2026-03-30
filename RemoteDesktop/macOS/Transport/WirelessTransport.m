@@ -268,10 +268,25 @@ static const char *kInputPortStr = "14568";
 
 - (void)sendMediaFrame:(const void *)data length:(size_t)len {
     nw_connection_t conn = _mediaConnection;
-    if (!conn) return;
+    if (!conn) {
+        static int noConnCount = 0;
+        if (noConnCount < 3) {
+            os_log_error(wireless_log(), "sendMediaFrame: no media connection (len=%zu)", len);
+        }
+        noConnCount++;
+        return;
+    }
+
+    static int mediaSendCount = 0;
+    if (mediaSendCount < 5) {
+        os_log(wireless_log(), "sendMediaFrame: sending %zu bytes via UDP/DTLS", len);
+    }
+    mediaSendCount++;
 
     dispatch_data_t ddata = dispatch_data_create(data, len, _transportQueue,
                                                  DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    /* For DTLS/UDP, each datagram is a complete message.
+     * is_complete=true is required (false gives "Operation not supported"). */
     nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
         if (error) {
@@ -460,6 +475,9 @@ static const char *kInputPortStr = "14568";
                 WirelessTransport *self3 = weakSelf;
                 if (self3) {
                     [self3 scheduleMediaReceive:conn];
+                    if (self3.onMediaChannelReady) {
+                        self3.onMediaChannelReady();
+                    }
                 }
             } else if (cState == nw_connection_state_failed) {
                 os_log_error(wireless_log(), "DTLS wireless media connection failed: %{public}@",

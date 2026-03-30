@@ -42,6 +42,20 @@ final class MetalRenderer: NSObject {
     private var frameTexture: MTLTexture?
     private let textureLock = NSLock()
 
+    /// Count of NEW unique frames rendered (texture changed since last render).
+    /// NOT display link tick count — a stale texture re-drawn doesn't count.
+    private(set) var renderedFrameCount: Int = 0
+
+    /// Timestamps of each NEW rendered frame (for FPS/jitter analysis by tests).
+    private(set) var renderedFrameTimestamps: [CFAbsoluteTime] = []
+
+    /// Callback fired each time a NEW frame is rendered to the display.
+    /// Tests hook into this to count real rendered frames.
+    var onFrameRendered: (() -> Void)?
+
+    /// Dirty flag: set when updateFrame uploads new pixel data, cleared after render.
+    private var frameDirty = false
+
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
     private(set) var macDisplayWidth: Int = 0
@@ -173,6 +187,7 @@ final class MetalRenderer: NSObject {
             withBytes: data,
             bytesPerRow: bytesPerRow
         )
+        frameDirty = true
     }
 
     /// Set the Mac display dimensions (called during session handshake).
@@ -322,6 +337,15 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
 
             // Step 7: Draw triangle strip (4 vertices = full-screen quad)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+
+            // Only count as NEW rendered frame if texture was updated since last render.
+            // Re-drawing the same stale texture at 120Hz doesn't count as a new frame.
+            if frameDirty {
+                frameDirty = false
+                renderedFrameCount += 1
+                renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+                onFrameRendered?()
+            }
         }
 
         // Step 8: End encoding

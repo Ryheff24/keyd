@@ -2,13 +2,15 @@ import Foundation
 import Network
 import Security
 import CryptoKit
+import CoreVideo
 import os.log
 
 /// On-device E2E test runner for the keyd-rd iPad app.
 ///
 /// Runs a sequential test suite that verifies the REAL Mac<->iPad communication
 /// pipeline: Bonjour discovery, TLS+ECDH pairing, transport detection, session
-/// handshake, frame reception, decompression, latency probe, and keepalive.
+/// handshake, frame reception, decompression, latency probe, keepalive,
+/// resolution, FPS, tiered latency, throughput, and transport type assertion.
 ///
 /// Reports results via `print("[TEST] ...")` which is captured by
 /// `xcrun devicectl device process launch --console`.
@@ -55,7 +57,47 @@ final class DeviceTestRunner {
 
     // Overall timeout
     private var overallTimer: Timer?
-    private static let overallTimeout: TimeInterval = 55 // leave room for script timeout
+    private static let overallTimeout: TimeInterval = 90 // 5s stabilize + 10s fps + 10s throughput + probes + buffer
+
+    // --- New test state ---
+
+    // Resolution test
+    private var resolutionTestComplete = false
+    private var decodedFrameWidths: [Int] = []
+    private var decodedFrameHeights: [Int] = []
+
+    // FPS + consistency test
+    private var fpsTestActive = false
+    private var fpsTestComplete = false
+    private var fpsTestStartTime: CFAbsoluteTime = 0
+    private var fpsTestFrameCount = 0
+    private var fpsFrameTimestamps: [CFAbsoluteTime] = [] // every frame arrival time
+    private static let fpsTestDuration: TimeInterval = 10.0
+
+    // Tiered latency test
+    private var tieredLatencyActive = false
+    private var tieredLatencyComplete = false
+    private var tieredLatencyProbes: [Int] = [] // RTTs in microseconds
+    private var tieredLatencyProbesSent = 0
+    private static let tieredLatencyProbeCount = 20
+    private static let tieredLatencyProbeSpacingMs: Int = 50
+
+    // Throughput benchmark
+    private var throughputTestActive = false
+    private var throughputTestComplete = false
+    private var throughputStartTime: CFAbsoluteTime = 0
+    private var throughputBytes: Int = 0
+    private var throughputFrames: Int = 0
+    private static let throughputDuration: TimeInterval = 10.0
+
+    // Transport type assertion
+    private var transportAssertionComplete = false
+
+    // Launch argument configuration
+    private let expectResolution: (width: Int, height: Int)?
+    private let expectFPS: Int?
+    private let latencyTargetMs: Int?
+    private let expectTransport: String?
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "E2ETest")
 
@@ -63,6 +105,67 @@ final class DeviceTestRunner {
 
     init(sessionManager: SessionManager) {
         self.sessionManager = sessionManager
+
+        // Parse launch arguments for parameterized tests
+        let args = ProcessInfo.processInfo.arguments
+
+        // --expect-resolution WxH
+        if let idx = args.firstIndex(of: "--expect-resolution"), idx + 1 < args.count {
+            let parts = args[idx + 1].split(separator: "x").compactMap { Int($0) }
+            if parts.count == 2 {
+                self.expectResolution = (width: parts[0], height: parts[1])
+            } else {
+                self.expectResolution = nil
+            }
+        } else {
+            self.expectResolution = nil
+        }
+
+        // --expect-fps N
+        if let idx = args.firstIndex(of: "--expect-fps"), idx + 1 < args.count {
+            self.expectFPS = Int(args[idx + 1])
+        } else {
+            self.expectFPS = nil
+        }
+
+        // --latency-target-ms N
+        if let idx = args.firstIndex(of: "--latency-target-ms"), idx + 1 < args.count {
+            self.latencyTargetMs = Int(args[idx + 1])
+        } else {
+            self.latencyTargetMs = nil
+        }
+
+        // --expect-transport usb|wifi|awdl
+        if let idx = args.firstIndex(of: "--expect-transport"), idx + 1 < args.count {
+            self.expectTransport = args[idx + 1]
+        } else {
+            self.expectTransport = nil
+        }
+
+        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport))")
+
+        // Wire renderer callback — this is the source of truth for "frame shown on screen"
+        sessionManager.metalRenderer.onFrameRendered = { [weak self] in
+            self?.onRenderedFrame()
+        }
+    }
+
+    /// Called by MetalRenderer each time a frame is actually presented to the display.
+    private func onRenderedFrame() {
+        // Feed FPS test with RENDERED frame timestamps
+        if fpsTestActive && !fpsTestComplete {
+            fpsTestFrameCount += 1
+            fpsFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+        }
+
+        // Feed throughput test with RENDERED frame count + approximate bytes
+        if throughputTestActive && !throughputTestComplete {
+            throughputFrames += 1
+            // Use texture dimensions as proxy for rendered data volume
+            if let renderer = sessionManager?.metalRenderer {
+                throughputBytes += renderer.macDisplayWidth * renderer.macDisplayHeight * 4
+            }
+        }
     }
 
     // MARK: - Public API
@@ -203,25 +306,40 @@ final class DeviceTestRunner {
             totalDecompressedBytes += decompressedSize
         }
 
+        // NOTE: FPS and throughput tests are NOT fed here.
+        // They use MetalRenderer.onFrameRendered to count ACTUALLY RENDERED frames.
+        // A frame that's decoded but never shown on screen doesn't count.
+
         if framesReceived >= targetFrameCount && !frameReceptionComplete {
             frameReceptionComplete = true
 
             let mode = header.isHEVC ? "HEVC" : "LZ4"
-            recordResult(name: "frame-reception", passed: true,
-                        detail: "received: \(framesReceived) frames, mode: \(mode)")
 
-            if framesDecompressed >= targetFrameCount {
+            // Check rendered frame count — frames must actually appear on screen
+            let rendered = sessionManager?.metalRenderer.renderedFrameCount ?? 0
+            let receptionPassed = rendered > 0
+            recordResult(name: "frame-reception", passed: receptionPassed,
+                        detail: "decoded: \(framesReceived), rendered: \(rendered), mode: \(mode)")
+
+            if framesDecompressed >= targetFrameCount && rendered > 0 {
                 let avgSize = totalDecompressedBytes / framesDecompressed
                 recordResult(name: "frame-decompression", passed: true,
-                            detail: "\(framesDecompressed) frames, avg-size: \(avgSize)")
+                            detail: "\(framesDecompressed) decoded, \(rendered) rendered, avg-size: \(avgSize)")
             } else {
                 recordResult(name: "frame-decompression", passed: false,
-                            detail: "only \(framesDecompressed)/\(targetFrameCount) decompressed")
+                            detail: "decoded: \(framesDecompressed), rendered: \(rendered) — frames not reaching display")
             }
 
             // After enough frames, start latency test
             runLatencyProbeTest()
         }
+    }
+
+    /// Report decoded pixel buffer dimensions (called from SessionManager after HEVC decode or LZ4 decompress).
+    /// Used by the resolution test to verify frame dimensions match the handshake.
+    func reportDecodedFrameDimensions(width: Int, height: Int) {
+        decodedFrameWidths.append(width)
+        decodedFrameHeights.append(height)
     }
 
     // MARK: - Test 8: Latency Probe
@@ -262,6 +380,12 @@ final class DeviceTestRunner {
     }
 
     func reportLatencyProbeResponse(rttUs: UInt64) {
+        // Route to tiered latency test if it's active
+        if tieredLatencyActive && !tieredLatencyComplete {
+            reportTieredLatencyProbeResponse(rttUs: rttUs)
+            return
+        }
+
         guard !latencyProbeComplete else { return }
         latencyProbeComplete = true
 
@@ -279,7 +403,7 @@ final class DeviceTestRunner {
 
         guard let sm = sessionManager else {
             recordResult(name: "keepalive", passed: false, detail: "sessionManager nil")
-            finishTests()
+            runExtendedTests()
             return
         }
 
@@ -298,13 +422,387 @@ final class DeviceTestRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             guard let self = self, let sm = self.sessionManager else {
                 self?.recordResult(name: "keepalive", passed: false, detail: "sessionManager gone")
-                self?.finishTests()
+                self?.runExtendedTests()
                 return
             }
 
             let stillConnected = sm.usbTransport.isConnected || sm.wirelessTransport.isConnected
             self.recordResult(name: "keepalive", passed: stillConnected,
                             detail: stillConnected ? "still connected after 3s" : "disconnected")
+            // Chain into extended tests instead of finishing
+            self.runExtendedTests()
+        }
+    }
+
+    // MARK: - Extended Tests (run after the original 9)
+
+    /// Entry point for the 5 new extended tests.
+    /// Runs sequentially: transport-assertion -> resolution -> fps -> latency-tiered -> throughput -> finish
+    private func runExtendedTests() {
+        // Let the stream stabilize for 5 seconds before measuring performance.
+        // Immediate measurement catches startup transients, not steady-state.
+        let delay = 5.0 + Double.random(in: 0..<1.0)
+        print("[CONSOLE] Extended tests: waiting \(String(format: "%.1f", delay))s for stream to stabilize")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.runTransportAssertionTest()
+        }
+    }
+
+    // MARK: - Test 10: Transport Type Assertion
+
+    private func runTransportAssertionTest() {
+        guard let expected = expectTransport else {
+            // No --expect-transport flag, skip
+            runResolutionTest()
+            return
+        }
+
+        print("[TEST] RUNNING: transport-assertion")
+
+        guard transportDetected else {
+            recordResult(name: "transport-assertion", passed: false, detail: "no transport detected yet")
+            runResolutionTest()
+            return
+        }
+
+        // Normalize transport names for comparison
+        let normalizedExpected = expected.lowercased()
+        let normalizedActual = detectedTransportType.lowercased()
+
+        // Map transport state names (usbNCM, wifi, awdl) to match flag values (usb, wifi, awdl)
+        let actualMapped: String
+        switch normalizedActual {
+        case "usbncm", "usb":
+            actualMapped = "usb"
+        case "wifi":
+            actualMapped = "wifi"
+        case "awdl":
+            actualMapped = "awdl"
+        default:
+            actualMapped = normalizedActual
+        }
+
+        let passed = actualMapped == normalizedExpected
+        transportAssertionComplete = true
+        recordResult(name: "transport-assertion", passed: passed,
+                    detail: "expected=\(normalizedExpected), actual=\(actualMapped)")
+        runResolutionTest()
+    }
+
+    // MARK: - Test 11: Resolution
+
+    private func runResolutionTest() {
+        print("[TEST] RUNNING: resolution")
+
+        guard handshakeReceived else {
+            recordResult(name: "resolution", passed: false, detail: "no handshake received")
+            runFPSTest()
+            return
+        }
+
+        let actualWidth = Int(handshakeWidth)
+        let actualHeight = Int(handshakeHeight)
+
+        // Check if we have decoded frame dimensions to verify pixel buffer matches handshake
+        if decodedFrameWidths.count >= 3 {
+            let frameW = decodedFrameWidths.last!
+            let frameH = decodedFrameHeights.last!
+
+            let dimensionsMatch = frameW == actualWidth && frameH == actualHeight
+
+            if let expected = expectResolution {
+                let handshakeMatch = actualWidth == expected.width && actualHeight == expected.height
+                let passed = handshakeMatch && dimensionsMatch
+                recordResult(name: "resolution", passed: passed,
+                            detail: "expected=\(expected.width)x\(expected.height), handshake=\(actualWidth)x\(actualHeight), frame=\(frameW)x\(frameH)")
+            } else {
+                // No expected value -- report actual, pass if frame matches handshake
+                recordResult(name: "resolution", passed: dimensionsMatch,
+                            detail: "handshake=\(actualWidth)x\(actualHeight), frame=\(frameW)x\(frameH), match=\(dimensionsMatch)")
+            }
+        } else {
+            // Not enough decoded frames for pixel buffer check -- verify handshake only
+            if let expected = expectResolution {
+                let passed = actualWidth == expected.width && actualHeight == expected.height
+                recordResult(name: "resolution", passed: passed,
+                            detail: "expected=\(expected.width)x\(expected.height), handshake=\(actualWidth)x\(actualHeight) (no frame dims)")
+            } else {
+                recordResult(name: "resolution", passed: true,
+                            detail: "handshake=\(actualWidth)x\(actualHeight) (no frame dims to verify)")
+            }
+        }
+
+        resolutionTestComplete = true
+        runFPSTest()
+    }
+
+    // MARK: - Test 12: FPS
+
+    private func runFPSTest() {
+        print("[TEST] RUNNING: fps")
+
+        guard let sm = sessionManager, sm.usbTransport.isConnected || sm.wirelessTransport.isConnected else {
+            recordResult(name: "fps", passed: false, detail: "no transport connected")
+            runTieredLatencyTest()
+            return
+        }
+        _ = sm // connectivity check only
+
+        // Collect frames with timestamps for jitter analysis
+        fpsTestActive = true
+        fpsTestStartTime = CFAbsoluteTimeGetCurrent()
+        fpsTestFrameCount = 0
+        fpsFrameTimestamps = []
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fpsTestDuration) { [weak self] in
+            guard let self = self, !self.fpsTestComplete else { return }
+            self.fpsTestActive = false
+            self.fpsTestComplete = true
+
+            let elapsed = CFAbsoluteTimeGetCurrent() - self.fpsTestStartTime
+            let timestamps = self.fpsFrameTimestamps
+            let frameCount = timestamps.count
+
+            // Compute average FPS
+            let avgFPS: Double = elapsed > 0 ? Double(frameCount) / elapsed : 0
+
+            // Compute frame intervals and jitter stats
+            var intervals: [Double] = []
+            for i in 1..<timestamps.count {
+                intervals.append((timestamps[i] - timestamps[i-1]) * 1000.0) // ms
+            }
+
+            var stutterCount = 0  // gaps > 100ms
+            var medianInterval: Double = 0
+            var p95Interval: Double = 0
+            var maxInterval: Double = 0
+            var minInterval: Double = 0
+            var jitterStdDev: Double = 0
+
+            if !intervals.isEmpty {
+                let sorted = intervals.sorted()
+                minInterval = sorted.first!
+                maxInterval = sorted.last!
+                medianInterval = sorted[sorted.count / 2]
+                p95Interval = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+
+                let mean = intervals.reduce(0, +) / Double(intervals.count)
+                let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+                jitterStdDev = sqrt(variance)
+
+                stutterCount = intervals.filter { $0 > 100.0 }.count
+            }
+
+            // Print detailed timing info
+            print("[TEST] INFO: fps-detail (avg=\(String(format: "%.1f", avgFPS)) fps, \(frameCount) frames in \(String(format: "%.1f", elapsed))s)")
+            if !intervals.isEmpty {
+                print("[TEST] INFO: frame-intervals (min=\(String(format: "%.0f", minInterval))ms, median=\(String(format: "%.0f", medianInterval))ms, p95=\(String(format: "%.0f", p95Interval))ms, max=\(String(format: "%.0f", maxInterval))ms)")
+                print("[TEST] INFO: frame-jitter (stddev=\(String(format: "%.1f", jitterStdDev))ms, stutters=\(stutterCount) (>100ms gaps))")
+            }
+
+            // Compute worst 1-second window FPS
+            var worstWindowFPS: Double = 0
+            if timestamps.count >= 2 {
+                var minFramesInWindow = Int.max
+                for startIdx in 0..<timestamps.count {
+                    let windowEnd = timestamps[startIdx] + 1.0
+                    var endIdx = startIdx
+                    while endIdx < timestamps.count && timestamps[endIdx] < windowEnd {
+                        endIdx += 1
+                    }
+                    let framesInWindow = endIdx - startIdx
+                    if framesInWindow < minFramesInWindow {
+                        minFramesInWindow = framesInWindow
+                    }
+                }
+                worstWindowFPS = Double(minFramesInWindow)
+            }
+
+            // Pass criteria — strict:
+            // 1. Must have meaningful frames (>= 20 unique frames in 10s = at least 2fps)
+            // 2. Stutter ratio < 5% (was 20% — too lenient)
+            // 3. Max gap < 200ms (no single gap should freeze the display for 200ms+)
+            // 4. Worst 1s window must have >= 5 frames (never drop below 5fps)
+            // 5. If --expect-fps specified, avg must meet it
+            let hasEnoughFrames = frameCount >= 20
+            let stutterRatio = intervals.isEmpty ? 1.0 : Double(stutterCount) / Double(intervals.count)
+            let isConsistent = stutterRatio < 0.05
+            let noLongFreeze = maxInterval < 200.0
+            let worstWindowOK = worstWindowFPS >= 5.0
+
+            var passed: Bool
+            var detail: String
+            var issues: [String] = []
+
+            if !hasEnoughFrames { issues.append("too few frames (\(frameCount))") }
+            if !isConsistent { issues.append("\(String(format: "%.0f", stutterRatio * 100))% stutters") }
+            if !noLongFreeze { issues.append("max gap \(String(format: "%.0f", maxInterval))ms") }
+            if !worstWindowOK { issues.append("worst 1s window: \(String(format: "%.0f", worstWindowFPS))fps") }
+
+            if let expected = self.expectFPS {
+                let meetsTarget = avgFPS >= Double(expected)
+                if !meetsTarget { issues.append("avg \(String(format: "%.1f", avgFPS)) < target \(expected)") }
+                passed = meetsTarget && hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK
+            } else {
+                passed = hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK
+            }
+
+            detail = "\(String(format: "%.1f", avgFPS)) fps, \(frameCount) frames, stutters=\(stutterCount)/\(intervals.count), jitter=\(String(format: "%.1f", jitterStdDev))ms, worst1s=\(String(format: "%.0f", worstWindowFPS))fps, maxGap=\(String(format: "%.0f", maxInterval))ms"
+
+            if !issues.isEmpty {
+                detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+            }
+
+            self.recordResult(name: "fps", passed: passed, detail: detail)
+
+            self.runTieredLatencyTest()
+        }
+    }
+
+    // MARK: - Test 13: Tiered Latency
+
+    private func runTieredLatencyTest() {
+        print("[TEST] RUNNING: latency-tiered")
+
+        guard let sm = sessionManager, sm.usbTransport.isConnected || sm.wirelessTransport.isConnected else {
+            recordResult(name: "latency-tiered", passed: false, detail: "no transport connected")
+            runThroughputTest()
+            return
+        }
+        _ = sm // connectivity check only
+
+        tieredLatencyActive = true
+        tieredLatencyProbes = []
+        tieredLatencyProbesSent = 0
+
+        // Send probes with spacing
+        sendNextTieredLatencyProbe()
+    }
+
+    private func sendNextTieredLatencyProbe() {
+        guard tieredLatencyActive, tieredLatencyProbesSent < Self.tieredLatencyProbeCount else {
+            return
+        }
+
+        guard let sm = sessionManager else {
+            completeTieredLatencyTest()
+            return
+        }
+
+        let sentTimestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000)
+        let header = InputEventHeader(type: InputEventType.latencyProbe.rawValue, tsUs: sentTimestamp)
+        let data = header.serialize()
+
+        if sm.usbTransport.isConnected {
+            sm.usbTransport.sendInputEvent(data)
+        } else if sm.wirelessTransport.isConnected {
+            sm.wirelessTransport.sendInputEvent(data)
+        }
+
+        tieredLatencyProbesSent += 1
+
+        // Schedule next probe after spacing interval
+        if tieredLatencyProbesSent < Self.tieredLatencyProbeCount {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(Self.tieredLatencyProbeSpacingMs) / 1000.0) { [weak self] in
+                self?.sendNextTieredLatencyProbe()
+            }
+        }
+
+        // Set overall timeout for tiered latency (probes * spacing + generous buffer)
+        if tieredLatencyProbesSent == Self.tieredLatencyProbeCount {
+            let timeout = Double(Self.tieredLatencyProbeCount * Self.tieredLatencyProbeSpacingMs) / 1000.0 + 5.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                guard let self = self, !self.tieredLatencyComplete else { return }
+                self.completeTieredLatencyTest()
+            }
+        }
+    }
+
+    /// Called from reportTieredLatencyProbeResponse for each echoed probe.
+    func reportTieredLatencyProbeResponse(rttUs: UInt64) {
+        guard tieredLatencyActive, !tieredLatencyComplete else { return }
+
+        tieredLatencyProbes.append(Int(rttUs))
+
+        // Check if we have all probes back
+        if tieredLatencyProbes.count >= Self.tieredLatencyProbeCount {
+            completeTieredLatencyTest()
+        }
+    }
+
+    private func completeTieredLatencyTest() {
+        guard !tieredLatencyComplete else { return }
+        tieredLatencyActive = false
+        tieredLatencyComplete = true
+
+        guard !tieredLatencyProbes.isEmpty else {
+            recordResult(name: "latency-tiered", passed: false, detail: "no probe responses received")
+            runThroughputTest()
+            return
+        }
+
+        let sorted = tieredLatencyProbes.sorted()
+        let count = sorted.count
+        let minUs = sorted.first!
+        let maxUs = sorted.last!
+        let medianUs = sorted[count / 2]
+        let p95Idx = min(Int(Double(count) * 0.95), count - 1)
+        let p95Us = sorted[p95Idx]
+
+        let minMs = minUs / 1000
+        let medianMs = medianUs / 1000
+        let p95Ms = p95Us / 1000
+        let maxMs = maxUs / 1000
+
+        if let target = latencyTargetMs {
+            let passed = medianMs <= target
+            recordResult(name: "latency-tiered", passed: passed,
+                        detail: "target=\(target)ms, median=\(medianMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount)")
+        } else {
+            // No target -- report stats, always pass
+            recordResult(name: "latency-tiered", passed: true,
+                        detail: "min=\(minMs)ms, median=\(medianMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount)")
+        }
+
+        runThroughputTest()
+    }
+
+    // MARK: - Test 14: Throughput Benchmark
+
+    private func runThroughputTest() {
+        print("[TEST] RUNNING: throughput")
+
+        guard let sm = sessionManager, sm.usbTransport.isConnected || sm.wirelessTransport.isConnected else {
+            recordResult(name: "throughput", passed: false, detail: "no transport connected")
+            finishTests()
+            return
+        }
+        _ = sm // connectivity check only
+
+        throughputTestActive = true
+        throughputStartTime = CFAbsoluteTimeGetCurrent()
+        throughputBytes = 0
+        throughputFrames = 0
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.throughputDuration) { [weak self] in
+            guard let self = self, !self.throughputTestComplete else { return }
+            self.throughputTestActive = false
+            self.throughputTestComplete = true
+
+            let elapsed = CFAbsoluteTimeGetCurrent() - self.throughputStartTime
+            let mbps: Double
+            if elapsed > 0 {
+                mbps = (Double(self.throughputBytes) * 8.0) / (elapsed * 1_000_000.0)
+            } else {
+                mbps = 0
+            }
+
+            // Must have at least some data flowing to pass
+            let passed = self.throughputFrames > 0
+            print("[TEST] INFO: throughput (recv=\(String(format: "%.1f", mbps)) Mbps over \(String(format: "%.1f", elapsed))s, frames=\(self.throughputFrames))")
+            self.recordResult(name: "throughput", passed: passed,
+                            detail: "recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames in \(String(format: "%.1f", elapsed))s")
+
             self.finishTests()
         }
     }
@@ -334,9 +832,13 @@ final class DeviceTestRunner {
 
         // Report remaining tests as failed
         let completedTests = Set(testResults.map { $0.name })
-        let allTests = ["bonjour-discovery", "tls-connection", "ecdh-exchange",
+        var allTests = ["bonjour-discovery", "tls-connection", "ecdh-exchange",
                        "transport-detected", "session-handshake", "frame-reception",
-                       "frame-decompression", "latency-probe", "keepalive"]
+                       "frame-decompression", "latency-probe", "keepalive",
+                       "resolution", "fps", "latency-tiered", "throughput"]
+        if expectTransport != nil {
+            allTests.append("transport-assertion")
+        }
 
         for test in allTests where !completedTests.contains(test) {
             recordResult(name: test, passed: false, detail: "not reached before timeout")

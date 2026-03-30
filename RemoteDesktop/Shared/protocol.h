@@ -15,26 +15,24 @@
 #define KEYDRD_FLAG_LAST_CHUNK (1 << 2)   /* bit 2: last chunk of frame */
 #define KEYDRD_FLAG_DELTA      (1 << 6)   /* bit 6: XOR delta frame */
 
-/* ---- MediaFrameHeader (24 bytes, packed) ----
- * Field sizes chosen to fit 24 bytes exactly:
+/* ---- MediaFrameHeader (25 bytes, packed) ----
+ * Field sizes chosen to fit 25 bytes exactly:
  *   seq is u16 (wraps at 65535 -- adequate for streaming with wrap-around comparison)
- *   chunk_idx/chunk_total are u8 (max 255 chunks per frame -- sufficient for MTU chunking)
- *   1 byte reserved for future use / alignment
+ *   chunk_idx/chunk_total are u16 (max 65535 chunks per frame -- sufficient for large keyframes)
  */
 typedef struct __attribute__((packed)) {
     uint16_t magic;          /* KEYDRD_MAGIC */
     uint8_t  flags;          /* see KEYDRD_FLAG_* */
     uint16_t seq;            /* frame sequence number (wrapping) */
-    uint8_t  chunk_idx;      /* chunk index within frame */
-    uint8_t  chunk_total;    /* total chunks in frame */
-    uint8_t  reserved;       /* reserved, set to 0 */
+    uint16_t chunk_idx;      /* chunk index within frame (u16 for large keyframes) */
+    uint16_t chunk_total;    /* total chunks in frame (u16: up to 65535 chunks) */
     uint32_t payload_size;   /* compressed payload bytes */
     uint64_t ts_us;          /* capture timestamp (microseconds) */
     uint32_t crc32;          /* CRC-32 of payload */
 } MediaFrameHeader;
 
-_Static_assert(sizeof(MediaFrameHeader) == 24,
-               "MediaFrameHeader must be exactly 24 bytes");
+_Static_assert(sizeof(MediaFrameHeader) == 25,
+               "MediaFrameHeader must be exactly 25 bytes");
 
 /* ---- InputEventHeader type values ---- */
 #define KEYDRD_INPUT_MOUSE_MOVE           0x01

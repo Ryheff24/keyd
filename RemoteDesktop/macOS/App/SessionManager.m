@@ -4,6 +4,7 @@
 #import "HEVCEncoder.h"
 #import "USBNetworkTransport.h"
 #import "WirelessTransport.h"
+#import "UDPChunker.h"
 #import "PairingManager.h"
 #import "protocol.h"
 
@@ -518,7 +519,7 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 #pragma mark - Streaming
 
 - (void)onTransportConnected {
-    os_log(sLog, "Transport connected -- sending handshake and starting capture");
+    os_log(sLog, "Transport connected -- sending handshake");
     [self transitionTo:SESSION_STREAMING];
 
     /* Send session handshake (also sets _captureWidth/_captureHeight) */
@@ -537,29 +538,55 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     /* Set up frame delivery */
     [self configureFrameDelivery];
 
-    /* Start capture */
-    [_capture startCapture];
-
-    /* In test mode, briefly flash a window to force SCStream to deliver
-     * at least one complete frame (static desktops only produce idle frames). */
-    if (_testMode) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            NSWindow *flash = [[NSWindow alloc] initWithContentRect:NSMakeRect(100, 100, 200, 200)
-                                                          styleMask:NSWindowStyleMaskBorderless
-                                                            backing:NSBackingStoreBuffered
-                                                              defer:NO];
-            flash.backgroundColor = [NSColor redColor];
-            flash.level = NSFloatingWindowLevel;
-            [flash orderFront:nil];
-            os_log(sLog, "Test mode: flashed screen change window to force SCStream complete frame");
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [flash close];
-            });
-        });
+    /* For wireless: defer capture until DTLS media channel is ready.
+     * HEVC frames are sent via UDP/DTLS — sending before the media
+     * connection is established just drops frames silently. */
+    if (_wirelessTransport.isConnected) {
+        __weak SessionManager *weakSelf = self;
+        _wirelessTransport.onMediaChannelReady = ^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf->_wirelessTransport.onMediaChannelReady = nil; /* one-shot */
+            os_log(sLog, "DTLS media channel ready -- starting capture now");
+            [strongSelf _beginCapture];
+        };
+    } else {
+        /* USB: start capture immediately (media goes via separate UDP on NCM) */
+        [self _beginCapture];
     }
 
     /* Start latency probe timer (every 1 second) */
     [self startLatencyProbeTimer];
+}
+
+- (void)_beginCapture {
+    [_capture startCapture];
+
+    /* In test mode, show a persistent animated window that continuously changes
+     * the screen content. SCStream only delivers frames when pixels change —
+     * a static desktop produces only idle frames with no pixel data.
+     * This window animates a color cycle to ensure steady frame delivery. */
+    if (_testMode) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSWindow *testWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(50, 50, 300, 300)
+                                                              styleMask:NSWindowStyleMaskBorderless
+                                                                backing:NSBackingStoreBuffered
+                                                                  defer:NO];
+            testWindow.level = NSFloatingWindowLevel;
+            testWindow.backgroundColor = [NSColor redColor];
+            [testWindow orderFront:nil];
+
+            /* Animate at ~30fps to keep SCStream producing complete frames continuously.
+             * Each tick changes the background color, ensuring pixels differ every frame. */
+            __block CGFloat hue = 0;
+            [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(NSTimer *timer) {
+                hue = fmod(hue + 0.02, 1.0);
+                testWindow.backgroundColor = [NSColor colorWithHue:hue saturation:1.0 brightness:1.0 alpha:1.0];
+            }];
+
+            os_log(sLog, "Test mode: animated window active for continuous frame delivery");
+        });
+    }
 }
 
 - (void)sendSessionHandshake {
@@ -647,7 +674,7 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
         static int hevcSentCount = 0;
         if (hevcSentCount < 3) {
-            os_log(sLog, "HEVC onEncodedFrame: seq=%u len=%zu flags=0x%02x, sending via TCP",
+            os_log(sLog, "HEVC onEncodedFrame: seq=%u len=%zu flags=0x%02x, sending via UDP chunks",
                    header.seq, len, header.flags);
         }
         hevcSentCount++;
@@ -671,9 +698,21 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     if (_usbTransport.isConnected) {
         [_usbTransport sendMediaFrame:data length:len];
     } else if (_wirelessTransport.isConnected) {
-        /* HEVC frames can exceed UDP MTU (~65KB). Send via TCP for wireless.
-         * LZ4 delta frames are small enough for UDP but HEVC keyframes are not. */
-        [_wirelessTransport sendInputEvent:data length:len];
+        /* Chunk the frame for UDP/DTLS transport. HEVC frames can be 10-100KB+
+         * which exceeds UDP MTU. UDPChunker splits into MTU-sized packets,
+         * each with its own MediaFrameHeader. iPad reassembles via UDPReassembler. */
+        if (len < sizeof(MediaFrameHeader)) return;
+
+        const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
+        const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
+        size_t payloadLen = len - sizeof(MediaFrameHeader);
+
+        /* Chunk and send via UDP/DTLS (uint16_t chunk_total supports up to 65535 chunks) */
+        WirelessTransport *transport = _wirelessTransport;
+        chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
+                    originalHeader, ^(const void *chunk, size_t chunkLen) {
+            [transport sendMediaFrame:chunk length:chunkLen];
+        });
     }
 }
 

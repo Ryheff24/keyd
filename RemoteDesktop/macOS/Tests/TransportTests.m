@@ -1152,10 +1152,10 @@ static NSData *dataFromDispatchData(dispatch_data_t dd) {
 
 - (void)testUDPMediaChannelDeliversFrameHeader {
     /*
-     * Send a MediaFrameHeader (24 bytes) + payload over UDP.
+     * Send a MediaFrameHeader (25 bytes) + payload over UDP.
      * Receive on the other end. Verify header + payload integrity.
      */
-    XCTestExpectation *received = [self expectationWithDescription:@"24-byte header + payload received"];
+    XCTestExpectation *received = [self expectationWithDescription:@"25-byte header + payload received"];
     dispatch_queue_t queue = dispatch_queue_create("test.udp.frame", DISPATCH_QUEUE_SERIAL);
 
     /* Build a valid MediaFrameHeader + payload */

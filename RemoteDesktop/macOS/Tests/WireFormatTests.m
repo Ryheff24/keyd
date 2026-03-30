@@ -27,8 +27,8 @@
 #pragma mark - 1. Struct size verification (exact packed sizes)
 
 - (void)testMediaFrameHeaderPackedSize {
-    XCTAssertEqual(sizeof(MediaFrameHeader), (size_t)24,
-                   @"MediaFrameHeader must be exactly 24 bytes packed");
+    XCTAssertEqual(sizeof(MediaFrameHeader), (size_t)25,
+                   @"MediaFrameHeader must be exactly 25 bytes packed");
 }
 
 - (void)testInputEventHeaderPackedSize {
@@ -63,11 +63,10 @@
     XCTAssertEqual(offsetof(MediaFrameHeader, flags),        (size_t)2);
     XCTAssertEqual(offsetof(MediaFrameHeader, seq),          (size_t)3);
     XCTAssertEqual(offsetof(MediaFrameHeader, chunk_idx),    (size_t)5);
-    XCTAssertEqual(offsetof(MediaFrameHeader, chunk_total),  (size_t)6);
-    XCTAssertEqual(offsetof(MediaFrameHeader, reserved),     (size_t)7);
-    XCTAssertEqual(offsetof(MediaFrameHeader, payload_size), (size_t)8);
-    XCTAssertEqual(offsetof(MediaFrameHeader, ts_us),        (size_t)12);
-    XCTAssertEqual(offsetof(MediaFrameHeader, crc32),        (size_t)20);
+    XCTAssertEqual(offsetof(MediaFrameHeader, chunk_total),  (size_t)7);
+    XCTAssertEqual(offsetof(MediaFrameHeader, payload_size), (size_t)9);
+    XCTAssertEqual(offsetof(MediaFrameHeader, ts_us),        (size_t)13);
+    XCTAssertEqual(offsetof(MediaFrameHeader, crc32),        (size_t)21);
 }
 
 - (void)testInputEventHeaderFieldOffsets {
@@ -117,13 +116,12 @@
     msg.seq          = 1000;
     msg.chunk_idx    = 3;
     msg.chunk_total  = 7;
-    msg.reserved     = 0;
     msg.payload_size = 0x00012345;
     msg.ts_us        = 0x00000002540BE400ULL; /* 10,000,000,000 */
     msg.crc32        = 0xDEADBEEF;
 
-    uint8_t wire[24];
-    memcpy(wire, &msg, 24);
+    uint8_t wire[25];
+    memcpy(wire, &msg, 25);
 
     /* Verify magic at offset 0 (little-endian u16) */
     XCTAssertEqual(wire[0], 0x44);
@@ -137,28 +135,29 @@
     memcpy(&seq, wire + 3, 2);
     XCTAssertEqual(seq, 1000);
 
-    /* Verify chunk_idx at offset 5 */
-    XCTAssertEqual(wire[5], 3);
+    /* Verify chunk_idx at offset 5 (little-endian u16) */
+    uint16_t chunk_idx;
+    memcpy(&chunk_idx, wire + 5, 2);
+    XCTAssertEqual(chunk_idx, 3);
 
-    /* Verify chunk_total at offset 6 */
-    XCTAssertEqual(wire[6], 7);
+    /* Verify chunk_total at offset 7 (little-endian u16) */
+    uint16_t chunk_total;
+    memcpy(&chunk_total, wire + 7, 2);
+    XCTAssertEqual(chunk_total, 7);
 
-    /* Verify reserved at offset 7 */
-    XCTAssertEqual(wire[7], 0);
-
-    /* Verify payload_size at offset 8 (little-endian u32) */
+    /* Verify payload_size at offset 9 (little-endian u32) */
     uint32_t payload_size;
-    memcpy(&payload_size, wire + 8, 4);
+    memcpy(&payload_size, wire + 9, 4);
     XCTAssertEqual(payload_size, 0x00012345u);
 
-    /* Verify ts_us at offset 12 (little-endian u64) */
+    /* Verify ts_us at offset 13 (little-endian u64) */
     uint64_t ts_us;
-    memcpy(&ts_us, wire + 12, 8);
+    memcpy(&ts_us, wire + 13, 8);
     XCTAssertEqual(ts_us, 0x00000002540BE400ULL);
 
-    /* Verify crc32 at offset 20 (little-endian u32) */
+    /* Verify crc32 at offset 21 (little-endian u32) */
     uint32_t crc32_val;
-    memcpy(&crc32_val, wire + 20, 4);
+    memcpy(&crc32_val, wire + 21, 4);
     XCTAssertEqual(crc32_val, 0xDEADBEEFu);
 
     /* Parse back from manual offsets (NOT memcpy-to-struct) and verify */
@@ -173,25 +172,24 @@
     memcpy(&parsed_seq, wire + 3, 2);
     XCTAssertEqual(parsed_seq, msg.seq);
 
-    uint8_t parsed_chunk_idx = wire[5];
+    uint16_t parsed_chunk_idx;
+    memcpy(&parsed_chunk_idx, wire + 5, 2);
     XCTAssertEqual(parsed_chunk_idx, msg.chunk_idx);
 
-    uint8_t parsed_chunk_total = wire[6];
+    uint16_t parsed_chunk_total;
+    memcpy(&parsed_chunk_total, wire + 7, 2);
     XCTAssertEqual(parsed_chunk_total, msg.chunk_total);
 
-    uint8_t parsed_reserved = wire[7];
-    XCTAssertEqual(parsed_reserved, msg.reserved);
-
     uint32_t parsed_payload;
-    memcpy(&parsed_payload, wire + 8, 4);
+    memcpy(&parsed_payload, wire + 9, 4);
     XCTAssertEqual(parsed_payload, msg.payload_size);
 
     uint64_t parsed_ts;
-    memcpy(&parsed_ts, wire + 12, 8);
+    memcpy(&parsed_ts, wire + 13, 8);
     XCTAssertEqual(parsed_ts, msg.ts_us);
 
     uint32_t parsed_crc;
-    memcpy(&parsed_crc, wire + 20, 4);
+    memcpy(&parsed_crc, wire + 21, 4);
     XCTAssertEqual(parsed_crc, msg.crc32);
 }
 
@@ -448,31 +446,28 @@
     msg.seq          = 42;
     msg.chunk_idx    = 3;
     msg.chunk_total  = 7;
-    msg.reserved     = 0;
     msg.payload_size = 123456;
     msg.ts_us        = 9876543210ULL;
     msg.crc32        = 0xDEADBEEF;
 
-    uint8_t wire[24];
-    memcpy(wire, &msg, 24);
+    uint8_t wire[25];
+    memcpy(wire, &msg, 25);
 
     /* Parse like Swift does: manual offsets with memcpy (safe for unaligned) */
     uint16_t swift_magic;        memcpy(&swift_magic, wire + 0, 2);
     uint8_t  swift_flags       = wire[2];
     uint16_t swift_seq;          memcpy(&swift_seq, wire + 3, 2);
-    uint8_t  swift_chunkIdx    = wire[5];
-    uint8_t  swift_chunkTotal  = wire[6];
-    uint8_t  swift_reserved    = wire[7];
-    uint32_t swift_payloadSize;  memcpy(&swift_payloadSize, wire + 8, 4);
-    uint64_t swift_tsUs;         memcpy(&swift_tsUs, wire + 12, 8);
-    uint32_t swift_crc32;        memcpy(&swift_crc32, wire + 20, 4);
+    uint16_t swift_chunkIdx;     memcpy(&swift_chunkIdx, wire + 5, 2);
+    uint16_t swift_chunkTotal;   memcpy(&swift_chunkTotal, wire + 7, 2);
+    uint32_t swift_payloadSize;  memcpy(&swift_payloadSize, wire + 9, 4);
+    uint64_t swift_tsUs;         memcpy(&swift_tsUs, wire + 13, 8);
+    uint32_t swift_crc32;        memcpy(&swift_crc32, wire + 21, 4);
 
     XCTAssertEqual(swift_magic,       msg.magic);
     XCTAssertEqual(swift_flags,       msg.flags);
     XCTAssertEqual(swift_seq,         msg.seq);
     XCTAssertEqual(swift_chunkIdx,    msg.chunk_idx);
     XCTAssertEqual(swift_chunkTotal,  msg.chunk_total);
-    XCTAssertEqual(swift_reserved,    msg.reserved);
     XCTAssertEqual(swift_payloadSize, msg.payload_size);
     XCTAssertEqual(swift_tsUs,        msg.ts_us);
     XCTAssertEqual(swift_crc32,       msg.crc32);
@@ -727,30 +722,33 @@
     msg.magic        = 0xFFFF;
     msg.flags        = 0xFF;
     msg.seq          = 0xFFFF;
-    msg.chunk_idx    = 0xFF;
-    msg.chunk_total  = 0xFF;
-    msg.reserved     = 0xFF;
+    msg.chunk_idx    = 0xFFFF;
+    msg.chunk_total  = 0xFFFF;
     msg.payload_size = 0xFFFFFFFF;
     msg.ts_us        = 0xFFFFFFFFFFFFFFFFULL;
     msg.crc32        = 0xFFFFFFFF;
 
-    uint8_t wire[24];
-    memcpy(wire, &msg, 24);
+    uint8_t wire[25];
+    memcpy(wire, &msg, 25);
 
     /* Every byte should be 0xFF */
-    for (size_t i = 0; i < 24; i++) {
+    for (size_t i = 0; i < 25; i++) {
         XCTAssertEqual(wire[i], 0xFF, @"Byte %zu of all-max MediaFrameHeader must be 0xFF", i);
     }
 
     /* Parse back via manual offsets */
     uint16_t swift_magic;        memcpy(&swift_magic, wire + 0, 2);
     uint16_t swift_seq;          memcpy(&swift_seq, wire + 3, 2);
-    uint32_t swift_payloadSize;  memcpy(&swift_payloadSize, wire + 8, 4);
-    uint64_t swift_tsUs;         memcpy(&swift_tsUs, wire + 12, 8);
-    uint32_t swift_crc32;        memcpy(&swift_crc32, wire + 20, 4);
+    uint16_t swift_chunkIdx;     memcpy(&swift_chunkIdx, wire + 5, 2);
+    uint16_t swift_chunkTotal;   memcpy(&swift_chunkTotal, wire + 7, 2);
+    uint32_t swift_payloadSize;  memcpy(&swift_payloadSize, wire + 9, 4);
+    uint64_t swift_tsUs;         memcpy(&swift_tsUs, wire + 13, 8);
+    uint32_t swift_crc32;        memcpy(&swift_crc32, wire + 21, 4);
 
     XCTAssertEqual(swift_magic,       (uint16_t)0xFFFF);
     XCTAssertEqual(swift_seq,         (uint16_t)0xFFFF);
+    XCTAssertEqual(swift_chunkIdx,    (uint16_t)0xFFFF);
+    XCTAssertEqual(swift_chunkTotal,  (uint16_t)0xFFFF);
     XCTAssertEqual(swift_payloadSize, (uint32_t)0xFFFFFFFF);
     XCTAssertEqual(swift_tsUs,        (uint64_t)0xFFFFFFFFFFFFFFFFULL);
     XCTAssertEqual(swift_crc32,       (uint32_t)0xFFFFFFFF);

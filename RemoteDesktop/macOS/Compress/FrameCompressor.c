@@ -194,7 +194,6 @@ int compress_frame(FrameCompressorState *state,
     out->header.seq          = (uint16_t)(state->seq & 0xFFFF);
     out->header.chunk_idx    = 0;     /* chunking deferred to transport layer */
     out->header.chunk_total  = 1;
-    out->header.reserved     = 0;
     out->header.payload_size = (uint32_t)compressed;
     out->header.ts_us        = ts_us;
     out->header.crc32        = payload_crc;

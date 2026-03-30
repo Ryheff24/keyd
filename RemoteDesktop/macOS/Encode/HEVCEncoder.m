@@ -117,6 +117,10 @@ static const int kEcoMaxHeight720 = 720;
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_ExpectedFrameRate, fpsRef);
     CFRelease(fpsRef);
 
+    /* No DataRateLimits — AverageBitRate handles rate control.
+     * Oversized keyframes that exceed UDP chunking limits (>255 chunks)
+     * fall back to TCP in sendMediaFrameToiPad. */
+
     VTCompressionSessionPrepareToEncodeFrames(_session);
     _isActive = YES;
 
@@ -336,7 +340,6 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
     header.seq = encoder->_seq++;
     header.chunk_idx = 0;
     header.chunk_total = 1;
-    header.reserved = 0;
     header.payload_size = (uint32_t)totalLength;
     header.ts_us = tsUs;
     header.crc32 = 0;  /* CRC computed by transport layer if needed */

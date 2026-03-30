@@ -135,16 +135,25 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
     config.minimumFrameInterval = CMTimeMake(1, 120); /* RD-CAP-02: 120fps */
     config.queueDepth = 3;
     config.showsCursor = YES;
-    /* SCDisplay.width/height returns points. Use CGDisplay API for actual
-     * pixel dimensions to capture at full Retina resolution. */
-    size_t pixelWidth  = CGDisplayPixelsWide(display.displayID);
-    size_t pixelHeight = CGDisplayPixelsHigh(display.displayID);
+    /* Get true pixel dimensions via CGDisplayMode (CGDisplayPixelsWide returns
+     * logical/point dimensions on macOS Sequoia, not physical Retina pixels). */
+    CGDisplayModeRef displayMode = CGDisplayCopyDisplayMode(display.displayID);
+    size_t pixelWidth, pixelHeight;
+    if (displayMode) {
+        pixelWidth  = CGDisplayModeGetPixelWidth(displayMode);
+        pixelHeight = CGDisplayModeGetPixelHeight(displayMode);
+        CGDisplayModeRelease(displayMode);
+    } else {
+        /* Fallback: SCDisplay width/height are points, double for Retina */
+        pixelWidth  = display.width * 2;
+        pixelHeight = display.height * 2;
+    }
     config.width = pixelWidth;
     config.height = pixelHeight;
 
-    os_log_info(sc_log(), "Setting up capture: %lux%lu @120fps BGRA (display points: %lux%lu)",
-                (unsigned long)pixelWidth, (unsigned long)pixelHeight,
-                (unsigned long)display.width, (unsigned long)display.height);
+    os_log(sc_log(), "Setting up capture: %lux%lu @120fps BGRA (display points: %lux%lu)",
+           (unsigned long)pixelWidth, (unsigned long)pixelHeight,
+           (unsigned long)display.width, (unsigned long)display.height);
 
     /* Create content filter with the display — no excluded apps */
     SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display

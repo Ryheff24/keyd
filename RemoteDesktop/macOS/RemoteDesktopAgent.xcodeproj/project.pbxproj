@@ -25,6 +25,7 @@
 		A1000030000000000000000A /* TransportFSM.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000030000000000000000F /* TransportFSM.c */; };
 		A1000032000000000000000A /* USBNetworkTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000032000000000000000F /* USBNetworkTransport.m */; };
 		A1000034000000000000000A /* WirelessTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000034000000000000000F /* WirelessTransport.m */; };
+		A1000036000000000000000A /* UDPChunker.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000036000000000000000F /* UDPChunker.m */; };
 		A1000040000000000000000A /* HEVCEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000040000000000000000F /* HEVCEncoder.m */; };
 		A1000050000000000000000A /* PairingManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000050000000000000000F /* PairingManager.m */; };
 		A1000060000000000000000A /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000060000000000000000F /* AppDelegate.m */; };
@@ -81,6 +82,8 @@
 		A1000033000000000000000F /* USBNetworkTransport.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = USBNetworkTransport.h; sourceTree = "<group>"; };
 		A1000034000000000000000F /* WirelessTransport.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WirelessTransport.m; sourceTree = "<group>"; };
 		A1000035000000000000000F /* WirelessTransport.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WirelessTransport.h; sourceTree = "<group>"; };
+		A1000036000000000000000F /* UDPChunker.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = UDPChunker.m; sourceTree = "<group>"; };
+		A1000037000000000000000F /* UDPChunker.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = UDPChunker.h; sourceTree = "<group>"; };
 		A1000040000000000000000F /* HEVCEncoder.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HEVCEncoder.m; sourceTree = "<group>"; };
 		A1000041000000000000000F /* HEVCEncoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HEVCEncoder.h; sourceTree = "<group>"; };
 		A1000050000000000000000F /* PairingManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PairingManager.m; sourceTree = "<group>"; };
@@ -250,6 +253,8 @@
 				A1000032000000000000000F /* USBNetworkTransport.m */,
 				A1000035000000000000000F /* WirelessTransport.h */,
 				A1000034000000000000000F /* WirelessTransport.m */,
+				A1000037000000000000000F /* UDPChunker.h */,
+				A1000036000000000000000F /* UDPChunker.m */,
 			);
 			path = Transport;
 			sourceTree = "<group>";
@@ -398,6 +403,7 @@
 				A1000030000000000000000A /* TransportFSM.c in Sources */,
 				A1000032000000000000000A /* USBNetworkTransport.m in Sources */,
 				A1000034000000000000000A /* WirelessTransport.m in Sources */,
+				A1000036000000000000000A /* UDPChunker.m in Sources */,
 				A1000040000000000000000A /* HEVCEncoder.m in Sources */,
 				A1000050000000000000000A /* PairingManager.m in Sources */,
 				A1000060000000000000000A /* AppDelegate.m in Sources */,

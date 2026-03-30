@@ -381,16 +381,28 @@ final class WirelessTransport {
 
     // MARK: - Private: Receive Loops
 
+    private var mediaRecvCount = 0
+
     private func scheduleMediaReceive(_ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
 
             if let data = content, !data.isEmpty {
+                self.mediaRecvCount += 1
+                if self.mediaRecvCount <= 3 {
+                    print("[CONSOLE] WirelessTransport: UDP media recv #\(self.mediaRecvCount) (\(data.count) bytes)")
+                }
                 self.onMediaReceived?(data)
             }
 
-            if error != nil || isComplete { return }
+            if let error = error {
+                print("[CONSOLE] WirelessTransport: UDP media recv error: \(error)")
+                return
+            }
+            /* For DTLS/UDP: ignore isComplete. Each datagram from the sender has
+             * is_complete=true (required by DTLS), but this does NOT mean the
+             * connection is closed. Always re-schedule to receive next datagram. */
             self.scheduleMediaReceive(connection)
         }
     }

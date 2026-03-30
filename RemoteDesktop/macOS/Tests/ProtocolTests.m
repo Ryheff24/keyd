@@ -3,7 +3,7 @@
  * XCTest suite for the keyd-rd binary protocol layer.
  *
  * Tests all message types defined in protocol.h:
- *   - MediaFrameHeader (24 bytes packed)
+ *   - MediaFrameHeader (25 bytes packed)
  *   - InputEventHeader (9 bytes packed)
  *   - SessionHandshakeMessage
  *   - ResolutionMatchPayload / ResolutionMatchResponse
@@ -24,8 +24,8 @@
 #pragma mark - Struct sizes
 
 - (void)testMediaFrameHeaderSize {
-    XCTAssertEqual(sizeof(MediaFrameHeader), 24,
-                   @"MediaFrameHeader must be exactly 24 bytes");
+    XCTAssertEqual(sizeof(MediaFrameHeader), 25,
+                   @"MediaFrameHeader must be exactly 25 bytes");
 }
 
 - (void)testInputEventHeaderSize {
@@ -44,13 +44,12 @@
     original.seq          = 42;
     original.chunk_idx    = 3;
     original.chunk_total  = 7;
-    original.reserved     = 0;
     original.payload_size = 123456;
     original.ts_us        = 9876543210ULL;
     original.crc32        = 0xDEADBEEF;
 
     /* Serialize to raw bytes */
-    uint8_t wire[24];
+    uint8_t wire[25];
     memcpy(wire, &original, sizeof(MediaFrameHeader));
 
     /* Parse back */
@@ -62,7 +61,6 @@
     XCTAssertEqual(parsed.seq, 42);
     XCTAssertEqual(parsed.chunk_idx, 3);
     XCTAssertEqual(parsed.chunk_total, 7);
-    XCTAssertEqual(parsed.reserved, 0);
     XCTAssertEqual(parsed.payload_size, 123456u);
     XCTAssertEqual(parsed.ts_us, 9876543210ULL);
     XCTAssertEqual(parsed.crc32, 0xDEADBEEF);

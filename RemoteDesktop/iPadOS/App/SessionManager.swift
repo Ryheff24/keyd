@@ -38,6 +38,7 @@ final class SessionManager {
     let hudViewModel = HUDViewModel()
     private var lz4Decompressor: LZ4Decompressor?
     private let hevcDecoder = HEVCDecoder()
+    private let udpReassembler = UDPReassembler()
 
     // MARK: - Transport FSM
 
@@ -228,6 +229,11 @@ final class SessionManager {
     // MARK: - Private: Transport Monitoring
 
     private func startTransportMonitoring() {
+        // Wire UDPReassembler: delivers complete frames to handleReceivedFrame
+        udpReassembler.onFrameReassembled = { [weak self] data in
+            self?.handleReceivedFrame(data)
+        }
+
         // Set up USB NCM transport callbacks
         usbTransport.onInterfaceChanged = { [weak self] appeared, interface in
             DispatchQueue.main.async {
@@ -235,6 +241,7 @@ final class SessionManager {
             }
         }
 
+        // USB frames are not chunked (MTU is large enough) -- pass directly
         usbTransport.onMediaReceived = { [weak self] data in
             self?.handleReceivedFrame(data)
         }
@@ -255,8 +262,9 @@ final class SessionManager {
             }
         }
 
+        // Wireless media arrives as UDP chunks -- route through reassembler
         wirelessTransport.onMediaReceived = { [weak self] data in
-            self?.handleReceivedFrame(data)
+            self?.udpReassembler.processChunk(data)
         }
 
         wirelessTransport.onInputReceived = { [weak self] data in
@@ -337,7 +345,7 @@ final class SessionManager {
 
     /// Handle a received media frame from either transport.
     ///
-    /// 1. Parse MediaFrameHeader (24 bytes).
+    /// 1. Parse MediaFrameHeader (25 bytes).
     /// 2. Validate magic.
     /// 3. Route to HEVC or LZ4 decoder.
     /// 4. Send decoded pixels to MetalRenderer.
@@ -375,6 +383,12 @@ final class SessionManager {
             if frameRecvCount <= 3 {
                 print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes")
             }
+
+            // Report decoded dimensions for resolution test
+            let decodedW = CVPixelBufferGetWidth(pixelBuffer)
+            let decodedH = CVPixelBufferGetHeight(pixelBuffer)
+            testRunner?.reportDecodedFrameDimensions(width: decodedW, height: decodedH)
+
             renderCVPixelBuffer(pixelBuffer)
         } else {
             // LZ4 decode path (wired mode)
@@ -391,6 +405,10 @@ final class SessionManager {
             }
 
             decompressedSize = frameBytes
+
+            // Report decoded dimensions for resolution test (LZ4 uses handshake dimensions)
+            testRunner?.reportDecodedFrameDimensions(width: macDisplayWidth, height: macDisplayHeight)
+
             metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight)
         }
 
@@ -466,7 +484,7 @@ final class SessionManager {
     // MARK: - Private: Input Event Handling (from Mac)
 
     /// Handle input data received from Mac (handshakes, latency probes, control messages).
-    /// Also routes media frames that arrive over TCP (wireless HEVC exceeds UDP MTU).
+    /// Media frames primarily arrive via UDP chunks, but oversized frames fall back to TCP.
     private func handleInputReceived(_ data: Data) {
         // Check handshake FIRST — both handshake and media frame share KEYDRD_MAGIC,
         // but handshake has a more specific discriminator (magic + msgType at offset 2)
@@ -476,7 +494,8 @@ final class SessionManager {
             return
         }
 
-        // Check if this is a media frame sent over TCP (wireless HEVC exceeds UDP MTU)
+        // Check if this is a media frame sent over TCP (fallback for frames too large
+        // for UDP chunking, e.g. keyframes at native resolution exceeding 255 chunks)
         if data.count >= MediaFrameHeader.size,
            let _ = MediaFrameHeader.parse(from: data) {
             handleReceivedFrame(data)

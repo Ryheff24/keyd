@@ -2,7 +2,15 @@
 # End-to-end test harness: builds both Mac + iPad apps, launches them in test mode,
 # and captures structured test results from the iPad console.
 #
-# Usage: ./RemoteDesktop/scripts/run-e2e-tests.sh [timeout_seconds]
+# Usage: ./RemoteDesktop/scripts/run-e2e-tests.sh [timeout_seconds] [options]
+#
+# Options:
+#   --transport usb|wifi|awdl     Assert transport type
+#   --latency-target-ms N         Latency target for tiered test (median RTT)
+#   --expect-resolution WxH       Expected resolution (e.g. 2560x1600)
+#   --expect-fps N                Minimum expected FPS (e.g. 60)
+#   --full-suite                  Run all test combinations sequentially
+#
 # Default timeout: 90 seconds. Exit code 0 = all tests passed, 1 = failures.
 #
 # Prerequisites:
@@ -20,9 +28,46 @@
 
 set -euo pipefail
 
+# ---- Parse arguments ----
+TIMEOUT="120"
+TRANSPORT=""
+LATENCY_TARGET=""
+EXPECT_RESOLUTION=""
+EXPECT_FPS=""
+FULL_SUITE=false
+
+# First positional arg can be timeout
+if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+  TIMEOUT="$1"
+  shift
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --transport)
+      TRANSPORT="$2"; shift 2 ;;
+    --latency-target-ms)
+      LATENCY_TARGET="$2"; shift 2 ;;
+    --expect-resolution)
+      EXPECT_RESOLUTION="$2"; shift 2 ;;
+    --expect-fps)
+      EXPECT_FPS="$2"; shift 2 ;;
+    --full-suite)
+      FULL_SUITE=true; shift ;;
+    *)
+      # Unknown arg -- treat as timeout if numeric
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        TIMEOUT="$1"
+      else
+        echo "Unknown option: $1"
+        exit 1
+      fi
+      shift ;;
+  esac
+done
+
 # ---- Configuration ----
 IPAD_DEVICE_ID="00000000-0000-0000-0000-00000000000A"
-TIMEOUT="${1:-90}"
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 IPAD_SCHEME="RemoteDesktopApp"
 MAC_PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
@@ -82,25 +127,25 @@ log_progress "  Timeout: ${TIMEOUT}s"
 log_progress "============================================"
 log_progress ""
 
-# ---- Step 1: Build Mac agent ----
+# ---- Step 1: Build Mac agent (clean + build to avoid stale binaries) ----
 log_progress "=== [1/6] Building Mac agent ==="
 BUILD_OUT=$(xcodebuild \
   -project "$MAC_PROJECT" \
   -scheme "$MAC_SCHEME" \
   -destination "platform=macOS,arch=arm64" \
   -configuration Debug \
-  build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
+  clean build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
 log_progress "$BUILD_OUT"
 log_progress ""
 
-# ---- Step 2: Build iPad app ----
+# ---- Step 2: Build iPad app (clean + build to avoid stale binaries) ----
 log_progress "=== [2/6] Building iPad app ==="
 BUILD_OUT=$(xcodebuild \
   -workspace "$WORKSPACE" \
   -scheme "$IPAD_SCHEME" \
   -destination "id=$IPAD_DEVICE_ID" \
   -configuration Debug \
-  build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
+  clean build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
 log_progress "$BUILD_OUT"
 log_progress ""
 
@@ -133,7 +178,12 @@ if [ -z "$MAC_APP" ]; then
   exit 1
 fi
 
-"$MAC_APP/Contents/MacOS/RemoteDesktopAgent" --test-mode &
+MAC_LAUNCH_ARGS="--test-mode"
+if [ -n "$TRANSPORT" ]; then
+  MAC_LAUNCH_ARGS="$MAC_LAUNCH_ARGS --transport $TRANSPORT"
+fi
+
+"$MAC_APP/Contents/MacOS/RemoteDesktopAgent" $MAC_LAUNCH_ARGS &
 MAC_PID=$!
 echo "Mac agent PID: $MAC_PID"
 
@@ -173,6 +223,25 @@ xcrun devicectl device install app --device "$IPAD_DEVICE_ID" "$IPAD_APP" 2>&1 |
 echo ""
 
 log_progress "=== [6/6] Launching iPad in test mode ==="
+# Build launch arguments array
+IPAD_LAUNCH_ARGS="--test-mode --qr-payload $QR_PAYLOAD_B64"
+
+# Append optional flags
+if [ -n "$TRANSPORT" ]; then
+  IPAD_LAUNCH_ARGS="$IPAD_LAUNCH_ARGS --expect-transport $TRANSPORT"
+fi
+if [ -n "$LATENCY_TARGET" ]; then
+  IPAD_LAUNCH_ARGS="$IPAD_LAUNCH_ARGS --latency-target-ms $LATENCY_TARGET"
+fi
+if [ -n "$EXPECT_RESOLUTION" ]; then
+  IPAD_LAUNCH_ARGS="$IPAD_LAUNCH_ARGS --expect-resolution $EXPECT_RESOLUTION"
+fi
+if [ -n "$EXPECT_FPS" ]; then
+  IPAD_LAUNCH_ARGS="$IPAD_LAUNCH_ARGS --expect-fps $EXPECT_FPS"
+fi
+
+log_progress "iPad launch args: $IPAD_LAUNCH_ARGS"
+
 # Pass the QR payload as a launch argument (--qr-payload <base64>)
 # iPad reads this instead of scanning a physical QR code
 xcrun devicectl device process launch \
@@ -180,90 +249,191 @@ xcrun devicectl device process launch \
   --terminate-existing \
   --console \
   "$BUNDLE_ID" \
-  -- --test-mode --qr-payload "$QR_PAYLOAD_B64" \
+  -- $IPAD_LAUNCH_ARGS \
   2>&1 | tee -a "$LOG_FILE" &
 IPAD_PID=$!
 
 # ---- Wait for test results ----
-echo ""
-log_progress "=== Waiting for test results (timeout: ${TIMEOUT}s) ==="
-START=$(date +%s)
-while true; do
-  NOW=$(date +%s)
-  ELAPSED=$((NOW - START))
-
-  if [ $ELAPSED -ge "$TIMEOUT" ]; then
-    echo ""
-    echo "TIMEOUT after ${TIMEOUT}s -- killing test"
-    break
+wait_and_parse_results() {
+  local run_label="${1:-}"
+  echo ""
+  if [ -n "$run_label" ]; then
+    log_progress "=== Waiting for results: $run_label (timeout: ${TIMEOUT}s) ==="
+  else
+    log_progress "=== Waiting for test results (timeout: ${TIMEOUT}s) ==="
   fi
+  START=$(date +%s)
+  while true; do
+    NOW=$(date +%s)
+    ELAPSED=$((NOW - START))
 
-  if grep -q "\[TEST\] COMPLETE:" "$LOG_FILE" 2>/dev/null; then
-    # Give a moment for any remaining output
-    sleep 1
-    break
-  fi
-
-  sleep 1
-done
-
-# ---- Parse and display results ----
-echo ""
-echo "============================================"
-echo "  TEST RESULTS"
-echo "============================================"
-echo ""
-
-if [ -f "$LOG_FILE" ]; then
-  # Extract [TEST] lines
-  grep "\[TEST\]" "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
-    # Color output: green for PASS, red for FAIL, yellow for others
-    if echo "$line" | grep -q "\[TEST\] PASS:"; then
-      printf "\033[32m%s\033[0m\n" "$line"
-    elif echo "$line" | grep -q "\[TEST\] FAIL:"; then
-      printf "\033[31m%s\033[0m\n" "$line"
-    elif echo "$line" | grep -q "\[TEST\] COMPLETE:"; then
-      printf "\033[1m%s\033[0m\n" "$line"
-    else
-      echo "$line"
+    if [ $ELAPSED -ge "$TIMEOUT" ]; then
+      echo ""
+      echo "TIMEOUT after ${TIMEOUT}s -- killing test"
+      break
     fi
+
+    if grep -q "\[TEST\] COMPLETE:" "$LOG_FILE" 2>/dev/null; then
+      # Give a moment for any remaining output
+      sleep 1
+      break
+    fi
+
+    sleep 1
   done
 
-  PASSED=$(grep -c "\[TEST\] PASS:" "$LOG_FILE" 2>/dev/null) || PASSED=0
-  FAILED=$(grep -c "\[TEST\] FAIL:" "$LOG_FILE" 2>/dev/null) || FAILED=0
-  TOTAL=$((PASSED + FAILED))
+  # ---- Parse and display results ----
+  echo ""
+  echo "============================================"
+  if [ -n "$run_label" ]; then
+    echo "  TEST RESULTS: $run_label"
+  else
+    echo "  TEST RESULTS"
+  fi
+  echo "============================================"
+  echo ""
+
+  if [ -f "$LOG_FILE" ]; then
+    # Extract [TEST] lines
+    grep "\[TEST\]" "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+      # Color output: green for PASS, red for FAIL, blue for INFO, yellow for others
+      if echo "$line" | grep -q "\[TEST\] PASS:"; then
+        printf "\033[32m%s\033[0m\n" "$line"
+      elif echo "$line" | grep -q "\[TEST\] FAIL:"; then
+        printf "\033[31m%s\033[0m\n" "$line"
+      elif echo "$line" | grep -q "\[TEST\] INFO:"; then
+        printf "\033[34m%s\033[0m\n" "$line"
+      elif echo "$line" | grep -q "\[TEST\] COMPLETE:"; then
+        printf "\033[1m%s\033[0m\n" "$line"
+      else
+        echo "$line"
+      fi
+    done
+
+    PASSED=$(grep -c "\[TEST\] PASS:" "$LOG_FILE" 2>/dev/null) || PASSED=0
+    FAILED=$(grep -c "\[TEST\] FAIL:" "$LOG_FILE" 2>/dev/null) || FAILED=0
+    TOTAL=$((PASSED + FAILED))
+
+    echo ""
+    echo "--------------------------------------------"
+    printf "  Passed: \033[32m%s\033[0m\n" "$PASSED"
+    printf "  Failed: \033[31m%s\033[0m\n" "$FAILED"
+    echo "  Total:  $TOTAL"
+    echo "--------------------------------------------"
+
+    if [ "$FAILED" -gt 0 ]; then
+      echo ""
+      echo "--- Mac agent logs (capture + transport + streaming) ---"
+      grep -i "capture\|HEVC\|onPixelBuffer\|onEncoded\|sendMedia\|sendInput.*sent\|STREAMING\|CONNECTING\|media.*ready\|media.*fail\|DTLS" "$MAC_LOG_FILE" 2>/dev/null | tail -30 || echo "(no relevant Mac logs)"
+      echo ""
+      echo "--- Mac agent logs (last 30 lines) ---"
+      tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
+      echo ""
+      return 1
+    fi
+
+    if [ "$TOTAL" -eq 0 ]; then
+      echo ""
+      echo "WARNING: No test output found"
+      echo ""
+      echo "--- iPad console (last 50 lines) ---"
+      tail -50 "$LOG_FILE" 2>/dev/null || echo "(no output)"
+      echo ""
+      echo "--- Mac agent logs (last 30 lines) ---"
+      tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
+      return 1
+    fi
+  else
+    echo "ERROR: No iPad log output captured"
+    return 1
+  fi
+
+  return 0
+}
+
+# ---- Full Suite Mode ----
+if [ "$FULL_SUITE" = true ]; then
+  # In full-suite mode, the single run already includes all extended tests
+  # (resolution, fps, latency-tiered, throughput). We run a progressive latency
+  # tier sweep to find the minimum achievable latency target.
+
+  # First run: basic suite (all 14 tests, no latency target constraint)
+  wait_and_parse_results "basic + extended (no latency target)"
+  BASIC_RESULT=$?
+
+  if [ "$BASIC_RESULT" -ne 0 ]; then
+    echo ""
+    echo "FULL SUITE: basic tests FAILED -- aborting suite"
+    exit 1
+  fi
 
   echo ""
-  echo "--------------------------------------------"
-  printf "  Passed: \033[32m%s\033[0m\n" "$PASSED"
-  printf "  Failed: \033[31m%s\033[0m\n" "$FAILED"
-  echo "  Total:  $TOTAL"
-  echo "--------------------------------------------"
+  echo "============================================"
+  echo "  FULL SUITE: Latency Tier Sweep"
+  echo "============================================"
+  echo ""
 
-  if [ "$FAILED" -gt 0 ]; then
-    echo ""
-    echo "--- Mac agent logs (capture + transport + streaming) ---"
-    grep -i "capture\|HEVC\|onPixelBuffer\|onEncoded\|sendMedia\|sendInput.*sent\|STREAMING\|CONNECTING\|media.*ready\|media.*fail\|DTLS" "$MAC_LOG_FILE" 2>/dev/null | tail -30 || echo "(no relevant Mac logs)"
-    echo ""
-    echo "--- Mac agent logs (last 30 lines) ---"
-    tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
-    echo ""
-    exit 1
-  fi
+  # Progressive latency targets (stop at first failure)
+  LATENCY_TIERS=(1000 500 250 100 50 20 10)
+  LAST_PASSING_TIER=""
 
-  if [ "$TOTAL" -eq 0 ]; then
+  for TIER in "${LATENCY_TIERS[@]}"; do
     echo ""
-    echo "WARNING: No test output found"
-    echo ""
-    echo "--- iPad console (last 50 lines) ---"
-    tail -50 "$LOG_FILE" 2>/dev/null || echo "(no output)"
-    echo ""
-    echo "--- Mac agent logs (last 30 lines) ---"
-    tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
-    exit 1
+    log_progress "--- Latency tier: ${TIER}ms ---"
+
+    # Kill and re-launch iPad with this latency target
+    kill "$IPAD_PID" 2>/dev/null || true
+    sleep 2
+    rm -f "$LOG_FILE"
+
+    TIER_ARGS="--test-mode --qr-payload $QR_PAYLOAD_B64 --latency-target-ms $TIER"
+    if [ -n "$TRANSPORT" ]; then
+      TIER_ARGS="$TIER_ARGS --expect-transport $TRANSPORT"
+    fi
+
+    xcrun devicectl device process launch \
+      --device "$IPAD_DEVICE_ID" \
+      --terminate-existing \
+      --console \
+      "$BUNDLE_ID" \
+      -- $TIER_ARGS \
+      2>&1 | tee -a "$LOG_FILE" &
+    IPAD_PID=$!
+
+    wait_and_parse_results "latency-tier=${TIER}ms"
+    TIER_RESULT=$?
+
+    if [ "$TIER_RESULT" -ne 0 ]; then
+      echo ""
+      printf "\033[33mLatency tier ${TIER}ms FAILED -- stopping sweep\033[0m\n"
+      if [ -n "$LAST_PASSING_TIER" ]; then
+        printf "\033[32mBest passing latency tier: ${LAST_PASSING_TIER}ms\033[0m\n"
+      fi
+      break
+    fi
+
+    LAST_PASSING_TIER="$TIER"
+    printf "\033[32mLatency tier ${TIER}ms PASSED\033[0m\n"
+  done
+
+  echo ""
+  echo "============================================"
+  echo "  FULL SUITE COMPLETE"
+  echo "============================================"
+  if [ -n "$LAST_PASSING_TIER" ]; then
+    printf "  Best latency tier: \033[32m${LAST_PASSING_TIER}ms\033[0m\n"
+  else
+    printf "  \033[31mNo latency tiers passed\033[0m\n"
   fi
-else
-  echo "ERROR: No iPad log output captured"
+  echo "============================================"
+  exit 0
+fi
+
+# ---- Single run mode ----
+wait_and_parse_results ""
+RESULT=$?
+
+if [ "$RESULT" -ne 0 ]; then
   exit 1
 fi
 

@@ -969,9 +969,8 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
 
     /* Sequence, chunk, reserved */
     XCTAssertEqual(hdr.seq, (uint16_t)0, @"First frame seq must be 0");
-    XCTAssertEqual(hdr.chunk_idx, (uint8_t)0, @"chunk_idx must be 0");
-    XCTAssertEqual(hdr.chunk_total, (uint8_t)1, @"chunk_total must be 1");
-    XCTAssertEqual(hdr.reserved, (uint8_t)0, @"reserved must be 0");
+    XCTAssertEqual(hdr.chunk_idx, (uint16_t)0, @"chunk_idx must be 0");
+    XCTAssertEqual(hdr.chunk_total, (uint16_t)1, @"chunk_total must be 1");
 
     /* Payload size bounds */
     XCTAssertGreaterThan(hdr.payload_size, (uint32_t)0, @"payload_size must be > 0");
@@ -1230,9 +1229,8 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
                   @"HEVC flag must be set");
     XCTAssertTrue((capturedHeader.flags & KEYDRD_FLAG_DELTA) == 0,
                   @"HEVC frames must NOT have DELTA flag");
-    XCTAssertEqual(capturedHeader.chunk_idx, (uint8_t)0);
-    XCTAssertEqual(capturedHeader.chunk_total, (uint8_t)1);
-    XCTAssertEqual(capturedHeader.reserved, (uint8_t)0);
+    XCTAssertEqual(capturedHeader.chunk_idx, (uint16_t)0);
+    XCTAssertEqual(capturedHeader.chunk_total, (uint16_t)1);
     XCTAssertGreaterThan(capturedHeader.payload_size, (uint32_t)0);
     XCTAssertEqual(capturedHeader.payload_size, (uint32_t)capturedPayload.length,
                    @"header payload_size must match actual encoded bytes");
@@ -1416,7 +1414,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
         ^(nw_connection_t serverConn) {
         /* Server (receive side): receive header first */
         receiveBytes(serverConn, sizeof(MediaFrameHeader), ^(const uint8_t *hdrBuf, size_t hdrLen) {
-            XCTAssertEqual(hdrLen, sizeof(MediaFrameHeader), @"Must receive exactly 24 bytes for header");
+            XCTAssertEqual(hdrLen, sizeof(MediaFrameHeader), @"Must receive exactly 25 bytes for header");
 
             MediaFrameHeader recvHdr;
             memcpy(&recvHdr, hdrBuf, sizeof(MediaFrameHeader));
@@ -1427,7 +1425,6 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
             XCTAssertEqual(recvHdr.seq, sentHeader.seq);
             XCTAssertEqual(recvHdr.chunk_idx, sentHeader.chunk_idx);
             XCTAssertEqual(recvHdr.chunk_total, sentHeader.chunk_total);
-            XCTAssertEqual(recvHdr.reserved, sentHeader.reserved);
             XCTAssertEqual(recvHdr.payload_size, sentHeader.payload_size);
             XCTAssertEqual(recvHdr.ts_us, sentHeader.ts_us);
             XCTAssertEqual(recvHdr.crc32, sentHeader.crc32);

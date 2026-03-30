@@ -42,6 +42,10 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @property (nonatomic, copy, nullable) void (^onConnectionChanged)(BOOL connected, BOOL isAWDL);
 
+/** Callback fired when the DTLS media channel (UDP) becomes ready.
+ *  SessionManager should wait for this before starting capture. */
+@property (nonatomic, copy, nullable) void (^onMediaChannelReady)(void);
+
 /**
  * Start advertising the Bonjour service and listening for connections.
  * Enables peer-to-peer (AWDL) discovery.
