@@ -1,6 +1,11 @@
 #import "HEVCEncoder.h"
 #import <VideoToolbox/VideoToolbox.h>
+#import <QuartzCore/QuartzCore.h>
 #import <os/log.h>
+
+static uint64_t keydrd_host_time_us(void) {
+    return (uint64_t)(CACurrentMediaTime() * 1000000.0);
+}
 
 static os_log_t hevc_log(void) {
     static os_log_t log;
@@ -177,6 +182,17 @@ static const int kEcoMaxHeight720 = 720;
     }
     encodeCount++;
 
+    /* Pipeline latency probe: capture to encode-submit (should be ~0ms) */
+    if (captureTimestampUs > 0) {
+        uint64_t nowUs = keydrd_host_time_us();
+        uint64_t submitElapsedMs = (nowUs - captureTimestampUs) / 1000;
+        static int submitProbeCount = 0;
+        if (submitProbeCount < 10 || submitProbeCount % 100 == 0) {
+            os_log(hevc_log(), "LATENCY-PROBE encode-submit: %llu ms since capture", submitElapsedMs);
+        }
+        submitProbeCount++;
+    }
+
     /* Pass capture host-time timestamp through sourceFrameRefcon so the
      * output callback can stamp ts_us at capture time, not encode-output time. */
     uint64_t *tsRef = malloc(sizeof(uint64_t));
@@ -268,6 +284,17 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
 
     HEVCEncoder *encoder = (__bridge HEVCEncoder *)outputCallbackRefCon;
     if (!encoder || !encoder.isActive || !encoder.onEncodedFrame) return;
+
+    /* Pipeline latency probe: how long from capture to encode-complete? */
+    if (captureTimestampUs > 0) {
+        uint64_t nowUs = keydrd_host_time_us();
+        uint64_t encodeElapsedMs = (nowUs - captureTimestampUs) / 1000;
+        static int probeCount = 0;
+        if (probeCount < 10 || probeCount % 100 == 0) {
+            os_log(hevc_log(), "LATENCY-PROBE encode-complete: %llu ms since capture (seq pending)", encodeElapsedMs);
+        }
+        probeCount++;
+    }
 
     /* Check if this is a keyframe */
     BOOL isKeyframe = NO;

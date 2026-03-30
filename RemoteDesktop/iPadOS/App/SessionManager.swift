@@ -417,6 +417,16 @@ final class SessionManager {
         let payload = data.subdata(in: MediaFrameHeader.size..<data.count)
 
         frameRecvCount += 1
+
+        // Pipeline latency probe: capture → iPad receive (before decode)
+        if header.tsUs > 0 {
+            let nowUs = keydrdHostTimeUs()
+            let recvElapsedMs = (Int64(nowUs) - Int64(header.tsUs) + (testRunner?.clockOffsetForProbe ?? 0)) / 1000
+            if frameRecvCount <= 10 || frameRecvCount % 100 == 0 {
+                print("[CONSOLE] LATENCY-PROBE ipad-recv: \(recvElapsedMs)ms since capture (seq=\(header.seq))")
+            }
+        }
+
         if frameRecvCount <= 3 {
             print("[CONSOLE] handleReceivedFrame: seq=\(header.seq) flags=0x\(String(header.flags, radix: 16)) payload=\(payload.count) isHEVC=\(header.isHEVC) isKey=\(header.isKeyframe)")
         }

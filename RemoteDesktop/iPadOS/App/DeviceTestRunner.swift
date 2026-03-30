@@ -89,8 +89,11 @@ final class DeviceTestRunner {
     private var glassToGlassLatenciesUs: [Int64] = []
 
     // Clock offset calibration (Cristian's algorithm)
-    private var clockOffsetUs: Int64 = 0  // Mac clock - iPad clock (microseconds)
+    private(set) var clockOffsetUs: Int64 = 0  // Mac clock - iPad clock (microseconds)
     private var clockOffsetCalibrated = false
+
+    /// Expose clock offset for latency probes in SessionManager
+    var clockOffsetForProbe: Int64 { clockOffsetUs }
     private var clockSyncSamples: [(offset: Int64, rtt: Int64)] = []
     private var clockSyncProbesSent = 0
     private var clockSyncComplete = false

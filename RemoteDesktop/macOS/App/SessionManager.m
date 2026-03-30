@@ -734,6 +734,17 @@ static uint64_t keydrd_host_time_us(void) {
             os_log(sLog, "HEVC onEncodedFrame: seq=%u len=%zu flags=0x%02x, sending via UDP chunks",
                    header.seq, len, header.flags);
         }
+
+        /* Pipeline latency probe: capture → TCP send */
+        if (header.ts_us > 0) {
+            uint64_t nowUs = (uint64_t)(CACurrentMediaTime() * 1000000.0);
+            uint64_t sendElapsedMs = (nowUs - header.ts_us) / 1000;
+            if (hevcSentCount < 10 || hevcSentCount % 100 == 0) {
+                os_log(sLog, "LATENCY-PROBE tcp-send: %llu ms since capture (seq=%u, %zu bytes)",
+                       sendElapsedMs, header.seq, len);
+            }
+        }
+
         hevcSentCount++;
 
         size_t totalLen = sizeof(MediaFrameHeader) + len;
