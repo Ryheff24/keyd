@@ -587,6 +587,10 @@ final class SessionManager {
         startFPSUpdateTimer()
 
         state = .streaming
+        DispatchQueue.main.async {
+            print("[CONSOLE] Session handshake complete; forcing HUD visible")
+            self.hudViewModel.show()
+        }
 
         // E2E test: report handshake
         testRunner?.reportSessionHandshake(handshake)

@@ -37,6 +37,7 @@ struct HUDView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.isVisible)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.isExpanded)
     }
@@ -54,7 +55,10 @@ struct HUDView: View {
                     .onEnded { value in
                         // Only trigger on downward swipes
                         if value.translation.height > 30 {
+                            print("[CONSOLE] HUD swipe-down detected: height=\(value.translation.height)")
                             viewModel.show()
+                        } else {
+                            print("[CONSOLE] HUD swipe ignored: height=\(value.translation.height)")
                         }
                     }
             )

@@ -103,6 +103,7 @@ final class HUDViewModel {
 
     /// Show the HUD and reset the auto-hide timer.
     func show() {
+        print("[CONSOLE] HUDViewModel.show() called; wasVisible=\(isVisible), wasExpanded=\(isExpanded)")
         isVisible = true
         resetAutoHideTimer()
     }
@@ -114,6 +115,7 @@ final class HUDViewModel {
         autoHideTimer = Timer.scheduledTimer(withTimeInterval: Self.autoHideDuration,
                                               repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
+                print("[CONSOLE] HUD auto-hide timer fired; collapsing expanded panel")
                 self?.isExpanded = false
                 // Keep isVisible = true — compact pill stays visible
             }
