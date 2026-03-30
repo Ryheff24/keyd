@@ -177,7 +177,7 @@ static const int kEcoMaxHeight720 = 720;
     }
     encodeCount++;
 
-    /* Pass capture wall-clock timestamp through sourceFrameRefcon so the
+    /* Pass capture host-time timestamp through sourceFrameRefcon so the
      * output callback can stamp ts_us at capture time, not encode-output time. */
     uint64_t *tsRef = malloc(sizeof(uint64_t));
     if (tsRef) {
@@ -352,9 +352,9 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
         }
     }
 
-    /* Capture-time wall clock (CLOCK_REALTIME microseconds) stamped in
+    /* Capture-time host clock (microseconds) stamped in
      * ScreenCapture.didOutputSampleBuffer, threaded via sourceFrameRefcon.
-     * Consistent with LZ4 path and comparable to iPad's clock_gettime. */
+     * Consistent with LZ4 path and comparable to iPad host-time timestamps. */
     uint64_t tsUs = captureTimestampUs;
 
     /* Build MediaFrameHeader */

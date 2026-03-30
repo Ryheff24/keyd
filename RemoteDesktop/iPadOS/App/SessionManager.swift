@@ -622,10 +622,8 @@ final class SessionManager {
 
     /// Handle clock sync response from Mac. Routes to test runner for offset calibration.
     private func handleClockSyncResponse(_ data: Data) {
-        // t4: iPad receive time (immediately on arrival)
-        var ts = timespec()
-        clock_gettime(CLOCK_REALTIME, &ts)
-        let t4Us = UInt64(ts.tv_sec) * 1_000_000 + UInt64(ts.tv_nsec / 1000)
+        // t4: iPad receive host time (immediately on arrival)
+        let t4Us = keydrdHostTimeUs()
 
         // Parse payload after 9-byte InputEventHeader
         let payloadData = data.dropFirst(InputEventHeader.size)
@@ -788,7 +786,7 @@ final class SessionManager {
     // MARK: - Private: Utilities
 
     private func currentTimestampUs() -> UInt64 {
-        UInt64(Date().timeIntervalSince1970 * 1_000_000)
+        keydrdHostTimeUs()
     }
 
     deinit {

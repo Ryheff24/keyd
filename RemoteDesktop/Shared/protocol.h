@@ -27,7 +27,7 @@ typedef struct __attribute__((packed)) {
     uint16_t chunk_idx;      /* chunk index within frame (u16 for large keyframes) */
     uint16_t chunk_total;    /* total chunks in frame (u16: up to 65535 chunks) */
     uint32_t payload_size;   /* compressed payload bytes */
-    uint64_t ts_us;          /* capture timestamp (microseconds) */
+    uint64_t ts_us;          /* capture host-time timestamp (microseconds) */
     uint32_t crc32;          /* CRC-32 of payload */
 } MediaFrameHeader;
 
@@ -51,7 +51,7 @@ _Static_assert(sizeof(MediaFrameHeader) == 25,
 /* ---- InputEventHeader (9 bytes, packed) ---- */
 typedef struct __attribute__((packed)) {
     uint8_t  type;           /* KEYDRD_INPUT_* */
-    uint64_t ts_us;          /* event timestamp (microseconds) */
+    uint64_t ts_us;          /* event host-time timestamp (microseconds) */
 } InputEventHeader;
 
 _Static_assert(sizeof(InputEventHeader) == 9,
@@ -61,8 +61,8 @@ _Static_assert(sizeof(InputEventHeader) == 9,
  * Sent after InputEventHeader (type=CLOCK_SYNC_RESP).
  * Carries three timestamps for Cristian's algorithm:
  *   t1 = iPad send time (echoed from request ts_us)
- *   t2 = Mac receive time (CLOCK_REALTIME)
- *   t3 = Mac send time (CLOCK_REALTIME, just before send)
+ *   t2 = Mac receive host time
+ *   t3 = Mac send host time (just before send)
  * iPad records t4 on receipt, then:
  *   offset = ((t2-t1) + (t3-t4)) / 2   (Mac clock - iPad clock)
  */

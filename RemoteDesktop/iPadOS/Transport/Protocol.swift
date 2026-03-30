@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 
 // MARK: - Protocol Constants
 
@@ -13,6 +14,15 @@ let keydrdMediaPort: UInt16 = 14567
 
 /// TCP port for input event transport
 let keydrdInputPort: UInt16 = 14568
+
+/// Monotonic host time in microseconds.
+/// QuartzCore documents `CACurrentMediaTime()` as `mach_absolute_time()`
+/// converted to seconds, so it is safe to compare with Metal/CoreAnimation
+/// presentation timestamps and to exchange across devices via Cristian's algorithm.
+@inline(__always)
+func keydrdHostTimeUs() -> UInt64 {
+    UInt64(CACurrentMediaTime() * 1_000_000)
+}
 
 // MARK: - MediaFrameHeader Flags
 
@@ -36,7 +46,7 @@ struct MediaFrameHeader {
     let chunkIdx: UInt16    // chunk index within frame (u16 for large keyframes)
     let chunkTotal: UInt16  // total chunks in frame (u16: up to 65535)
     let payloadSize: UInt32 // compressed payload bytes
-    let tsUs: UInt64        // capture timestamp (microseconds)
+    let tsUs: UInt64        // capture host-time timestamp (microseconds)
     let crc32: UInt32       // CRC-32 of payload
 
     var isHEVC: Bool { flags & 0x01 != 0 }
@@ -112,7 +122,7 @@ enum InputEventType: UInt8 {
 /// Swift mirror of the C InputEventHeader struct (9 bytes packed).
 struct InputEventHeader {
     let type: UInt8    // InputEventType
-    let tsUs: UInt64   // event timestamp (microseconds)
+    let tsUs: UInt64   // event host-time timestamp (microseconds)
 
     static let size = 9
 

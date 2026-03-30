@@ -208,9 +208,9 @@ int compress_frame(FrameCompressorState *state,
     /* Fill output */
     out->compressed_size = (size_t)compressed;
 
-    /* Use capture-time wall clock (CLOCK_REALTIME microseconds) stamped
+    /* Use capture-time host clock (microseconds) stamped
      * in ScreenCapture.didOutputSampleBuffer — consistent with HEVC path
-     * and comparable to iPad's clock_gettime(CLOCK_REALTIME). */
+     * and comparable to iPad host-time timestamps. */
     uint64_t ts_us = capture_ts_us;
 
     /* Compute CRC-32 of compressed payload */

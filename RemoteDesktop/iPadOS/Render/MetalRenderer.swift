@@ -50,20 +50,20 @@ final class MetalRenderer: NSObject {
     /// Timestamps of each NEW rendered frame (for FPS/jitter analysis by tests).
     private(set) var renderedFrameTimestamps: [CFAbsoluteTime] = []
 
-    /// Callback fired each time a NEW frame is confirmed presented on display.
-    /// Tests hook into this to count real rendered frames.
+    /// Callback fired each time a NEW frame is submitted for presentation.
+    /// Tests hook into this to count real frame updates rather than stale redraws.
     var onFrameRendered: (() -> Void)?
 
-    /// Callback fired with glass-to-glass timing data after GPU confirms presentation.
-    /// Parameters: (captureTimestampUs: UInt64, presentedTime: CFTimeInterval)
-    /// captureTimestampUs = Mac wall-clock capture time from MediaFrameHeader.ts_us
-    /// presentedTime = CAMetalDrawable.presentedTime (mach_absolute_time-based)
-    var onFramePresented: ((_ captureTimestampUs: UInt64, _ presentedWallClockUs: Int64) -> Void)?
+    /// Callback fired with glass-to-glass timing data using the display link's
+    /// target presentation timestamp for the current drawable.
+    /// Parameters: (captureTimestampUs: UInt64, presentedHostTimeUs: Int64)
+    /// Both values are on the Core Animation host-time timeline.
+    var onFramePresented: ((_ captureTimestampUs: UInt64, _ presentedHostTimeUs: Int64) -> Void)?
 
     /// Dirty flag: set when updateFrame uploads new pixel data, cleared after render.
     private var frameDirty = false
 
-    /// Capture timestamp (Mac wall-clock microseconds) of the current frame texture.
+    /// Capture timestamp (Mac host-time microseconds) of the current frame texture.
     /// Set in updateFrame alongside texture data, read during render for latency tracking.
     private var frameCaptureTimestampUs: UInt64 = 0
 
@@ -392,9 +392,15 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             return
         }
 
-        // Only render if we have a frame texture
+        // Snapshot the texture/timestamp/dirty bit atomically so latency samples
+        // always pair the rendered frame with the matching capture timestamp.
         textureLock.lock()
         let currentTexture = frameTexture
+        let currentCaptureTimestampUs = frameCaptureTimestampUs
+        let hasNewFrame = frameDirty
+        if hasNewFrame {
+            frameDirty = false
+        }
         textureLock.unlock()
 
         if let texture = currentTexture {
@@ -417,10 +423,10 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
 
             // Only count as NEW rendered frame if texture was updated since last render.
             // Re-drawing the same stale texture at 120Hz doesn't count as a new frame.
-            if frameDirty {
-                frameDirty = false
-                // Snapshot capture timestamp for this frame before present
-                let captureTsUs = frameCaptureTimestampUs
+            if hasNewFrame {
+                renderedFrameCount += 1
+                renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+                onFrameRendered?()
 
                 // Step 8: End encoding
                 encoder.endEncoding()
@@ -428,29 +434,13 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
                 // Step 9: Present drawable
                 commandBuffer.present(drawable)
 
-                // Track actual on-screen presentation via addPresentedHandler.
-                // This fires AFTER the display controller scans out the frame —
-                // the closest to "photons on screen" we can get without a camera.
-                drawable.addPresentedHandler { [weak self] presentedDrawable in
-                    guard let self = self else { return }
-                    self.renderedFrameCount += 1
-                    self.renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
-                    self.onFrameRendered?()
-
-                    // Glass-to-glass: convert presentedTime to wall-clock for
-                    // comparison with Mac's CLOCK_REALTIME capture timestamp.
-                    if captureTsUs > 0 {
-                        let presentedMach = presentedDrawable.presentedTime
-                        if presentedMach > 0 {
-                            // Convert mach presentedTime to wall clock:
-                            // wallNow - machNow + presentedMach = presented wall clock
-                            var ts = timespec()
-                            clock_gettime(CLOCK_REALTIME, &ts)
-                            let wallNowUs = Int64(ts.tv_sec) * 1_000_000 + Int64(ts.tv_nsec / 1000)
-                            let machNowUs = Int64(CACurrentMediaTime() * 1_000_000)
-                            let presentedWallUs = wallNowUs - machNowUs + Int64(presentedMach * 1_000_000)
-                            self.onFramePresented?(captureTsUs, presentedWallUs)
-                        }
+                // Glass-to-glass: compare the capture host time to the display
+                // link's target presentation time for this drawable.
+                if currentCaptureTimestampUs > 0 {
+                    let targetPresentation = update.targetPresentationTimestamp
+                    if targetPresentation > 0 {
+                        let presentedHostTimeUs = Int64(targetPresentation * 1_000_000)
+                        onFramePresented?(currentCaptureTimestampUs, presentedHostTimeUs)
                     }
                 }
 

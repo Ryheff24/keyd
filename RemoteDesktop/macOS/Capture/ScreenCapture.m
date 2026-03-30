@@ -1,6 +1,7 @@
 #import "ScreenCapture.h"
 #import <CoreVideo/CoreVideo.h>
 #import <IOSurface/IOSurface.h>
+#import <QuartzCore/QuartzCore.h>
 #import <os/log.h>
 
 static os_log_t sc_log(void) {
@@ -17,6 +18,10 @@ static const uint64_t kWatchdogIntervalNs = 2ULL * NSEC_PER_SEC;
 
 /* Frame timeout: if no frame for >2s and display is awake, flag re-auth */
 static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
+
+static uint64_t keydrd_host_time_us(void) {
+    return (uint64_t)(CACurrentMediaTime() * 1000000.0);
+}
 
 @implementation ScreenCapture {
     /* Strong reference to SCStream — required because SCStream holds its
@@ -302,14 +307,11 @@ static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
     }
 
     /*
-     * Stamp wall-clock capture time ONCE at frame arrival — used by both
+     * Stamp host-time capture time ONCE at frame arrival — used by both
      * HEVC and LZ4 paths so ts_us is consistent and comparable to
-     * iPad's clock_gettime(CLOCK_REALTIME).
+     * iPad's CACurrentMediaTime-derived timestamps.
      */
-    struct timespec capTs;
-    clock_gettime(CLOCK_REALTIME, &capTs);
-    uint64_t captureTimestampUs = (uint64_t)capTs.tv_sec * 1000000ULL
-                                + (uint64_t)(capTs.tv_nsec / 1000);
+    uint64_t captureTimestampUs = keydrd_host_time_us();
 
     /*
      * RD-COMP-05: Hold CMSampleBuffer retain for entire compression duration.

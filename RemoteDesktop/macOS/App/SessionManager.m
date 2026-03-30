@@ -11,6 +11,7 @@
 #import <os/log.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreImage/CoreImage.h>
+#import <QuartzCore/QuartzCore.h>
 #import <AppKit/AppKit.h>
 
 /* NSWindow subclass that closes on Escape key */
@@ -31,6 +32,10 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
+
+static uint64_t keydrd_host_time_us(void) {
+    return (uint64_t)(CACurrentMediaTime() * 1000000.0);
+}
 
 @interface SessionManager ()
 
@@ -843,10 +848,8 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 - (void)handleClockSyncRequest:(const void *)data length:(size_t)length {
     if (length < sizeof(InputEventHeader)) return;
 
-    /* t2: Mac receive time (as close to reception as possible) */
-    struct timespec ts2;
-    clock_gettime(CLOCK_REALTIME, &ts2);
-    uint64_t t2Us = (uint64_t)ts2.tv_sec * 1000000ULL + (uint64_t)(ts2.tv_nsec / 1000);
+    /* t2: Mac receive host time (as close to reception as possible) */
+    uint64_t t2Us = keydrd_host_time_us();
 
     /* Extract t1 from request (iPad send time, stored in ts_us) */
     const InputEventHeader *reqHeader = (const InputEventHeader *)data;
@@ -856,10 +859,8 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     size_t totalLen = sizeof(InputEventHeader) + sizeof(ClockSyncResponse);
     uint8_t packet[sizeof(InputEventHeader) + sizeof(ClockSyncResponse)];
 
-    /* t3: Mac send time (just before send) */
-    struct timespec ts3;
-    clock_gettime(CLOCK_REALTIME, &ts3);
-    uint64_t t3Us = (uint64_t)ts3.tv_sec * 1000000ULL + (uint64_t)(ts3.tv_nsec / 1000);
+    /* t3: Mac send host time (just before send) */
+    uint64_t t3Us = keydrd_host_time_us();
 
     InputEventHeader respHeader;
     respHeader.type = KEYDRD_INPUT_CLOCK_SYNC_RESP;

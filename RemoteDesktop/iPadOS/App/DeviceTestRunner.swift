@@ -82,10 +82,10 @@ final class DeviceTestRunner {
     private static let tieredLatencyProbeCount = 20
     private static let tieredLatencyProbeSpacingMs: Int = 50
 
-    // Pipeline latency (capture-to-decode, using wall clock ts_us)
+    // Pipeline latency (capture-to-decode, using host-time ts_us)
     private var pipelineLatenciesUs: [Int64] = []
 
-    // Glass-to-glass latency (capture-to-presented, via addPresentedHandler)
+    // Glass-to-glass latency (capture-to-presented, via display-link presentation target)
     private var glassToGlassLatenciesUs: [Int64] = []
 
     // Clock offset calibration (Cristian's algorithm)
@@ -94,6 +94,7 @@ final class DeviceTestRunner {
     private var clockSyncSamples: [(offset: Int64, rtt: Int64)] = []
     private var clockSyncProbesSent = 0
     private var clockSyncComplete = false
+    private var awaitingClockSyncResponseT1Us: UInt64?
     private static let clockSyncProbeCount = 10
     private static let clockSyncProbeSpacingMs = 20
 
@@ -164,13 +165,13 @@ final class DeviceTestRunner {
             self?.onRenderedFrame()
         }
 
-        // Glass-to-glass latency: capture wall-clock → presented wall-clock.
+        // Glass-to-glass latency: capture host time -> presented host time.
         // Corrected by Cristian's algorithm clock offset.
         // latency = iPad_presented - (Mac_capture - offset)
         //         = iPad_presented - Mac_capture + offset
-        sessionManager.metalRenderer.onFramePresented = { [weak self] captureTimestampUs, presentedWallClockUs in
+        sessionManager.metalRenderer.onFramePresented = { [weak self] captureTimestampUs, presentedHostTimeUs in
             guard let self = self else { return }
-            let latencyUs = presentedWallClockUs - Int64(captureTimestampUs) + self.clockOffsetUs
+            let latencyUs = presentedHostTimeUs - Int64(captureTimestampUs) + self.clockOffsetUs
             if latencyUs > 0 && latencyUs < 10_000_000 { // sanity: 0-10s
                 self.glassToGlassLatenciesUs.append(latencyUs)
             }
@@ -336,14 +337,12 @@ final class DeviceTestRunner {
             totalDecompressedBytes += decompressedSize
         }
 
-        // Pipeline latency (capture-to-decode): Mac embeds wall clock in ts_us.
+        // Pipeline latency (capture-to-decode): Mac embeds host time in ts_us.
         // Apply Cristian's algorithm clock offset to remove Mac-iPad clock skew.
         // latency = iPad_now - (Mac_capture_time - offset)
         //         = iPad_now - Mac_capture_time + offset
         if header.tsUs > 0 {
-            var ts = timespec()
-            clock_gettime(CLOCK_REALTIME, &ts)
-            let nowUs = Int64(ts.tv_sec) * 1_000_000 + Int64(ts.tv_nsec / 1000)
+            let nowUs = Int64(keydrdHostTimeUs())
             let latencyUs = nowUs - Int64(header.tsUs) + clockOffsetUs
             if latencyUs > 0 && latencyUs < 10_000_000 { // sanity: 0-10s
                 pipelineLatenciesUs.append(latencyUs)
@@ -521,6 +520,7 @@ final class DeviceTestRunner {
         clockSyncSamples = []
         clockSyncProbesSent = 0
         clockSyncComplete = false
+        awaitingClockSyncResponseT1Us = nil
         sendNextClockSyncProbe()
     }
 
@@ -534,10 +534,8 @@ final class DeviceTestRunner {
             return
         }
 
-        // t1: iPad send time (CLOCK_REALTIME)
-        var ts = timespec()
-        clock_gettime(CLOCK_REALTIME, &ts)
-        let t1Us = UInt64(ts.tv_sec) * 1_000_000 + UInt64(ts.tv_nsec / 1000)
+        // t1: iPad send host time
+        let t1Us = keydrdHostTimeUs()
 
         let header = InputEventHeader(type: InputEventType.clockSyncReq.rawValue, tsUs: t1Us)
         let data = header.serialize()
@@ -549,12 +547,18 @@ final class DeviceTestRunner {
         }
 
         clockSyncProbesSent += 1
+        awaitingClockSyncResponseT1Us = t1Us
 
         // Timeout for this probe
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self = self, !self.clockSyncComplete else { return }
+            guard self.awaitingClockSyncResponseT1Us == t1Us else { return }
+
+            self.awaitingClockSyncResponseT1Us = nil
             if self.clockSyncProbesSent >= Self.clockSyncProbeCount {
                 self.completeClockSyncCalibration()
+            } else {
+                self.sendNextClockSyncProbe()
             }
         }
     }
@@ -562,6 +566,8 @@ final class DeviceTestRunner {
     /// Called by SessionManager when a CLOCK_SYNC_RESP arrives
     func reportClockSyncResponse(t1Us: UInt64, t2Us: UInt64, t3Us: UInt64, t4Us: UInt64) {
         guard !clockSyncComplete else { return }
+        guard awaitingClockSyncResponseT1Us == t1Us else { return }
+        awaitingClockSyncResponseT1Us = nil
 
         // Cristian's algorithm:
         // RTT = (t4 - t1) - (t3 - t2)  [subtract Mac processing time]
@@ -591,6 +597,8 @@ final class DeviceTestRunner {
             runTransportAssertionTest()
             return
         }
+
+        awaitingClockSyncResponseT1Us = nil
 
         // Sort by RTT, take samples with lowest RTT (most symmetric, most accurate)
         let sortedByRtt = clockSyncSamples.sorted { $0.rtt < $1.rtt }
