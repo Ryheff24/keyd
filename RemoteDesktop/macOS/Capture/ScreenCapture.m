@@ -140,18 +140,26 @@ static uint64_t keydrd_host_time_us(void) {
     config.minimumFrameInterval = CMTimeMake(1, 120); /* RD-CAP-02: 120fps */
     config.queueDepth = 3;
     config.showsCursor = YES;
-    /* Get true pixel dimensions via CGDisplayMode (CGDisplayPixelsWide returns
-     * logical/point dimensions on macOS Sequoia, not physical Retina pixels). */
-    CGDisplayModeRef displayMode = CGDisplayCopyDisplayMode(display.displayID);
+    /* Determine capture resolution.
+     * If captureWidth/Height are set (from iPad viewport report), use those —
+     * SCStream downscales from native display to target resolution in hardware.
+     * Otherwise use the display's native pixel dimensions. */
     size_t pixelWidth, pixelHeight;
-    if (displayMode) {
-        pixelWidth  = CGDisplayModeGetPixelWidth(displayMode);
-        pixelHeight = CGDisplayModeGetPixelHeight(displayMode);
-        CGDisplayModeRelease(displayMode);
+    if (self.captureWidth > 0 && self.captureHeight > 0) {
+        pixelWidth = self.captureWidth;
+        pixelHeight = self.captureHeight;
+        os_log(sc_log(), "Using viewport override resolution: %lux%lu",
+               (unsigned long)pixelWidth, (unsigned long)pixelHeight);
     } else {
-        /* Fallback: SCDisplay width/height are points, double for Retina */
-        pixelWidth  = display.width * 2;
-        pixelHeight = display.height * 2;
+        CGDisplayModeRef displayMode = CGDisplayCopyDisplayMode(display.displayID);
+        if (displayMode) {
+            pixelWidth  = CGDisplayModeGetPixelWidth(displayMode);
+            pixelHeight = CGDisplayModeGetPixelHeight(displayMode);
+            CGDisplayModeRelease(displayMode);
+        } else {
+            pixelWidth  = display.width * 2;
+            pixelHeight = display.height * 2;
+        }
     }
     config.width = pixelWidth;
     config.height = pixelHeight;

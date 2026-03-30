@@ -112,6 +112,7 @@ enum InputEventType: UInt8 {
     case modeChange         = 0x20
     case resMatchRequest    = 0x21  // iPad -> Mac: request resolution match
     case resMatchResponse   = 0x22  // Mac -> iPad: resolution match result
+    case viewportReport     = 0x24  // iPad -> Mac: viewport pixel dimensions
     case geometryUpdate     = 0x23  // Mac -> iPad: new display geometry
     case keepalive          = 0x30
     case clockSyncReq       = 0xFE  // iPad -> Mac: Cristian's algorithm probe
@@ -321,5 +322,26 @@ struct GeometryUpdatePayload {
             guard let base = buffer.baseAddress else { return nil }
             return (base + offset).assumingMemoryBound(to: GeometryUpdatePayload.self).pointee
         }
+    }
+}
+
+// MARK: - ViewportReportPayload (8 bytes, mirrors protocol.h)
+
+/// iPad sends this after handshake with its computed viewport pixel dimensions.
+/// Mac uses these to set capture + encoder resolution.
+struct ViewportReportPayload {
+    let viewportWidth: UInt32
+    let viewportHeight: UInt32
+
+    static let size = 8
+
+    func serialize() -> Data {
+        var buf = Data(count: Self.size)
+        buf.withUnsafeMutableBytes { p in
+            let base = p.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            var w = viewportWidth;  memcpy(base + 0, &w, 4)
+            var h = viewportHeight; memcpy(base + 4, &h, 4)
+        }
+        return buf
     }
 }

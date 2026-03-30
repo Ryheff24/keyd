@@ -68,6 +68,12 @@ static uint64_t keydrd_host_time_us(void) {
 @property (nonatomic, assign) uint32_t captureHeight;
 @property (nonatomic, assign) float captureScale;
 
+/* Viewport: iPad reports its viewport dims after handshake.
+ * Encoder + capture start only after viewport is known. */
+@property (nonatomic, assign) uint32_t viewportWidth;
+@property (nonatomic, assign) uint32_t viewportHeight;
+@property (nonatomic, assign) BOOL viewportReceived;
+
 /* Resolution matching: stored original display mode for revert on disconnect */
 @property (nonatomic, assign) CGDisplayModeRef storedDisplayMode;
 @property (nonatomic, assign) BOOL resolutionChanged;
@@ -512,7 +518,7 @@ static uint64_t keydrd_host_time_us(void) {
 }
 
 - (void)switchToHEVCMode {
-    os_log(sLog, "Switching to HEVC mode");
+    os_log(sLog, "Switching to HEVC mode (encoder deferred until iPad viewport report)");
 
     if (_compressorInitialized) {
         FrameCompressorState state = _compressorState;
@@ -521,9 +527,8 @@ static uint64_t keydrd_host_time_us(void) {
         _compressorInitialized = NO;
     }
 
-    /* Ensure display dimensions are available — they may not be set yet
-     * if switchToHEVCMode fires from transport FSM effects before
-     * sendSessionHandshake runs in onTransportConnected. */
+    /* Ensure display dimensions are available for the handshake.
+     * Encoder does NOT start here — it starts when iPad sends viewport dims. */
     if (_captureWidth == 0 || _captureHeight == 0) {
         CGDirectDisplayID mainDisplay = CGMainDisplayID();
         CGDisplayModeRef mode = CGDisplayCopyDisplayMode(mainDisplay);
@@ -538,14 +543,12 @@ static uint64_t keydrd_host_time_us(void) {
         }
     }
 
-    /* Pick bitrate based on current transport.
-     * USB NCM (100Mbps link): 60Mbps for sharp text at native resolution.
-     * WiFi/unknown: 20Mbps to stay within wireless bandwidth. */
-    int bitrate = _usbTransport.isConnected ? 150000000 : 20000000;
-    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps %dMbps (%s)",
-           _captureWidth, _captureHeight, bitrate / 1000000,
-           _usbTransport.isConnected ? "USB" : "WiFi/default");
-    [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:bitrate];
+    /* If viewport already known (reconnect), start encoder immediately */
+    if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
+        [self _startEncoderAtViewportResolution];
+    } else {
+        os_log(sLog, "HEVC encoder deferred — waiting for iPad viewport report");
+    }
 
     /* Reconfigure frame delivery for HEVC */
     [self configureFrameDelivery];
@@ -573,19 +576,12 @@ static uint64_t keydrd_host_time_us(void) {
     /* Send session handshake (also sets _captureWidth/_captureHeight) */
     [self sendSessionHandshake];
 
-    /* Re-start HEVC encoder with correct dimensions.
-     * Both USB and WiFi use HEVC — USB at higher bitrate since
-     * the wired link can handle it, WiFi at 20Mbps.
-     * USB NCM is 100Mbps; 60Mbps gives sharp text at native resolution
-     * (3600x2338 = 0.15 bpp, vs 0.10 bpp at 40Mbps). */
-    int bitrate = _usbTransport.isConnected ? 150000000 : 20000000;
-    if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
-        os_log(sLog, "HEVC encoder active — restarting with %ux%u @%dMbps (%s)",
-               _captureWidth, _captureHeight, bitrate / 1000000,
-               _usbTransport.isConnected ? "USB" : "WiFi");
-        [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:bitrate];
-    } else if (!_hevcEncoder.isActive) {
-        os_log(sLog, "HEVC encoder not active — check switchToHEVCMode");
+    /* Encoder starts when iPad sends viewport report (after receiving this handshake).
+     * If viewport already known (reconnect), start immediately. */
+    if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
+        [self _startEncoderAtViewportResolution];
+    } else {
+        os_log(sLog, "Encoder deferred — waiting for iPad viewport report after handshake");
     }
 
     /* Set up frame delivery */
@@ -835,6 +831,10 @@ static uint64_t keydrd_host_time_us(void) {
             [self handleModeChangeFromiPad:data length:length];
             break;
 
+        case KEYDRD_INPUT_VIEWPORT_REPORT:
+            [self handleViewportReport:data length:length];
+            break;
+
         case KEYDRD_INPUT_CLOCK_SYNC_REQ:
             [self handleClockSyncRequest:data length:length];
             break;
@@ -852,6 +852,66 @@ static uint64_t keydrd_host_time_us(void) {
             os_log_debug(sLog, "Unhandled input event type: 0x%02x", header->type);
             break;
     }
+}
+
+#pragma mark - Viewport Report (iPad → Mac)
+
+- (void)handleViewportReport:(const void *)data length:(size_t)length {
+    if (length < sizeof(InputEventHeader) + sizeof(ViewportReportPayload)) {
+        os_log_error(sLog, "Viewport report too short: %zu bytes", length);
+        return;
+    }
+
+    const ViewportReportPayload *payload =
+        (const ViewportReportPayload *)((const uint8_t *)data + sizeof(InputEventHeader));
+
+    _viewportWidth = payload->viewport_width;
+    _viewportHeight = payload->viewport_height;
+    _viewportReceived = YES;
+
+    os_log(sLog, "iPad viewport report: %ux%u (Mac display: %ux%u)",
+           _viewportWidth, _viewportHeight, _captureWidth, _captureHeight);
+
+    /* Start encoder + reconfigure capture at viewport resolution */
+    [self _startEncoderAtViewportResolution];
+}
+
+- (void)_startEncoderAtViewportResolution {
+    if (_viewportWidth == 0 || _viewportHeight == 0) {
+        os_log_error(sLog, "_startEncoderAtViewportResolution: viewport not set");
+        return;
+    }
+
+    int bitrate = _usbTransport.isConnected ? 150000000 : 20000000;
+
+    os_log(sLog, "Starting HEVC encoder at viewport resolution: %ux%u @120fps %dMbps (%s)",
+           _viewportWidth, _viewportHeight, bitrate / 1000000,
+           _usbTransport.isConnected ? "USB" : "WiFi/default");
+
+    [_hevcEncoder startWithWidth:(int)_viewportWidth
+                          height:(int)_viewportHeight
+                             fps:120
+                         bitrate:bitrate];
+
+    /* Restart capture at viewport resolution.
+     * SCStream downscales from Mac display to viewport size in hardware. */
+    [_capture stopCapture];
+    _capture.captureWidth = _viewportWidth;
+    _capture.captureHeight = _viewportHeight;
+    [_capture startCapture];
+
+    /* Update captureWidth/Height so handshake/geometry messages reflect actual encode size */
+    _captureWidth = _viewportWidth;
+    _captureHeight = _viewportHeight;
+
+    /* Reconfigure frame delivery */
+    [self configureFrameDelivery];
+
+    /* Send geometry update so iPad knows the new frame dimensions */
+    [self sendGeometryUpdate];
+
+    /* Begin capture if not already running */
+    [self _beginCapture];
 }
 
 #pragma mark - Clock Sync (Cristian's Algorithm)

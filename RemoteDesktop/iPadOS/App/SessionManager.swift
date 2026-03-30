@@ -46,6 +46,8 @@ final class SessionManager {
 
     // MARK: - Display Geometry (from handshake)
 
+    private(set) var viewportWidth: Int = 0
+    private(set) var viewportHeight: Int = 0
     private var macDisplayWidth: Int = 0
     private var frameRecvCount: Int = 0
     private var macDisplayHeight: Int = 0
@@ -259,6 +261,46 @@ final class SessionManager {
         sendInputEventToMac(data)
 
         hudViewModel.resetAutoHideTimer()
+    }
+
+    // MARK: - Viewport Report
+
+    /// Compute the actual rendered viewport in pixels, matching MetalRenderer.computeViewport logic.
+    /// Accounts for letterbox/pillarbox when Mac and iPad aspect ratios differ.
+    static func computeViewportPixels(macWidth: Int, macHeight: Int,
+                                       screenWidth: Int, screenHeight: Int) -> (width: Int, height: Int) {
+        guard macWidth > 0, macHeight > 0, screenWidth > 0, screenHeight > 0 else {
+            return (screenWidth, screenHeight)
+        }
+
+        let macAspect = Float(macWidth) / Float(macHeight)
+        let screenAspect = Float(screenWidth) / Float(screenHeight)
+
+        if macAspect > screenAspect {
+            // Mac wider → full iPad width, letterbox top/bottom
+            let scale = screenAspect / macAspect
+            let vpHeight = Int(Float(screenHeight) * scale)
+            // Round to even for HEVC encoder compatibility
+            return (screenWidth & ~1, vpHeight & ~1)
+        } else if macAspect < screenAspect {
+            // Mac taller → full iPad height, pillarbox left/right
+            let scale = macAspect / screenAspect
+            let vpWidth = Int(Float(screenWidth) * scale)
+            return (vpWidth & ~1, screenHeight & ~1)
+        } else {
+            return (screenWidth & ~1, screenHeight & ~1)
+        }
+    }
+
+    /// Send viewport dimensions to Mac so it captures/encodes at the right resolution.
+    private func sendViewportReport(width: Int, height: Int) {
+        let header = InputEventHeader(type: InputEventType.viewportReport.rawValue,
+                                      tsUs: currentTimestampUs())
+        var data = header.serialize()
+        let payload = ViewportReportPayload(viewportWidth: UInt32(width),
+                                            viewportHeight: UInt32(height))
+        data.append(payload.serialize())
+        sendInputEventToMac(data)
     }
 
     // MARK: - Private: Transport Monitoring
@@ -509,13 +551,32 @@ final class SessionManager {
         // Configure renderer viewport
         metalRenderer.setMacDisplaySize(width: macDisplayWidth, height: macDisplayHeight)
 
+        // Compute viewport pixel dimensions and tell Mac to capture/encode at this size.
+        // This avoids encoding pixels the iPad can't display (e.g. 3600x2338 → 2752x1787).
+        let iPadPixelWidth = Int(UIScreen.main.nativeBounds.width)
+        let iPadPixelHeight = Int(UIScreen.main.nativeBounds.height)
+        // nativeBounds is portrait-locked; use landscape (wider dimension first)
+        let screenW = max(iPadPixelWidth, iPadPixelHeight)
+        let screenH = min(iPadPixelWidth, iPadPixelHeight)
+
+        let (vpW, vpH) = Self.computeViewportPixels(
+            macWidth: macDisplayWidth, macHeight: macDisplayHeight,
+            screenWidth: screenW, screenHeight: screenH
+        )
+        // Store for E2E test verification
+        viewportWidth = vpW
+        viewportHeight = vpH
+
+        sendViewportReport(width: vpW, height: vpH)
+        Self.log.info("Sent viewport report: \(vpW)x\(vpH) (iPad screen: \(screenW)x\(screenH), Mac: \(self.macDisplayWidth)x\(self.macDisplayHeight))")
+
         // Update HUD with resolution info
         DispatchQueue.main.async {
             self.hudViewModel.updateResolution(
                 macWidth: self.macDisplayWidth,
                 macHeight: self.macDisplayHeight,
-                iPadWidth: Int(UIScreen.main.nativeBounds.width),
-                iPadHeight: Int(UIScreen.main.nativeBounds.height)
+                iPadWidth: screenW,
+                iPadHeight: screenH
             )
         }
 

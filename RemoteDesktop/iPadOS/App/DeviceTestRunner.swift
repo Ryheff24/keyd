@@ -3,6 +3,7 @@ import Network
 import Security
 import CryptoKit
 import CoreVideo
+import UIKit
 import os.log
 
 /// On-device E2E test runner for the keyd-rd iPad app.
@@ -681,36 +682,38 @@ final class DeviceTestRunner {
             return
         }
 
-        let actualWidth = Int(handshakeWidth)
-        let actualHeight = Int(handshakeHeight)
+        // The Mac should now encode at the iPad viewport resolution, NOT its native display.
+        // Compute expected viewport dims the same way SessionManager does.
+        let iPadW = max(Int(UIScreen.main.nativeBounds.width), Int(UIScreen.main.nativeBounds.height))
+        let iPadH = min(Int(UIScreen.main.nativeBounds.width), Int(UIScreen.main.nativeBounds.height))
+        let (vpW, vpH) = SessionManager.computeViewportPixels(
+            macWidth: Int(handshakeWidth), macHeight: Int(handshakeHeight),
+            screenWidth: iPadW, screenHeight: iPadH
+        )
 
-        // Check if we have decoded frame dimensions to verify pixel buffer matches handshake
+        let handshakeW = Int(handshakeWidth)
+        let handshakeH = Int(handshakeHeight)
+
         if decodedFrameWidths.count >= 3 {
             let frameW = decodedFrameWidths.last!
             let frameH = decodedFrameHeights.last!
 
-            let dimensionsMatch = frameW == actualWidth && frameH == actualHeight
+            // Frames should match viewport dimensions (what Mac encodes after viewport report)
+            let viewportMatch = frameW == vpW && frameH == vpH
 
             if let expected = expectResolution {
-                let handshakeMatch = actualWidth == expected.width && actualHeight == expected.height
-                let passed = handshakeMatch && dimensionsMatch
+                let passed = frameW == expected.width && frameH == expected.height
                 recordResult(name: "resolution", passed: passed,
-                            detail: "expected=\(expected.width)x\(expected.height), handshake=\(actualWidth)x\(actualHeight), frame=\(frameW)x\(frameH)")
+                            detail: "expected=\(expected.width)x\(expected.height), viewport=\(vpW)x\(vpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH)")
             } else {
-                // No expected value -- report actual, pass if frame matches handshake
-                recordResult(name: "resolution", passed: dimensionsMatch,
-                            detail: "handshake=\(actualWidth)x\(actualHeight), frame=\(frameW)x\(frameH), match=\(dimensionsMatch)")
+                // No expected value -- pass if frames match viewport
+                recordResult(name: "resolution", passed: viewportMatch,
+                            detail: "viewport=\(vpW)x\(vpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH), match=\(viewportMatch)")
             }
         } else {
-            // Not enough decoded frames for pixel buffer check -- verify handshake only
-            if let expected = expectResolution {
-                let passed = actualWidth == expected.width && actualHeight == expected.height
-                recordResult(name: "resolution", passed: passed,
-                            detail: "expected=\(expected.width)x\(expected.height), handshake=\(actualWidth)x\(actualHeight) (no frame dims)")
-            } else {
-                recordResult(name: "resolution", passed: true,
-                            detail: "handshake=\(actualWidth)x\(actualHeight) (no frame dims to verify)")
-            }
+            // Not enough decoded frames -- report viewport dims, pass informational
+            recordResult(name: "resolution", passed: true,
+                        detail: "viewport=\(vpW)x\(vpH), mac=\(handshakeW)x\(handshakeH) (no frame dims to verify)")
         }
 
         resolutionTestComplete = true

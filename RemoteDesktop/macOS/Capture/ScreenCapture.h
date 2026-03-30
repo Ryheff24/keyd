@@ -49,6 +49,11 @@ typedef void (^ScreenCaptureReauthCallback)(void);
 /* Called when watchdog detects no frames for >2s and display is not asleep. */
 @property (nonatomic, copy, nullable) ScreenCaptureReauthCallback onReauthorizationNeeded;
 
+/* Override capture resolution. Set before startCapture.
+ * If 0, uses the display's native pixel dimensions. */
+@property (nonatomic, assign) uint32_t captureWidth;
+@property (nonatomic, assign) uint32_t captureHeight;
+
 /*
  * Request screen recording permission.
  * On macOS Sequoia+, CGRequestScreenCaptureAccess triggers system prompt.
