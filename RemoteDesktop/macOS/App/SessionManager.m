@@ -1204,7 +1204,7 @@ static uint64_t keydrd_host_time_us(void) {
 #pragma mark - Utilities
 
 - (uint64_t)currentTimestampUs {
-    return (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000000.0);
+    return keydrd_host_time_us();
 }
 
 @end

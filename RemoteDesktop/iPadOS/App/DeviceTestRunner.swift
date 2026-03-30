@@ -412,7 +412,7 @@ final class DeviceTestRunner {
         }
 
         // Send a latency probe and measure round-trip
-        let sentTimestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000)
+        let sentTimestamp = keydrdHostTimeUs()
         let header = InputEventHeader(type: InputEventType.latencyProbe.rawValue, tsUs: sentTimestamp)
         let data = header.serialize()
 
@@ -467,7 +467,7 @@ final class DeviceTestRunner {
 
         // Send a keepalive and verify we remain connected after 3 seconds
         let header = InputEventHeader(type: InputEventType.keepalive.rawValue,
-                                      tsUs: UInt64(Date().timeIntervalSince1970 * 1_000_000))
+                                      tsUs: keydrdHostTimeUs())
         let data = header.serialize()
 
         if sm.usbTransport.isConnected {
@@ -927,7 +927,7 @@ final class DeviceTestRunner {
             return
         }
 
-        let sentTimestamp = UInt64(Date().timeIntervalSince1970 * 1_000_000)
+        let sentTimestamp = keydrdHostTimeUs()
         let header = InputEventHeader(type: InputEventType.latencyProbe.rawValue, tsUs: sentTimestamp)
         let data = header.serialize()
 
