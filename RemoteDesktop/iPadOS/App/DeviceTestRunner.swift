@@ -186,13 +186,11 @@ final class DeviceTestRunner {
             fpsFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
         }
 
-        // Feed throughput test with RENDERED frame count + approximate bytes
+        // Feed throughput test with RENDERED frame count only.
+        // Byte accounting happens in reportFrameReceived() using compressed
+        // frame bytes actually received from the transport.
         if throughputTestActive && !throughputTestComplete {
             throughputFrames += 1
-            // Use texture dimensions as proxy for rendered data volume
-            if let renderer = sessionManager?.metalRenderer {
-                throughputBytes += renderer.macDisplayWidth * renderer.macDisplayHeight * 4
-            }
         }
     }
 
@@ -337,6 +335,10 @@ final class DeviceTestRunner {
             totalDecompressedBytes += decompressedSize
         }
 
+        if throughputTestActive && !throughputTestComplete {
+            throughputBytes += MediaFrameHeader.size + Int(header.payloadSize)
+        }
+
         // Pipeline latency (capture-to-decode): Mac embeds host time in ts_us.
         // Apply Cristian's algorithm clock offset to remove Mac-iPad clock skew.
         // latency = iPad_now - (Mac_capture_time - offset)
@@ -349,9 +351,10 @@ final class DeviceTestRunner {
             }
         }
 
-        // NOTE: FPS and throughput tests are NOT fed here.
+        // NOTE: FPS and throughput frame counts are NOT fed here.
         // They use MetalRenderer.onFrameRendered to count ACTUALLY RENDERED frames.
-        // A frame that's decoded but never shown on screen doesn't count.
+        // Throughput byte accounting is fed here because this is where the
+        // compressed frame size from the transport is available.
 
         if framesReceived >= targetFrameCount && !frameReceptionComplete {
             frameReceptionComplete = true
@@ -1038,9 +1041,9 @@ final class DeviceTestRunner {
             // Must have sustained frame flow: at least 5 rendered frames per second average
             let avgFPS = elapsed > 0 ? Double(self.throughputFrames) / elapsed : 0
             let passed = self.throughputFrames >= 10 && avgFPS >= 5.0
-            print("[TEST] INFO: throughput (recv=\(String(format: "%.1f", mbps)) Mbps, \(String(format: "%.1f", avgFPS)) rendered fps over \(String(format: "%.1f", elapsed))s, frames=\(self.throughputFrames))")
+            print("[TEST] INFO: throughput (app-recv=\(String(format: "%.1f", mbps)) Mbps, \(String(format: "%.1f", avgFPS)) rendered fps over \(String(format: "%.1f", elapsed))s, frames=\(self.throughputFrames), excludes TCP/DTLS/IP overhead)")
             self.recordResult(name: "throughput", passed: passed,
-                            detail: "recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames (\(String(format: "%.1f", avgFPS)) fps) in \(String(format: "%.1f", elapsed))s")
+                            detail: "app-recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames (\(String(format: "%.1f", avgFPS)) fps) in \(String(format: "%.1f", elapsed))s")
 
             self.reportPipelineLatency()
             self.reportGlassToGlassLatency()
@@ -1490,8 +1493,8 @@ final class DeviceTestRunner {
             return
         }
 
-        // TLS with default system trust (no client cert, no pinning)
-        // The Mac requires a client cert matching the stored fingerprint — this should fail
+        // TLS with default system trust (no client cert, no pinning).
+        // This probes whether the Mac enforces client authentication.
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(
             tlsOptions.securityProtocolOptions, .TLSv13)
@@ -1514,9 +1517,10 @@ final class DeviceTestRunner {
                     guard !completed else { return }
                     if let data = data, !data.isEmpty {
                         completed = true
-                        // Known gap: Mac doesn't enforce mTLS (iPad has no client TLS identity yet)
+                        // Known gap: transport is server-authenticated only.
+                        // The iPad does not present a client TLS identity today.
                         self.recordResult(name: "sec-untrusted-cert", passed: false,
-                                    detail: "KNOWN GAP: no mTLS — Mac sent \(data.count) bytes to unauthenticated client (needs iPad client cert implementation)")
+                                    detail: "KNOWN GAP: no client auth on streaming transport — Mac sent \(data.count) bytes to an unauthenticated TLS client")
                         conn.cancel()
                         DispatchQueue.main.async { self.runPairingPortClosedTest() }
                     }
@@ -1524,7 +1528,7 @@ final class DeviceTestRunner {
             case .failed(let error):
                 completed = true
                 self.recordResult(name: "sec-untrusted-cert", passed: true,
-                            detail: "TLS rejected (no trusted client cert): \(error.localizedDescription)")
+                            detail: "TLS rejected unauthenticated client: \(error.localizedDescription)")
                 DispatchQueue.main.async { self.runPairingPortClosedTest() }
             case .waiting(let error):
                 completed = true
