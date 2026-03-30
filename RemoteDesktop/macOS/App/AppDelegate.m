@@ -40,7 +40,7 @@ static os_log_t sLog;
     _statusBar = [[StatusBarController alloc] init];
 
     /* ---- Create SessionManager (owns all pipeline components) ---- */
-    _sessionManager = [[SessionManager alloc] initWithTestMode:_testMode];
+    _sessionManager = [[SessionManager alloc] initWithTestMode:_testMode automationMode:_automationMode];
 
     /* Wire SessionManager state changes to StatusBarController */
     __weak StatusBarController *weakBar = _statusBar;

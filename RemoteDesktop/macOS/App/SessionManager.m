@@ -77,11 +77,12 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
 @implementation SessionManager
 
-- (instancetype)initWithTestMode:(BOOL)testMode {
+- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode {
     self = [super init];
     if (self) {
         sLog = os_log_create("com.ryheff.keyd.remote.agent", "SessionManager");
         _testMode = testMode;
+        _automationMode = automationMode;
         _sessionState = SESSION_STOPPED;
         _transportState = TRANSPORT_IDLE;
         _compressorInitialized = NO;
@@ -532,8 +533,14 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
         }
     }
 
-    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps 20Mbps", _captureWidth, _captureHeight);
-    [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:20000000];
+    /* Pick bitrate based on current transport.
+     * USB NCM (100Mbps link): 60Mbps for sharp text at native resolution.
+     * WiFi/unknown: 20Mbps to stay within wireless bandwidth. */
+    int bitrate = _usbTransport.isConnected ? 150000000 : 20000000;
+    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps %dMbps (%s)",
+           _captureWidth, _captureHeight, bitrate / 1000000,
+           _usbTransport.isConnected ? "USB" : "WiFi/default");
+    [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:bitrate];
 
     /* Reconfigure frame delivery for HEVC */
     [self configureFrameDelivery];
@@ -562,9 +569,11 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     [self sendSessionHandshake];
 
     /* Re-start HEVC encoder with correct dimensions.
-     * Both USB and WiFi use HEVC — USB at higher bitrate (40Mbps) since
-     * the wired link can handle it, WiFi at 20Mbps. */
-    int bitrate = _usbTransport.isConnected ? 40000000 : 20000000;
+     * Both USB and WiFi use HEVC — USB at higher bitrate since
+     * the wired link can handle it, WiFi at 20Mbps.
+     * USB NCM is 100Mbps; 60Mbps gives sharp text at native resolution
+     * (3600x2338 = 0.15 bpp, vs 0.10 bpp at 40Mbps). */
+    int bitrate = _usbTransport.isConnected ? 150000000 : 20000000;
     if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
         os_log(sLog, "HEVC encoder active — restarting with %ux%u @%dMbps (%s)",
                _captureWidth, _captureHeight, bitrate / 1000000,
@@ -748,9 +757,12 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     size_t payloadLen = len - sizeof(MediaFrameHeader);
 
     if (_usbTransport.isConnected) {
-        /* USB NCM: send HEVC frames via TCP for reliable delivery.
-         * UDP/DTLS over USB NCM drops most packets when sending rapid-fire
-         * small datagrams (driver buffer overflow). TCP handles flow control. */
+        /* USB NCM: HEVC frames via TCP with length-prefix framing.
+         * UDP/DTLS over USB NCM is confirmed broken for media delivery:
+         *   - Batch sends (nw_connection_batch): ~29/30 frames dropped
+         *   - Completion-paced sequential sends: still black screen
+         *   - Root cause: USB NCM DTLS path drops data regardless of pacing
+         * TCP with TCP_NODELAY gives 0% loss at 1ms transport RTT. */
         [_usbTransport sendInputEvent:data length:len];
     } else if (_wirelessTransport.isConnected) {
         WirelessTransport *transport = _wirelessTransport;

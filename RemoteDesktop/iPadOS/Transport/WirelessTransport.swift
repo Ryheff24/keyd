@@ -118,7 +118,9 @@ final class WirelessTransport {
                 complete(trusted)
             }, DispatchQueue.global())
 
-        let params = NWParameters(tls: tlsOptions, tcp: .init())
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.noDelay = true
+        let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         params.includePeerToPeer = true
         return params
     }

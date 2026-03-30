@@ -376,13 +376,33 @@ wait_and_parse_results() {
   if [ -f "$LOG_FILE" ]; then
     # Extract [TEST] lines
     grep "\[TEST\]" "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
-      # Color output: green for PASS, red for FAIL, blue for INFO, yellow for others
+      # Transport-specific colors: USB=green, WiFi=yellow, AWDL=cyan
+      # Applied on top of pass/fail/info colors for transport-related lines
+      local color=""
+      local reset="\033[0m"
+
+      if echo "$line" | grep -qi "usb\|USB/TCP\|wired"; then
+        color="\033[32m"  # green = USB
+      elif echo "$line" | grep -qi "awdl\|AWDL"; then
+        color="\033[36m"  # cyan = AWDL
+      elif echo "$line" | grep -qi "wifi\|Wi-Fi"; then
+        color="\033[33m"  # yellow = WiFi
+      fi
+
       if echo "$line" | grep -q "\[TEST\] PASS:"; then
-        printf "\033[32m%s\033[0m\n" "$line"
+        if [ -n "$color" ]; then
+          printf "${color}%s${reset}\n" "$line"
+        else
+          printf "\033[32m%s\033[0m\n" "$line"
+        fi
       elif echo "$line" | grep -q "\[TEST\] FAIL:"; then
         printf "\033[31m%s\033[0m\n" "$line"
       elif echo "$line" | grep -q "\[TEST\] INFO:"; then
-        printf "\033[34m%s\033[0m\n" "$line"
+        if [ -n "$color" ]; then
+          printf "${color}%s${reset}\n" "$line"
+        else
+          printf "\033[34m%s\033[0m\n" "$line"
+        fi
       elif echo "$line" | grep -q "\[TEST\] COMPLETE:"; then
         printf "\033[1m%s\033[0m\n" "$line"
       else

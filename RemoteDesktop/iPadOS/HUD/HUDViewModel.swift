@@ -107,14 +107,15 @@ final class HUDViewModel {
         resetAutoHideTimer()
     }
 
-    /// Reset the 3-second auto-hide timer. Called on any user interaction.
+    /// Reset the auto-hide timer. Only hides the expanded panel, NOT the compact pill.
+    /// The compact pill stays visible permanently during streaming for transport/FPS info.
     func resetAutoHideTimer() {
         autoHideTimer?.invalidate()
         autoHideTimer = Timer.scheduledTimer(withTimeInterval: Self.autoHideDuration,
                                               repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.isExpanded = false
-                self?.isVisible = false
+                // Keep isVisible = true — compact pill stays visible
             }
         }
     }

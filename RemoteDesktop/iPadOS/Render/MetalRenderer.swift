@@ -1,6 +1,7 @@
 import Metal
 import MetalKit
 import QuartzCore
+import CoreVideo
 
 // MARK: - Uniforms (matches Shaders.metal)
 
@@ -67,6 +68,13 @@ final class MetalRenderer: NSObject {
     /// The CAMetalLayer this renderer draws to.
     private weak var metalLayer: CAMetalLayer?
 
+    /// CVMetalTextureCache for zero-copy CVPixelBuffer → MTLTexture.
+    /// Eliminates the ~5ms CPU→GPU memcpy of 33MB pixel data per frame.
+    private var textureCache: CVMetalTextureCache?
+
+    /// Retain the CVMetalTexture ref so the IOSurface-backed texture stays valid until rendered.
+    private var cvTextureRef: CVMetalTexture?
+
     // MARK: - Init
 
     override init() {
@@ -104,6 +112,11 @@ final class MetalRenderer: NSObject {
         }
 
         super.init()
+
+        // Create CVMetalTextureCache for zero-copy pixel buffer → texture
+        var cache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        textureCache = cache
     }
 
     // MARK: - Setup
@@ -188,6 +201,56 @@ final class MetalRenderer: NSObject {
             bytesPerRow: bytesPerRow
         )
         frameDirty = true
+    }
+
+    /// Zero-copy frame update from CVPixelBuffer (HEVC decode output).
+    ///
+    /// Uses CVMetalTextureCache to create an MTLTexture backed by the pixel buffer's
+    /// IOSurface — no CPU→GPU memcpy. This eliminates ~5ms per frame for 3600x2338
+    /// and preserves exact pixel data from the hardware decoder.
+    func updateFrameFromPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
+        guard let cache = textureCache else {
+            // Fallback to copy path
+            CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+            updateFrame(UnsafeRawPointer(base),
+                        width: CVPixelBufferGetWidth(pixelBuffer),
+                        height: CVPixelBufferGetHeight(pixelBuffer))
+            return
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        var cvTexture: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault,
+            cache,
+            pixelBuffer,
+            nil,
+            .bgra8Unorm,
+            width,
+            height,
+            0,
+            &cvTexture
+        )
+
+        guard status == kCVReturnSuccess, let cvTex = cvTexture,
+              let texture = CVMetalTextureGetTexture(cvTex) else {
+            // Fallback to copy path on failure
+            CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+            updateFrame(UnsafeRawPointer(base), width: width, height: height)
+            return
+        }
+
+        textureLock.lock()
+        frameTexture = texture
+        cvTextureRef = cvTex  // retain so IOSurface stays valid until next frame
+        frameDirty = true
+        textureLock.unlock()
     }
 
     /// Set the Mac display dimensions (called during session handshake).

@@ -20,4 +20,7 @@
 /** YES if launched with --test-mode flag. */
 @property (nonatomic, assign, readonly) BOOL testMode;
 
+/** YES if launched with --automation-mode flag. */
+@property (nonatomic, assign, readonly) BOOL automationMode;
+
 @end

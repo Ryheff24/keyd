@@ -114,7 +114,9 @@ final class USBNetworkTransport {
                 complete(trusted)
             }, DispatchQueue.global())
 
-        let params = NWParameters(tls: tlsOptions, tcp: .init())
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.noDelay = true
+        let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         params.requiredInterface = interface
         return params
     }
@@ -471,7 +473,9 @@ final class USBNetworkTransport {
                 complete(self?.verifyPeerCertificate(trust) ?? false)
             }, DispatchQueue.global())
 
-        let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
+        let tcpOpts = NWProtocolTCP.Options()
+        tcpOpts.noDelay = true
+        let tcpParams = NWParameters(tls: tlsOptions, tcp: tcpOpts)
         tcpParams.requiredLocalEndpoint = localEndpoint
 
         let inputPort = NWEndpoint.Port(rawValue: keydrdInputPort)!
@@ -524,7 +528,9 @@ final class USBNetworkTransport {
                 complete(self?.verifyPeerCertificate(trust) ?? false)
             }, DispatchQueue.global())
 
-        let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
+        let retryTcpOpts = NWProtocolTCP.Options()
+        retryTcpOpts.noDelay = true
+        let tcpParams = NWParameters(tls: tlsOptions, tcp: retryTcpOpts)
         tcpParams.requiredLocalEndpoint = localEndpoint
 
         let inputPort = NWEndpoint.Port(rawValue: keydrdInputPort)!

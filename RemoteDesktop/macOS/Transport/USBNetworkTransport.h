@@ -60,6 +60,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)sendMediaFrame:(const void *)data length:(size_t)len;
 
 /**
+ * Send a complete HEVC frame as paced UDP chunks over DTLS.
+ *
+ * Chunks the frame using the given MTU, then sends each chunk sequentially —
+ * each chunk waits for the previous one's send completion before dispatching.
+ * This prevents overwhelming the USB NCM driver's tx queue, which drops
+ * packets when datagrams arrive faster than it can drain.
+ *
+ * @param data       Complete frame data (MediaFrameHeader + payload).
+ * @param len        Total length of data.
+ * @param mtu        Maximum transmission unit for chunking.
+ */
+- (void)sendMediaFramePaced:(const void *)data length:(size_t)len mtu:(size_t)mtu;
+
+/**
  * Send an input event response over TCP to the connected iPad.
  * No-op if no connection is established.
  */

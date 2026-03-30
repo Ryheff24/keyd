@@ -5,3 +5,26 @@ args = ["-y", "xcodebuildmcp@latest", "mcp"]
 [mcp_servers.apple-docs]
 command = "npx"
 args = ["apple-doc-mcp-server@latest"]
+
+[mcp_servers.apple-docs.tools.discover_technologies]
+approval_mode = "approve"
+
+[mcp_servers.apple-docs.tools.search_symbols]
+approval_mode = "approve"
+
+[mcp_servers.apple-docs.tools.get_documentation]
+approval_mode = "approve"
+
+[mcp_servers.apple-docs.tools.choose_technology]
+approval_mode = "approve"
+
+[mcp_servers.apple-docs.tools.get_version]
+approval_mode = "approve"
+
+[mcp_servers.swiftlens]
+command = "uvx"
+args = ["swiftlens"]
+
+[mcp_servers.git]
+command = "uvx"
+args = ["mcp-server-git"]

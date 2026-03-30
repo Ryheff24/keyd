@@ -152,7 +152,9 @@ static const char *kInputPortStr = "14568";
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
         },
-        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+        ^(nw_protocol_options_t tcp_options) {
+            nw_tcp_options_set_no_delay(tcp_options, true);
+        });
 
     return tcpParams;
 }
@@ -283,14 +285,14 @@ static const char *kInputPortStr = "14568";
     }
     mediaSendCount++;
 
-    /* Copy data — the caller (chunk_frame) frees the buffer after this returns.
-     * dispatch_data_create with DISPATCH_DATA_DESTRUCTOR_DEFAULT would double-free. */
+    /* Copy data — the caller (chunk_frame) frees the original buffer after this returns.
+     * DISPATCH_DATA_DESTRUCTOR_FREE tells dispatch_data to free() our copy when done. */
     void *copy = malloc(len);
     if (!copy) return;
     memcpy(copy, data, len);
 
     dispatch_data_t ddata = dispatch_data_create(copy, len, _transportQueue,
-                                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+                                                 DISPATCH_DATA_DESTRUCTOR_FREE);
     /* For DTLS/UDP, each datagram is a complete message.
      * is_complete=true is required (false gives "Operation not supported"). */
     nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,

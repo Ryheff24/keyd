@@ -39,6 +39,9 @@ typedef NS_ENUM(NSInteger, SessionState) {
 /** Whether running in test mode (skips permissions, no real capture). */
 @property (nonatomic, assign, readonly) BOOL testMode;
 
+/** Whether running in automation mode (auto-shows QR and writes payload file). */
+@property (nonatomic, assign, readonly) BOOL automationMode;
+
 /* ---- Callbacks to StatusBarController ---- */
 @property (nonatomic, copy, nullable) void (^onTransportStateChanged)(TransportState state);
 @property (nonatomic, copy, nullable) void (^onModeChanged)(BOOL isEco);
@@ -46,7 +49,7 @@ typedef NS_ENUM(NSInteger, SessionState) {
 @property (nonatomic, copy, nullable) void (^onSessionStateChanged)(SessionState state);
 @property (nonatomic, copy, nullable) void (^onPermissionStatusChanged)(BOOL screenGranted, BOOL accessibilityGranted);
 
-- (instancetype)initWithTestMode:(BOOL)testMode;
+- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode;
 
 /**
  * Start the session lifecycle.

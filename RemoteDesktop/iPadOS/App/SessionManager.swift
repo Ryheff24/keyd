@@ -277,7 +277,10 @@ final class SessionManager {
         }
 
         // USB media arrives via TCP (reliable delivery over USB NCM).
-        // UDP/DTLS drops packets on USB NCM due to driver buffer limits.
+        // UDP/DTLS is confirmed broken for USB NCM media — tested both batch sends
+        // and completion-paced sequential sends, both produce black screen.
+        // Root cause: USB NCM DTLS path drops data regardless of send pacing.
+        // TCP with TCP_NODELAY gives 0% loss at 1ms RTT.
         // handleInputReceived detects MediaFrameHeader and routes to handleReceivedFrame.
         usbTransport.onMediaReceived = nil
 
@@ -306,20 +309,17 @@ final class SessionManager {
             self?.handleInputReceived(data)
         }
 
-        // Start USB NCM first (primary transport).
-        // Only start WiFi after a delay if USB NCM isn't detected.
-        // Running both simultaneously causes port conflicts (both listen on 14568).
+        // Start USB NCM monitoring (primary transport).
         usbTransport.startMonitoring()
 
-        // If USB NCM connects within 3s, skip WiFi. Otherwise fall back to WiFi.
+        // Always start WiFi browsing after a short delay — needed as fallback
+        // when USB disconnects. The FSM handles priority (USB preempts WiFi).
+        // The Mac advertises Bonjour on all interfaces, so no port conflict
+        // on the iPad side (iPad is a connector, not a listener).
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self = self else { return }
-            if !self.usbTransport.isConnected {
-                print("[CONSOLE] USB NCM not connected after 3s, starting WiFi fallback")
-                self.wirelessTransport.startBrowsing()
-            } else {
-                print("[CONSOLE] USB NCM connected, skipping WiFi")
-            }
+            print("[CONSOLE] Starting WiFi browsing (background fallback)")
+            self.wirelessTransport.startBrowsing()
         }
     }
 
@@ -371,13 +371,18 @@ final class SessionManager {
     private func executeTransportEffect(_ effect: TransportEffect) {
         switch effect {
         case .bindUSBNCM:
-            Self.log.info("Effect: bind USB NCM")
+            print("[CONSOLE] Effect: bind USB NCM — starting USB monitoring")
+            usbTransport.startMonitoring()
         case .connectWiFi:
-            Self.log.info("Effect: connect Wi-Fi")
+            print("[CONSOLE] Effect: connect Wi-Fi — starting Bonjour browse")
+            wirelessTransport.startBrowsing()
         case .connectAWDL:
-            Self.log.info("Effect: connect AWDL")
+            print("[CONSOLE] Effect: connect AWDL — starting Bonjour browse (p2p)")
+            wirelessTransport.startBrowsing()
         case .disconnectCurrent:
-            Self.log.info("Effect: disconnect current transport")
+            print("[CONSOLE] Effect: disconnect current transport")
+            usbTransport.stopMonitoring()
+            wirelessTransport.stopBrowsing()
         case .switchEncodeLZ4:
             Self.log.info("Effect: switch to LZ4 decode path")
             hudViewModel.isEcoMode = false
@@ -418,6 +423,7 @@ final class SessionManager {
 
         // Route to decoder based on flags
         var decompressedSize = 0
+        let decodeStart = CACurrentMediaTime()
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
             guard let pixelBuffer = hevcDecoder.decode(data: payload, header: header) else {
@@ -427,8 +433,9 @@ final class SessionManager {
                 return
             }
             decompressedSize = CVPixelBufferGetDataSize(pixelBuffer)
+            let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
             if frameRecvCount <= 3 {
-                print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes")
+                print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes, decode=\(String(format: "%.1f", decodeMs))ms")
             }
 
             // Report decoded dimensions for resolution test
@@ -436,7 +443,8 @@ final class SessionManager {
             let decodedH = CVPixelBufferGetHeight(pixelBuffer)
             testRunner?.reportDecodedFrameDimensions(width: decodedW, height: decodedH)
 
-            renderCVPixelBuffer(pixelBuffer)
+            // Zero-copy: pass CVPixelBuffer directly to Metal via IOSurface
+            metalRenderer.updateFrameFromPixelBuffer(pixelBuffer)
         } else {
             // LZ4 decode path (wired mode)
             guard let decompressor = lz4Decompressor else {

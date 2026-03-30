@@ -1,4 +1,5 @@
 #import "USBNetworkTransport.h"
+#import "UDPChunker.h"
 #import "protocol.h"
 #import "crypto.h"
 #import <os/log.h>
@@ -158,6 +159,11 @@ static const char *kInputPortStr = "14568";
                 }
             }
 
+            /* TODO(security): Enable mutual TLS once iPad presents a client cert.
+             * Currently iPad doesn't set sec_protocol_options_set_local_identity,
+             * so requiring peer auth breaks normal connections. Without mTLS,
+             * any TLS client can connect without authentication (pen test finding). */
+
             /* Certificate pinning: verify block rejects unknown certs */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
@@ -172,7 +178,12 @@ static const char *kInputPortStr = "14568";
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
         },
-        NW_PARAMETERS_DEFAULT_CONFIGURATION);
+        ^(nw_protocol_options_t tcp_options) {
+            /* Disable Nagle's algorithm — send data immediately without
+             * waiting to coalesce small writes. Critical for low-latency
+             * input events and framed media delivery. */
+            nw_tcp_options_set_no_delay(tcp_options, true);
+        });
 
     return tcpParams;
 }
@@ -343,19 +354,68 @@ static const char *kInputPortStr = "14568";
     nw_connection_t conn = _mediaConnection;
     if (!conn) return;
 
-    /* Copy data — the caller (chunk_frame) frees the buffer after this returns.
-     * dispatch_data_create with DISPATCH_DATA_DESTRUCTOR_DEFAULT would double-free. */
+    /* Copy data — the caller (chunk_frame) frees the original buffer after this returns.
+     * DISPATCH_DATA_DESTRUCTOR_FREE tells dispatch_data to free() our copy when done. */
     void *copy = malloc(len);
     if (!copy) return;
     memcpy(copy, data, len);
 
     dispatch_data_t ddata = dispatch_data_create(copy, len, _transportQueue,
-                                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+                                                 DISPATCH_DATA_DESTRUCTOR_FREE);
     nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
         if (error) {
             os_log_error(transport_log(), "Media send error: %{public}@",
                          error);
+        }
+    });
+}
+
+- (void)sendMediaFramePaced:(const void *)data length:(size_t)len mtu:(size_t)mtu {
+    nw_connection_t conn = _mediaConnection;
+    if (!conn || len < sizeof(MediaFrameHeader)) return;
+
+    const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
+    const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
+    size_t payloadLen = len - sizeof(MediaFrameHeader);
+
+    /* Collect all chunks into an array first, since chunk_frame's callback
+     * buffer is only valid during the callback. */
+    NSMutableArray<NSData *> *chunks = [NSMutableArray array];
+    chunk_frame(payload, payloadLen, originalHeader->seq, mtu,
+                originalHeader, ^(const void *chunk, size_t chunkLen) {
+        [chunks addObject:[NSData dataWithBytes:chunk length:chunkLen]];
+    });
+
+    if (chunks.count == 0) return;
+
+    /* Send chunks sequentially — each waits for the previous completion.
+     * This paces sends at the rate the USB NCM driver can accept them. */
+    [self _sendChunkAtIndex:0 fromChunks:chunks connection:conn];
+}
+
+- (void)_sendChunkAtIndex:(NSUInteger)idx
+               fromChunks:(NSArray<NSData *> *)chunks
+               connection:(nw_connection_t)conn {
+    if (idx >= chunks.count) return;
+
+    NSData *chunk = chunks[idx];
+    dispatch_data_t ddata = dispatch_data_create(chunk.bytes, chunk.length,
+                                                 _transportQueue,
+                                                 DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+
+    __weak USBNetworkTransport *weakSelf = self;
+    nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                       true, ^(nw_error_t _Nullable error) {
+        if (error) {
+            os_log_error(transport_log(), "Paced media chunk %lu/%lu send error: %{public}@",
+                         (unsigned long)idx, (unsigned long)chunks.count, error);
+            return;  /* Stop sending remaining chunks on error */
+        }
+        /* Send next chunk after this one completes */
+        USBNetworkTransport *self2 = weakSelf;
+        if (self2) {
+            [self2 _sendChunkAtIndex:idx + 1 fromChunks:chunks connection:conn];
         }
     });
 }

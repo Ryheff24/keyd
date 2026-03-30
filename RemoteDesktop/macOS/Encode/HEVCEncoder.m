@@ -101,6 +101,14 @@ static const int kEcoMaxHeight720 = 720;
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_ProfileLevel,
                          kVTProfileLevel_HEVC_Main_AutoLevel);
 
+    /* Force zero-frame encoder delay — output each frame immediately.
+     * Without this, the encoder may buffer 1-2 frames for rate control,
+     * adding ~16ms to the pipeline latency. */
+    int maxDelay = 0;
+    CFNumberRef delayRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &maxDelay);
+    VTSessionSetProperty(_session, kVTCompressionPropertyKey_MaxFrameDelayCount, delayRef);
+    CFRelease(delayRef);
+
     /* AverageBitRate -- NOT ConstantBitRate (conflicts with low-latency mode per research) */
     CFNumberRef bitrateRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bitrate);
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_AverageBitRate, bitrateRef);
@@ -329,9 +337,12 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
         }
     }
 
-    /* Get timestamp */
-    CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-    uint64_t tsUs = (uint64_t)(CMTimeGetSeconds(pts) * 1000000.0);
+    /* Wall clock timestamp for pipeline latency measurement.
+     * iPad compares this to its own clock to compute capture-to-render latency.
+     * Devices on the same USB link have <1ms clock skew via NTP. */
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    uint64_t tsUs = (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)(ts.tv_nsec / 1000);
 
     /* Build MediaFrameHeader */
     MediaFrameHeader header;

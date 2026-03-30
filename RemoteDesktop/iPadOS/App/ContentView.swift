@@ -47,30 +47,33 @@ struct ContentView: View {
                 )
                 }
 
-            case .connecting:
-                let _ = contentLog.info("[ContentView] rendering .connecting")
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .tint(.white)
-                    Text("Connecting...")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                }
-
-            case .streaming, .reconnecting:
-                let _ = contentLog.info("[ContentView] rendering .streaming/.reconnecting (state=\(sessionManager.state.rawValue))")
-                // Metal render view: plain UIView with CAMetalLayer (NOT MTKView)
+            case .connecting, .streaming, .reconnecting:
+                let _ = contentLog.info("[ContentView] rendering .connecting/.streaming/.reconnecting (state=\(sessionManager.state.rawValue))")
+                // Metal render view present from .connecting so the display link is
+                // ready when frames arrive (avoids rendered=0 race at stream start).
                 MetalRenderView(renderer: sessionManager.metalRenderer)
                     .ignoresSafeArea()
+
+                if sessionManager.state == .connecting {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        Text("Connecting...")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                    }
+                }
 
                 // Reconnecting overlay (shown over frozen last frame)
                 if sessionManager.state == .reconnecting {
                     ReconnectingOverlay(onRetryNow: { sessionManager.retryNow() })
                 }
 
-                // HUD overlay
-                HUDView(viewModel: sessionManager.hudViewModel)
+                // HUD overlay (streaming/reconnecting only)
+                if sessionManager.state != .connecting {
+                    HUDView(viewModel: sessionManager.hudViewModel)
+                }
 
             case .disconnected:
                 let _ = contentLog.info("[ContentView] rendering .disconnected")
