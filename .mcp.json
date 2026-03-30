@@ -13,6 +13,10 @@
     "swiftlens": {
       "command": "uvx",
       "args": ["swiftlens"]
+    },
+    "git": {
+      "command": "uvx",
+      "args": ["mcp-server-git"]
     }
   }
 }

@@ -38,6 +38,9 @@ NS_ASSUME_NONNULL_BEGIN
 /** Callback fired when the USB NCM interface appears or disappears. */
 @property (nonatomic, copy, nullable) void (^onInterfaceChanged)(BOOL appeared, nw_interface_t _Nullable interface);
 
+/** Callback fired when the TCP input connection is accepted (ready to send handshake). */
+@property (nonatomic, copy, nullable) void (^onInputConnectionReady)(void);
+
 /**
  * Start monitoring for USB NCM interfaces.
  * When an interface is detected, listeners are created automatically.

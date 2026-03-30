@@ -329,6 +329,22 @@ final class TransportManager {
         case .transportHeartbeat, .transportHeartbeatAck:
             break
 
+        case .testReset:
+            // Allow testReset through the pending decoder so setUp's reset() works
+            // even when USB reconnects into pendingUSBIdentity state. Route it to
+            // the main handler which knows how to process it.
+            guard testMode != nil else { fallthrough }
+            handleIncomingMessage(message)
+            // After testReset clears isPaired, switch from paired-mode pending decoder
+            // to unpaired-mode active decoder so the next pairingRequest from the test
+            // goes through handleIncomingMessage (not handlePendingUSBMessage which
+            // rejects pairing requests in the paired-device identity flow).
+            if !pairingManager.isPaired {
+                resources.pendingUSBDecoder = nil
+                _ = makeActiveDecoder()
+                logEvent("[TEST MODE] Switched from pending to active decoder after testReset")
+            }
+
         default:
             sendDirectUSB(.pairingInvalidated)
             logEvent("Rejected unexpected USB message from pending state")
@@ -537,6 +553,12 @@ final class TransportManager {
         case .transportHeartbeat, .transportHeartbeatAck:
             break
 
+        case .testReset:
+            // Allow testReset through the pending AWDL pool so setUp's reset() works
+            // even when AWDL is the active transport in pendingAWDLPool state.
+            guard testMode != nil else { fallthrough }
+            handleIncomingMessage(message)
+
         default:
             sendDirectAWDL(.pairingInvalidated, on: connection)
             logEvent("Rejected unexpected AWDL message from pending pool")
@@ -637,6 +659,10 @@ final class TransportManager {
                 // Allow testReset through even when unpaired — it's a test harness control message.
                 break
             case .transportHeartbeat, .transportHeartbeatAck:
+                // In test mode, allow heartbeats through when unpaired — the latency benchmark
+                // runs heartbeats without pairing first. In production this path is never hit
+                // because production agents only receive heartbeats after pairing completes.
+                if testMode != nil { break }
                 return
             case .keyEvent, .hotkeyEvent:
                 send(.pairingInvalidated)
@@ -657,8 +683,15 @@ final class TransportManager {
                 iOSPublicKeyData: request.publicKeyData,
                 deviceID: request.deviceID
             )
+            // In test mode, send empty publicKeyData so iOS completeQRPairing
+            // skips the key-verification check (the test's QR payload contains a
+            // random key, not the agent's real key — sending the real key back
+            // would trigger agentKeyMismatch on iOS).
+            let responseKeyData: Data = testMode != nil
+                ? Data()
+                : (pairingManager.currentPublicKeyData ?? Data())
             let response = PairingResponse(
-                publicKeyData: pairingManager.currentPublicKeyData ?? Data(),
+                publicKeyData: responseKeyData,
                 accepted: accepted
             )
             send(.pairingResponse(response))

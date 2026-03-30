@@ -106,8 +106,12 @@ static const int kEcoMaxHeight720 = 720;
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_AverageBitRate, bitrateRef);
     CFRelease(bitrateRef);
 
-    /* Max keyframe interval (seconds) -- force keyframe at least every 2 seconds */
-    float maxKeyframeInterval = 2.0f;
+    /* Max keyframe interval (seconds).
+     * Keyframes at native resolution can be 100-200KB (70-140 UDP chunks).
+     * Each chunk requires individual DTLS encryption + WiFi transmission.
+     * Too-frequent keyframes create ~200ms stalls as chunks flood the transport.
+     * 5-second interval balances error recovery with smooth delivery. */
+    float maxKeyframeInterval = 5.0f;
     CFNumberRef keyframeRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberFloatType, &maxKeyframeInterval);
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, keyframeRef);
     CFRelease(keyframeRef);

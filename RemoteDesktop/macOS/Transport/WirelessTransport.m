@@ -295,6 +295,28 @@ static const char *kInputPortStr = "14568";
     });
 }
 
+- (void)sendMediaFrameViaTCP:(const void *)data length:(size_t)len {
+    nw_connection_t conn = _inputConnection;
+    if (!conn) return;
+
+    /* 4-byte big-endian length prefix + payload — same framing as sendInputEvent.
+     * iPad drains TCP buffer and routes frames via handleInputReceived which
+     * detects MediaFrameHeader magic and sends to handleReceivedFrame. */
+    uint32_t netLen = htonl((uint32_t)len);
+    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
+                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
+                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+
+    nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                       true, ^(nw_error_t _Nullable error) {
+        if (error) {
+            os_log_error(wireless_log(), "TCP media frame send error: %{public}@", error);
+        }
+    });
+}
+
 - (void)sendInputEvent:(const void *)data length:(size_t)len {
     nw_connection_t conn = _inputConnection;
     if (!conn) {
@@ -330,16 +352,13 @@ static const char *kInputPortStr = "14568";
 - (void)handleNewConnection:(nw_connection_t)connection {
     os_log(wireless_log(), "TLS wireless connection accepted from iPad");
 
-    /* Reject duplicate connections if we already have a live one */
-    if (_inputConnection && _isConnected) {
-        os_log(wireless_log(), "Already have a live connection -- rejecting duplicate");
-        nw_connection_cancel(connection);
-        return;
-    }
-
-    /* Replace existing input connection */
+    /* Always accept the new connection and replace any existing one.
+     * The iPad may reconnect after a transport rotation test, and the old
+     * connection may not have been cleaned up yet on our side. */
     if (_inputConnection) {
+        os_log(wireless_log(), "Replacing existing connection (was connected=%d)", _isConnected);
         nw_connection_cancel(_inputConnection);
+        _isConnected = NO;
     }
     _inputConnection = connection;
 

@@ -76,6 +76,30 @@ public enum IntegrationTestCase {
     public static func runLatencyBenchmark(harness: IntegrationHarnessProtocol) async throws -> Result {
         let start = Date()
         try await harness.reset()
+
+        // Establish a paired session before the heartbeat burst.
+        // After reset, Mac is unpaired and drops heartbeats silently (!isPaired guard).
+        // USB connect + pairing on a physical device can take up to ~15s total, so we
+        // complete a full pairing handshake here and wait up to 15s for acceptance.
+        let iOSPrivateKey = Curve25519.KeyAgreement.PrivateKey()
+        harness.injectPairingToken(TestPairingPayload(
+            publicKeyBase64: iOSPrivateKey.publicKey.rawRepresentation.base64EncodedString(),
+            port: 12345,
+            agentID: "latency-bench-\(Int.random(in: 1000...9999))",
+            version: 1
+        ))
+        let pairingResponse = try await harness.awaitMessage(matching: { msg in
+            if case .pairingResponse(let r) = msg, r.accepted { return true }
+            return false
+        }, timeout: 15.0)
+        guard case .pairingResponse(let pr) = pairingResponse, pr.accepted else {
+            return Result(
+                passed: false,
+                detail: "Latency benchmark aborted: pairing not accepted before heartbeat burst",
+                durationMs: Date().timeIntervalSince(start) * 1000
+            )
+        }
+
         var roundTrips: [Double] = []
         let burstSize = 100
         for _ in 0..<burstSize {

@@ -3,6 +3,7 @@ import Network
 import Security
 import CryptoKit
 import os.log
+import Darwin.POSIX.net  // getifaddrs, ifaddrs
 
 /// USB NCM transport for the iPadOS app.
 ///
@@ -32,8 +33,9 @@ final class USBNetworkTransport {
 
     // MARK: - Private
 
-    private var pathMonitor: NWPathMonitor?
-    private var fallbackPathMonitor: NWPathMonitor?
+    private var pollTimer: DispatchSourceTimer?
+    private var detectedLocalIP: String?
+    private var detectedMacIP: String?
     private let monitorQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.monitor")
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.transport")
 
@@ -203,124 +205,108 @@ final class USBNetworkTransport {
         }
     }
 
-    // MARK: - Public API
+    // MARK: - USB NCM Detection via getifaddrs
 
-    /// Start monitoring for USB NCM interfaces.
+    /// Scan kernel interfaces for a USB NCM link-local address.
     ///
-    /// Uses TWO monitors to catch USB NCM regardless of how the OS classifies it:
-    ///   1. NWPathMonitor(requiredInterfaceType: .wiredEthernet) -- ideal case
-    ///   2. NWPathMonitor() (unfiltered) -- fallback for when NCM reports as .other
-    ///
-    /// When an interface is detected, connections are created automatically.
-    func startMonitoring() {
-        guard pathMonitor == nil else { return }
+    /// NWPathMonitor cannot detect USB NCM interfaces — they only have
+    /// 169.254.x.x link-local IPs with no routes, making them "unsatisfied."
+    /// We use getifaddrs() to directly enumerate kernel interfaces.
+    private func detectUSBNCMInterface() -> (ip: String, name: String)? {
+        var ifap: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifap) == 0, let firstAddr = ifap else { return nil }
+        defer { freeifaddrs(ifap) }
 
-        print("[CONSOLE] Starting USB NCM path monitors (TLS/DTLS enabled)")
-        log.info("Starting USB NCM path monitors (TLS/DTLS enabled)")
+        var ifa: UnsafeMutablePointer<ifaddrs>? = firstAddr
+        while let addr = ifa {
+            defer { ifa = addr.pointee.ifa_next }
 
-        // Primary monitor: wiredEthernet type (works when OS correctly types USB NCM)
-        let wiredMonitor = NWPathMonitor(requiredInterfaceType: .wiredEthernet)
-        pathMonitor = wiredMonitor
+            guard let sockaddr = addr.pointee.ifa_addr,
+                  sockaddr.pointee.sa_family == AF_INET else { continue }
 
-        wiredMonitor.pathUpdateHandler = { [weak self] path in
-            self?.handlePathUpdate(path, source: "wiredEthernet")
+            let flags = addr.pointee.ifa_flags
+            guard flags & UInt32(IFF_UP) != 0,
+                  flags & UInt32(IFF_RUNNING) != 0,
+                  flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
+
+            let sin = sockaddr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+            let ip = UInt32(bigEndian: sin.sin_addr.s_addr)
+
+            // Link-local range: 169.254.0.0/16
+            guard (ip & 0xFFFF0000) == 0xA9FE0000 else { continue }
+
+            let name = String(cString: addr.pointee.ifa_name)
+
+            // Skip known non-USB interfaces
+            if name == "en0" { continue }   // Wi-Fi
+            if name.hasPrefix("awdl") { continue }
+            if name.hasPrefix("llw") { continue }
+            if name.hasPrefix("utun") { continue }
+            if name.hasPrefix("lo") { continue }
+            if name.hasPrefix("ap") { continue }
+
+            var addrBuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            var sinCopy = sin
+            inet_ntop(AF_INET, &sinCopy.sin_addr, &addrBuf, socklen_t(INET_ADDRSTRLEN))
+            let ipStr = String(cString: addrBuf)
+
+            print("[CONSOLE] USB NCM candidate: \(name) = \(ipStr)")
+            return (ip: ipStr, name: name)
         }
-        wiredMonitor.start(queue: monitorQueue)
 
-        // Fallback monitor: unfiltered, manually checks for NCM-like interfaces
-        // This catches the case where USB NCM reports as .other instead of .wiredEthernet
-        let fallbackMonitor = NWPathMonitor()
-        fallbackPathMonitor = fallbackMonitor
-
-        fallbackMonitor.pathUpdateHandler = { [weak self] path in
-            self?.handlePathUpdate(path, source: "fallback")
-        }
-        fallbackMonitor.start(queue: monitorQueue)
+        return nil
     }
 
-    /// Unified handler for path updates from either monitor.
-    private func handlePathUpdate(_ path: NWPath, source: String) {
-        let statusStr: String
-        switch path.status {
-        case .satisfied: statusStr = "satisfied"
-        case .unsatisfied: statusStr = "unsatisfied"
-        case .requiresConnection: statusStr = "requiresConnection"
-        @unknown default: statusStr = "unknown"
-        }
+    // MARK: - Public API
 
-        print("[CONSOLE] [\(source)] path update: status=\(statusStr)")
-        log.info("[\(source)] path update: status=\(statusStr)")
+    /// Start polling for USB NCM interfaces via getifaddrs().
+    ///
+    /// NWPathMonitor cannot detect USB NCM interfaces because they only
+    /// have 169.254.x.x link-local IPs with no routes. We poll every 2s.
+    func startMonitoring() {
+        guard pollTimer == nil else { return }
 
-        // Log ALL interfaces for debugging
-        logAllInterfaces(in: path, label: source)
+        print("[CONSOLE] Starting USB NCM interface polling via getifaddrs (TLS/DTLS enabled)")
+        log.info("Starting USB NCM interface polling via getifaddrs")
 
-        if path.status == .satisfied || path.status == .requiresConnection {
-            // Find the first USB NCM interface using our detection heuristic
-            let ncmInterface = path.availableInterfaces.first(where: { isUSBNCMInterface($0) })
+        let timer = DispatchSource.makeTimerSource(queue: monitorQueue)
+        timer.schedule(deadline: .now(), repeating: .seconds(2), leeway: .milliseconds(500))
 
-            guard let interface = ncmInterface else {
-                // This monitor fired but no NCM interface found -- not an error for
-                // the fallback monitor since it sees all interface changes
-                if source == "wiredEthernet" {
-                    print("[CONSOLE] [\(source)] path satisfied but no NCM interface found in available interfaces")
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+
+            if let ncm = self.detectUSBNCMInterface() {
+                if ncm.ip != self.detectedLocalIP {
+                    print("[CONSOLE] USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
+                    self.log.info("USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
+                    self.detectedLocalIP = ncm.ip
+                    self.connectOverUSBNCMByIP(localIP: ncm.ip)
+                    self.onInterfaceChanged?(true, nil)
                 }
-                return
-            }
-
-            let typeName: String
-            switch interface.type {
-            case .wifi: typeName = "wifi"
-            case .cellular: typeName = "cellular"
-            case .wiredEthernet: typeName = "wiredEthernet"
-            case .loopback: typeName = "loopback"
-            case .other: typeName = "other"
-            @unknown default: typeName = "unknown"
-            }
-
-            print("[CONSOLE] [\(source)] USB NCM interface found: name=\(interface.name) type=\(typeName) index=\(interface.index)")
-            log.info("[\(source)] USB NCM interface found: \(interface.name) type=\(typeName) index=\(interface.index)")
-
-            if activeInterface == nil || activeInterface?.index != interface.index {
-                activeInterface = interface
-                connectOverUSBNCM(interface: interface)
-                onInterfaceChanged?(true, interface)
-            }
-        } else {
-            // Only process disconnection if this source was the one that originally
-            // detected the interface. The fallback monitor fires unsatisfied for many
-            // unrelated changes, so we only tear down if we actually had an active interface
-            // AND the wiredEthernet monitor says unsatisfied (or we detected via fallback).
-            if activeInterface != nil && source == "wiredEthernet" {
-                print("[CONSOLE] [\(source)] USB NCM interface disappeared")
-                log.info("[\(source)] USB NCM interface disappeared")
-                tearDownConnections()
-                activeInterface = nil
-                isConnected = false
-                onInterfaceChanged?(false, nil)
-            } else if activeInterface != nil && source == "fallback" {
-                // For fallback, verify the NCM interface is truly gone by checking
-                // if ANY remaining interface matches our NCM heuristic
-                let stillHasNCM = path.availableInterfaces.contains(where: { isUSBNCMInterface($0) })
-                if !stillHasNCM {
-                    print("[CONSOLE] [\(source)] USB NCM interface disappeared (confirmed via fallback)")
-                    log.info("[\(source)] USB NCM interface disappeared (confirmed via fallback)")
-                    tearDownConnections()
-                    activeInterface = nil
-                    isConnected = false
-                    onInterfaceChanged?(false, nil)
+            } else {
+                if self.detectedLocalIP != nil {
+                    print("[CONSOLE] USB NCM interface disappeared")
+                    self.log.info("USB NCM interface disappeared")
+                    self.tearDownConnections()
+                    self.activeInterface = nil
+                    self.detectedLocalIP = nil
+                    self.isConnected = false
+                    self.onInterfaceChanged?(false, nil)
                 }
             }
         }
+
+        timer.resume()
+        pollTimer = timer
     }
 
     /// Stop monitoring and tear down all connections.
     func stopMonitoring() {
-        pathMonitor?.cancel()
-        pathMonitor = nil
-        fallbackPathMonitor?.cancel()
-        fallbackPathMonitor = nil
+        pollTimer?.cancel()
+        pollTimer = nil
         tearDownConnections()
         activeInterface = nil
+        detectedLocalIP = nil
         isConnected = false
     }
 
@@ -332,6 +318,14 @@ final class USBNetworkTransport {
                 self?.log.error("Input send error: \(error)")
             }
         })
+    }
+
+    /// Set the Mac's IP address (from QR payload) for USB NCM direct connection.
+    /// Called after pairing when the Mac's link-local IP is known.
+    func setPeerAddress(_ ip: String) {
+        print("[CONSOLE] USBTransport: peer address set to \(ip)")
+        log.info("Peer address set to \(ip)")
+        detectedMacIP = ip
     }
 
     /// Send media data over UDP to the Mac (for acknowledgements/control).
@@ -409,6 +403,149 @@ final class USBNetworkTransport {
             }
         }
 
+        inputConn.start(queue: transportQueue)
+    }
+
+    /// Connect to the Mac over USB NCM using a specific IP (no NWInterface required).
+    ///
+    /// NWPathMonitor can't provide an NWInterface for USB NCM (link-local only).
+    /// Instead, we connect directly to the Mac's link-local IP.
+    private func connectOverUSBNCMByIP(localIP: String) {
+        guard let macIP = detectedMacIP else {
+            print("[CONSOLE] USBTransport: cannot connect — no peer address set (call setPeerAddress first)")
+            log.warning("Cannot connect via USB NCM: no peer address")
+            return
+        }
+
+        tearDownConnections()
+
+        print("[CONSOLE] USBTransport: connecting to Mac at \(macIP) via USB NCM (local=\(localIP))")
+        log.info("Connecting to Mac at \(macIP) via USB NCM (local=\(localIP))")
+
+        let host = NWEndpoint.Host(macIP)
+
+        // Bind to local USB NCM IP to force traffic through the correct interface.
+        // Without this, macOS/iOS may route link-local traffic over WiFi.
+        let localEndpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(localIP), port: 0)
+
+        // DTLS-encrypted UDP for media (port 14567)
+        let dtlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            dtlsOptions.securityProtocolOptions, .TLSv13)
+        sec_protocol_options_set_verify_block(dtlsOptions.securityProtocolOptions,
+            { [weak self] _, trust, complete in
+                complete(self?.verifyPeerCertificate(trust) ?? false)
+            }, DispatchQueue.global())
+
+        let udpParams = NWParameters(dtls: dtlsOptions, udp: .init())
+        udpParams.requiredLocalEndpoint = localEndpoint
+
+        let mediaPort = NWEndpoint.Port(rawValue: keydrdMediaPort)!
+        let mediaEndpoint = NWEndpoint.hostPort(host: host, port: mediaPort)
+        let mediaConn = NWConnection(to: mediaEndpoint, using: udpParams)
+        mediaConnection = mediaConn
+
+        mediaConn.stateUpdateHandler = { [weak self] state in
+            guard let self = self else { return }
+            switch state {
+            case .ready:
+                print("[CONSOLE] USBTransport: DTLS media connection READY")
+                self.log.info("USB NCM DTLS media connection ready (IP-based)")
+                self.scheduleMediaReceive(mediaConn)
+            case .failed(let error):
+                print("[CONSOLE] USBTransport: DTLS media FAILED: \(error)")
+                self.log.error("USB NCM DTLS media failed: \(error)")
+                self.mediaConnection = nil
+                if self.inputConnection == nil { self.isConnected = false }
+            default: break
+            }
+        }
+        mediaConn.start(queue: transportQueue)
+
+        // TLS 1.3-encrypted TCP for input (port 14568)
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            tlsOptions.securityProtocolOptions, .TLSv13)
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
+            { [weak self] _, trust, complete in
+                complete(self?.verifyPeerCertificate(trust) ?? false)
+            }, DispatchQueue.global())
+
+        let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
+        tcpParams.requiredLocalEndpoint = localEndpoint
+
+        let inputPort = NWEndpoint.Port(rawValue: keydrdInputPort)!
+        let inputEndpoint = NWEndpoint.hostPort(host: host, port: inputPort)
+        let inputConn = NWConnection(to: inputEndpoint, using: tcpParams)
+        inputConnection = inputConn
+
+        inputConn.stateUpdateHandler = { [weak self] state in
+            guard let self = self else { return }
+            switch state {
+            case .ready:
+                print("[CONSOLE] USBTransport: TLS input connection READY")
+                self.log.info("USB NCM TLS input connection ready (IP-based)")
+                self.isConnected = true
+                self.scheduleInputReceive(inputConn)
+            case .failed(let error):
+                print("[CONSOLE] USBTransport: TLS input FAILED: \(error)")
+                self.log.error("USB NCM TLS input failed: \(error)")
+                self.inputConnection = nil
+                if self.mediaConnection == nil { self.isConnected = false }
+            case .waiting(let error):
+                print("[CONSOLE] USBTransport: TLS input WAITING: \(error) — will retry in 2s")
+                // NWConnection retry for link-local TCP is unreliable.
+                // Cancel and reconnect after a delay.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self = self, self.detectedLocalIP != nil, self.detectedMacIP != nil else { return }
+                    if self.inputConnection?.state != .ready {
+                        print("[CONSOLE] USBTransport: retrying TCP connection")
+                        self.inputConnection?.cancel()
+                        self.inputConnection = nil
+                        self.retryTCPConnection(macIP: self.detectedMacIP!, localIP: self.detectedLocalIP!)
+                    }
+                }
+            default: break
+            }
+        }
+        inputConn.start(queue: transportQueue)
+    }
+
+    /// Retry just the TCP input connection (used when initial attempt is refused).
+    private func retryTCPConnection(macIP: String, localIP: String) {
+        let host = NWEndpoint.Host(macIP)
+        let localEndpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(localIP), port: 0)
+
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(
+            tlsOptions.securityProtocolOptions, .TLSv13)
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
+            { [weak self] _, trust, complete in
+                complete(self?.verifyPeerCertificate(trust) ?? false)
+            }, DispatchQueue.global())
+
+        let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
+        tcpParams.requiredLocalEndpoint = localEndpoint
+
+        let inputPort = NWEndpoint.Port(rawValue: keydrdInputPort)!
+        let inputConn = NWConnection(to: NWEndpoint.hostPort(host: host, port: inputPort), using: tcpParams)
+        inputConnection = inputConn
+
+        inputConn.stateUpdateHandler = { [weak self] state in
+            guard let self = self else { return }
+            switch state {
+            case .ready:
+                print("[CONSOLE] USBTransport: TLS input READY (retry)")
+                self.log.info("USB NCM TLS input ready (retry)")
+                self.isConnected = true
+                self.scheduleInputReceive(inputConn)
+            case .failed(let error):
+                print("[CONSOLE] USBTransport: TLS input FAILED (retry): \(error)")
+            case .waiting(let error):
+                print("[CONSOLE] USBTransport: TLS input still WAITING (retry): \(error)")
+            default: break
+            }
+        }
         inputConn.start(queue: transportQueue)
     }
 

@@ -13,10 +13,13 @@ final class UDPReassembler {
 
     /// Maximum number of concurrent sequences being reassembled.
     /// If exceeded, the oldest incomplete sequence is dropped.
-    static let maxConcurrentSequences = 4
+    /// Must be large enough to handle multiple in-flight chunked HEVC frames
+    /// (a 100KB keyframe at 1400B MTU = 71 chunks, takes ~50ms over WiFi).
+    static let maxConcurrentSequences = 32
 
     /// Timeout for incomplete frames (seconds). Stale partial frames are dropped.
-    static let frameTimeoutInterval: TimeInterval = 0.1  // 100ms
+    /// WiFi jitter can delay individual chunks by 50-200ms; too short = false drops.
+    static let frameTimeoutInterval: TimeInterval = 0.5  // 500ms
 
     // MARK: - Types
 
@@ -54,6 +57,12 @@ final class UDPReassembler {
 
     private var reassembledCount = 0
 
+    /// Counters for frame loss tracking — exposed for test observability.
+    private(set) var framesEvicted = 0   // dropped due to maxConcurrentSequences
+    private(set) var framesPurged = 0    // dropped due to timeout
+    private(set) var framesDelivered = 0 // successfully reassembled + delivered
+    private(set) var chunksReceived = 0  // total chunks processed
+
     // MARK: - Init
 
     init() {
@@ -84,8 +93,11 @@ final class UDPReassembler {
         let chunkIdx = header.chunkIdx
         let chunkTotal = header.chunkTotal
 
+        chunksReceived += 1
+
         // Single-chunk frame (no chunking needed) -- pass through directly
         if chunkTotal <= 1 {
+            framesDelivered += 1
             onFrameReassembled?(data)
             return
         }
@@ -179,6 +191,7 @@ final class UDPReassembler {
         frameData.append(fullPayload)
 
         reassembledCount += 1
+        framesDelivered += 1
         if reassembledCount <= 3 {
             print("[CONSOLE] UDPReassembler: reassembled seq=\(seq), \(pending.chunkTotal) chunks -> \(fullPayload.count) bytes")
         }
@@ -189,9 +202,13 @@ final class UDPReassembler {
     /// Evict the oldest pending frame to make room for a new one.
     private func evictOldest() {
         guard let oldestSeq = insertionOrder.first else { return }
+        let pending = pendingFrames[oldestSeq]
+        let received = pending?.chunks.count ?? 0
+        let total = pending?.chunkTotal ?? 0
         pendingFrames.removeValue(forKey: oldestSeq)
         insertionOrder.removeFirst()
-        Self.log.debug("Evicted stale seq=\(oldestSeq) (max concurrent sequences reached)")
+        framesEvicted += 1
+        print("[CONSOLE] UDPReassembler: EVICTED seq=\(oldestSeq) (\(received)/\(total) chunks, total evicted=\(framesEvicted))")
     }
 
     /// Start a timer that periodically purges stale incomplete frames.
@@ -212,7 +229,8 @@ final class UDPReassembler {
             let pending = pendingFrames[seq]
             let received = pending?.chunks.count ?? 0
             let total = pending?.chunkTotal ?? 0
-            Self.log.debug("Purging stale seq=\(seq): \(received)/\(total) chunks received")
+            framesPurged += 1
+            print("[CONSOLE] UDPReassembler: PURGED seq=\(seq) (\(received)/\(total) chunks, age=\(String(format: "%.0f", (now - (pending?.createdAt ?? now)) * 1000))ms, total purged=\(framesPurged))")
             pendingFrames.removeValue(forKey: seq)
             insertionOrder.removeAll { $0 == seq }
         }

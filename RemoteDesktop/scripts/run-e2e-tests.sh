@@ -29,7 +29,7 @@
 set -euo pipefail
 
 # ---- Parse arguments ----
-TIMEOUT="120"
+TIMEOUT="180"
 TRANSPORT=""
 LATENCY_TARGET=""
 EXPECT_RESOLUTION=""

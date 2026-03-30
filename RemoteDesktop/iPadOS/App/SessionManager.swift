@@ -38,7 +38,7 @@ final class SessionManager {
     let hudViewModel = HUDViewModel()
     private var lz4Decompressor: LZ4Decompressor?
     private let hevcDecoder = HEVCDecoder()
-    private let udpReassembler = UDPReassembler()
+    let udpReassembler = UDPReassembler()
 
     // MARK: - Transport FSM
 
@@ -143,6 +143,13 @@ final class SessionManager {
         print("[CONSOLE] SessionManager.onPairingComplete() called, current state=\(state.rawValue)")
         Self.log.info("[SessionManager] onPairingComplete() called, current state=\(self.state.rawValue)")
         state = .connecting
+
+        // Pass Mac's IP to USB transport for direct connection over USB NCM
+        if let macHost = qrPairing.pairedHost {
+            print("[CONSOLE] Setting USB transport peer address: \(macHost)")
+            usbTransport.setPeerAddress(macHost)
+        }
+
         print("[CONSOLE] starting transport monitoring")
         startTransportMonitoring()
         print("[CONSOLE] transport monitoring started")
@@ -202,6 +209,34 @@ final class SessionManager {
 
         let transition = TransportFSM.transition(from: currentTransport, on: .disconnected)
         currentTransport = transition.state
+    }
+
+    // MARK: - Transport Control (for multi-transport testing)
+
+    /// Disconnect all transports and reset state for a new transport test.
+    func disconnectAllTransports() {
+        Self.log.info("Disconnecting all transports for transport rotation")
+        usbTransport.stopMonitoring()
+        wirelessTransport.stopBrowsing()
+        latencyProbeTimer?.invalidate()
+        fpsUpdateTimer?.invalidate()
+        currentTransport = .idle
+        state = .connecting
+        frameRecvCount = 0
+    }
+
+    /// Start only USB NCM transport monitoring (disables wireless).
+    func startUSBOnly() {
+        Self.log.info("Starting USB NCM only")
+        wirelessTransport.stopBrowsing()
+        usbTransport.startMonitoring()
+    }
+
+    /// Start only wireless transport browsing (disables USB).
+    func startWirelessOnly() {
+        Self.log.info("Starting wireless only")
+        usbTransport.stopMonitoring()
+        wirelessTransport.startBrowsing()
     }
 
     // MARK: - Resolution Match
@@ -271,9 +306,21 @@ final class SessionManager {
             self?.handleInputReceived(data)
         }
 
-        // Start both transport monitors
+        // Start USB NCM first (primary transport).
+        // Only start WiFi after a delay if USB NCM isn't detected.
+        // Running both simultaneously causes port conflicts (both listen on 14568).
         usbTransport.startMonitoring()
-        wirelessTransport.startBrowsing()
+
+        // If USB NCM connects within 3s, skip WiFi. Otherwise fall back to WiFi.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self = self else { return }
+            if !self.usbTransport.isConnected {
+                print("[CONSOLE] USB NCM not connected after 3s, starting WiFi fallback")
+                self.wirelessTransport.startBrowsing()
+            } else {
+                print("[CONSOLE] USB NCM connected, skipping WiFi")
+            }
+        }
     }
 
     // MARK: - Private: Transport FSM

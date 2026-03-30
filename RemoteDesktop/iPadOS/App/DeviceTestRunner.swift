@@ -57,7 +57,7 @@ final class DeviceTestRunner {
 
     // Overall timeout
     private var overallTimer: Timer?
-    private static let overallTimeout: TimeInterval = 90 // 5s stabilize + 10s fps + 10s throughput + probes + buffer
+    private static let overallTimeout: TimeInterval = 180 // 5s stabilize + 10s fps + 10s throughput + 3x(5s teardown + 15s connection) + buffer
 
     // --- New test state ---
 
@@ -317,11 +317,15 @@ final class DeviceTestRunner {
 
             // Check rendered frame count — frames must actually appear on screen
             let rendered = sessionManager?.metalRenderer.renderedFrameCount ?? 0
-            let receptionPassed = rendered > 0
-            recordResult(name: "frame-reception", passed: receptionPassed,
-                        detail: "decoded: \(framesReceived), rendered: \(rendered), mode: \(mode)")
 
-            if framesDecompressed >= targetFrameCount && rendered > 0 {
+            // Must have rendered at least 50% of decoded frames to pass.
+            // If rendered=1 but decoded=50, something is very wrong.
+            let renderRatio = framesDecompressed > 0 ? Double(rendered) / Double(framesDecompressed) : 0
+            let receptionPassed = rendered >= 3 && renderRatio >= 0.3
+            recordResult(name: "frame-reception", passed: receptionPassed,
+                        detail: "decoded: \(framesReceived), rendered: \(rendered), ratio: \(String(format: "%.0f", renderRatio * 100))%, mode: \(mode)")
+
+            if framesDecompressed >= targetFrameCount && rendered >= 3 {
                 let avgSize = totalDecompressedBytes / framesDecompressed
                 recordResult(name: "frame-decompression", passed: true,
                             detail: "\(framesDecompressed) decoded, \(rendered) rendered, avg-size: \(avgSize)")
@@ -655,11 +659,57 @@ final class DeviceTestRunner {
 
             self.recordResult(name: "fps", passed: passed, detail: detail)
 
-            self.runTieredLatencyTest()
+            self.runFrameLossTest()
         }
     }
 
-    // MARK: - Test 13: Tiered Latency
+    // MARK: - Test 13: Frame Loss (reassembler drops)
+
+    private func runFrameLossTest() {
+        print("[TEST] RUNNING: frame-loss")
+
+        guard let sm = sessionManager else {
+            recordResult(name: "frame-loss", passed: false, detail: "sessionManager nil")
+            runTieredLatencyTest()
+            return
+        }
+
+        let reassembler = sm.udpReassembler
+        let delivered = reassembler.framesDelivered
+        let evicted = reassembler.framesEvicted
+        let purged = reassembler.framesPurged
+        let totalDropped = evicted + purged
+        let totalFrames = delivered + totalDropped
+        let chunks = reassembler.chunksReceived
+
+        let lossRatio: Double = totalFrames > 0 ? Double(totalDropped) / Double(totalFrames) : 0
+
+        // Also check rendered vs decoded at the Metal level
+        let rendered = sm.metalRenderer.renderedFrameCount
+
+        print("[TEST] INFO: frame-loss (delivered=\(delivered), evicted=\(evicted), purged=\(purged), chunks=\(chunks), rendered=\(rendered))")
+
+        // Pass criteria: less than 10% frame loss in reassembly
+        // AND rendered frames should be at least 50% of delivered frames
+        let lossOK = lossRatio < 0.10
+        let renderRatio = delivered > 0 ? Double(rendered) / Double(delivered) : 0
+        let renderOK = rendered >= 10 && renderRatio >= 0.5
+
+        var issues: [String] = []
+        if !lossOK { issues.append("\(String(format: "%.1f", lossRatio * 100))% loss in reassembly") }
+        if !renderOK { issues.append("rendered \(rendered)/\(delivered) delivered (\(String(format: "%.0f", renderRatio * 100))%)") }
+
+        let passed = lossOK && renderOK
+        var detail = "loss=\(String(format: "%.1f", lossRatio * 100))% (\(totalDropped)/\(totalFrames)), rendered=\(rendered)/\(delivered)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
+
+        recordResult(name: "frame-loss", passed: passed, detail: detail)
+        runTieredLatencyTest()
+    }
+
+    // MARK: - Test 14: Tiered Latency
 
     private func runTieredLatencyTest() {
         print("[TEST] RUNNING: latency-tiered")
@@ -797,14 +847,167 @@ final class DeviceTestRunner {
                 mbps = 0
             }
 
-            // Must have at least some data flowing to pass
-            let passed = self.throughputFrames > 0
-            print("[TEST] INFO: throughput (recv=\(String(format: "%.1f", mbps)) Mbps over \(String(format: "%.1f", elapsed))s, frames=\(self.throughputFrames))")
+            // Must have sustained frame flow: at least 5 rendered frames per second average
+            let avgFPS = elapsed > 0 ? Double(self.throughputFrames) / elapsed : 0
+            let passed = self.throughputFrames >= 10 && avgFPS >= 5.0
+            print("[TEST] INFO: throughput (recv=\(String(format: "%.1f", mbps)) Mbps, \(String(format: "%.1f", avgFPS)) rendered fps over \(String(format: "%.1f", elapsed))s, frames=\(self.throughputFrames))")
             self.recordResult(name: "throughput", passed: passed,
-                            detail: "recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames in \(String(format: "%.1f", elapsed))s")
+                            detail: "recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames (\(String(format: "%.1f", avgFPS)) fps) in \(String(format: "%.1f", elapsed))s")
 
-            self.finishTests()
+            self.runTransportRotationTests()
         }
+    }
+
+    // MARK: - Multi-Transport Rotation Tests
+
+    /// Transport names to test in order.
+    private static let transportOrder = ["usb", "wifi", "awdl"]
+
+    /// Index into transportOrder for current rotation phase.
+    private var transportRotationIdx = 0
+
+    /// Tracks which transports passed during rotation.
+    private var transportRotationResults: [String: Bool] = [:]
+
+    /// State for per-transport frame validation during rotation.
+    private var rotationHandshakeReceived = false
+    private var rotationFramesRendered = 0
+    private var rotationTransportType: String = ""
+
+    /// Entry point for multi-transport testing.
+    /// Runs after all single-transport tests complete.
+    private func runTransportRotationTests() {
+        print("[TEST] INFO: === Starting multi-transport rotation tests ===")
+        print("[TEST] INFO: Will test each protocol: USB NCM, WiFi, AWDL")
+
+        transportRotationIdx = 0
+        transportRotationResults = [:]
+        startNextTransportRotation()
+    }
+
+    private func startNextTransportRotation() {
+        guard transportRotationIdx < Self.transportOrder.count else {
+            // All transports tested, evaluate results
+            evaluateTransportRotation()
+            return
+        }
+
+        let transport = Self.transportOrder[transportRotationIdx]
+        print("[TEST] INFO: --- Transport rotation: testing \(transport) (\(transportRotationIdx + 1)/\(Self.transportOrder.count)) ---")
+
+        guard let sm = sessionManager else {
+            transportRotationResults[transport] = false
+            recordResult(name: "transport-\(transport)", passed: false, detail: "sessionManager nil")
+            transportRotationIdx += 1
+            startNextTransportRotation()
+            return
+        }
+
+        // Reset per-rotation state
+        rotationHandshakeReceived = false
+        rotationFramesRendered = 0
+        rotationTransportType = ""
+
+        // Disconnect everything and start only the target transport
+        sm.disconnectAllTransports()
+
+        // Give 5s for teardown to complete. The Mac needs time to detect
+        // the iPad's disconnection and clean up its connection state.
+        // TCP keepalive/close detection can take several seconds.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self else { return }
+
+            switch transport {
+            case "usb":
+                sm.startUSBOnly()
+            case "wifi", "awdl":
+                // Both WiFi and AWDL use wireless browsing — AWDL is detected by interface type
+                sm.startWirelessOnly()
+            default:
+                break
+            }
+
+            // Wait for connection + handshake + frames with timeout
+            self.waitForTransportConnection(transport: transport, timeout: 15.0)
+        }
+    }
+
+    /// Wait for a specific transport to connect, receive handshake, and deliver frames.
+    private func waitForTransportConnection(transport: String, timeout: TimeInterval) {
+        let deadline = CFAbsoluteTimeGetCurrent() + timeout
+
+        // Poll every 0.5s for connection + frames
+        pollTransportConnection(transport: transport, deadline: deadline)
+    }
+
+    private func pollTransportConnection(transport: String, deadline: CFAbsoluteTime) {
+        guard let sm = sessionManager else {
+            completeTransportRotation(transport: transport, passed: false, detail: "sessionManager nil")
+            return
+        }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if now >= deadline {
+            completeTransportRotation(transport: transport, passed: false,
+                                     detail: "timeout — no connection within \(String(format: "%.0f", deadline - now + 15))s")
+            return
+        }
+
+        // Check connection state
+        var connected = false
+        var detectedType = ""
+
+        if transport == "usb" {
+            connected = sm.usbTransport.isConnected
+            detectedType = "usb"
+        } else if transport == "wifi" {
+            connected = sm.wirelessTransport.isConnected && !sm.wirelessTransport.isAWDL
+            detectedType = "wifi"
+        } else if transport == "awdl" {
+            connected = sm.wirelessTransport.isConnected && sm.wirelessTransport.isAWDL
+            detectedType = "awdl"
+        }
+
+        // Check if we got frames (rendered > previous count means new frames arrived)
+        let rendered = sm.metalRenderer.renderedFrameCount
+
+        if connected && rendered > rotationFramesRendered + 3 {
+            // Got connection + at least 3 new rendered frames
+            completeTransportRotation(transport: transport, passed: true,
+                                     detail: "connected=\(detectedType), \(rendered - rotationFramesRendered) new frames rendered")
+            return
+        }
+
+        if connected && rotationFramesRendered == 0 {
+            // Connected but no frames yet — record baseline
+            rotationFramesRendered = rendered
+        }
+
+        // Not ready yet, poll again
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.pollTransportConnection(transport: transport, deadline: deadline)
+        }
+    }
+
+    private func completeTransportRotation(transport: String, passed: Bool, detail: String) {
+        transportRotationResults[transport] = passed
+        recordResult(name: "transport-\(transport)", passed: passed, detail: detail)
+
+        transportRotationIdx += 1
+        startNextTransportRotation()
+    }
+
+    private func evaluateTransportRotation() {
+        let allPassed = Self.transportOrder.allSatisfy { transportRotationResults[$0] == true }
+        let summary = Self.transportOrder.map { t in
+            let status = transportRotationResults[t] == true ? "PASS" : "FAIL"
+            return "\(t)=\(status)"
+        }.joined(separator: ", ")
+
+        recordResult(name: "multi-transport", passed: allPassed,
+                    detail: summary)
+
+        finishTests()
     }
 
     // MARK: - Results
@@ -835,7 +1038,8 @@ final class DeviceTestRunner {
         var allTests = ["bonjour-discovery", "tls-connection", "ecdh-exchange",
                        "transport-detected", "session-handshake", "frame-reception",
                        "frame-decompression", "latency-probe", "keepalive",
-                       "resolution", "fps", "latency-tiered", "throughput"]
+                       "resolution", "fps", "frame-loss", "latency-tiered", "throughput",
+                       "transport-usb", "transport-wifi", "transport-awdl", "multi-transport"]
         if expectTransport != nil {
             allTests.append("transport-assertion")
         }

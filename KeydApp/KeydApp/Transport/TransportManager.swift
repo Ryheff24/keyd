@@ -506,6 +506,7 @@ final class TransportManager: ObservableObject {
                 setIdleTimerState(true)
                 logConnectionEvent("AWDL connected")
             }
+            startAWDLHeartbeat()
             return
         }
 
@@ -623,6 +624,7 @@ final class TransportManager: ObservableObject {
     // MARK: - AWDL Heartbeat
 
     private func startAWDLHeartbeat() {
+        guard !suppressAWDLStatusUntilPaired else { return }
         awdlHeartbeatTask?.cancel()
 
         // Update heartbeat state in FSM

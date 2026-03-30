@@ -350,6 +350,16 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 - (void)startTransportMonitoring {
     __weak SessionManager *weakSelf = self;
 
+    /* USB NCM: when TCP input connection is accepted, send handshake.
+     * The interface appears before any iPad connection arrives. The handshake
+     * must wait until the TCP channel is ready (not just interface detected). */
+    _usbTransport.onInputConnectionReady = ^{
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        os_log(sLog, "USB NCM TCP input ready — sending handshake");
+        [strongSelf onTransportConnected];
+    };
+
     /* USB NCM interface monitoring */
     _usbTransport.onInterfaceChanged = ^(BOOL appeared, nw_interface_t _Nullable interface) {
         SessionManager *strongSelf = weakSelf;
@@ -394,8 +404,23 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
         [strongSelf handleReceivedInputEvent:data length:length];
     };
 
+    /* Start USB NCM first (primary transport).
+     * Only start WiFi after a delay if USB NCM isn't detected.
+     * Running both simultaneously causes port conflicts on ::14568. */
     [_usbTransport startMonitoring];
-    [_wirelessTransport startAdvertising];
+
+    __weak SessionManager *weakSelf2 = weakSelf;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        SessionManager *self2 = weakSelf2;
+        if (!self2) return;
+        if (!self2->_usbTransport.isConnected) {
+            os_log(sLog, "USB NCM not connected after 3s — starting WiFi advertising");
+            [self2->_wirelessTransport startAdvertising];
+        } else {
+            os_log(sLog, "USB NCM connected — skipping WiFi advertising");
+        }
+    });
 }
 
 - (void)handleTransportEvent:(TransportEvent)event {
@@ -423,10 +448,17 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
         [self startReconnection];
     } else if (_transportState != TRANSPORT_IDLE && _transportState != TRANSPORT_DISCONNECTED) {
         if (_sessionState == SESSION_CONNECTING || _sessionState == SESSION_RECONNECTING) {
-            _reconnectAttempt = 0;
-            [_reconnectTimer invalidate];
-            _reconnectTimer = nil;
-            [self onTransportConnected];
+            /* Only fire onTransportConnected if a transport actually has an active TCP connection.
+             * USB NCM detects the interface before iPad connects — the handshake must wait
+             * for onInputConnectionReady. WiFi fires onConnectionChanged only after TCP is ready. */
+            if (_usbTransport.isConnected || _wirelessTransport.isConnected) {
+                _reconnectAttempt = 0;
+                [_reconnectTimer invalidate];
+                _reconnectTimer = nil;
+                [self onTransportConnected];
+            } else {
+                os_log(sLog, "Transport state changed but no active TCP connection yet — waiting");
+            }
         }
     }
 }
@@ -525,9 +557,12 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     /* Send session handshake (also sets _captureWidth/_captureHeight) */
     [self sendSessionHandshake];
 
-    /* Re-start HEVC encoder with correct dimensions if it was started with 0x0
-     * (transport FSM effects fire before onTransportConnected) */
-    if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
+    /* Re-start HEVC encoder with correct dimensions if wireless (HEVC mode).
+     * USB uses LZ4 — don't start HEVC encoder for USB NCM transport. */
+    if (_usbTransport.isConnected) {
+        os_log(sLog, "USB NCM transport — using LZ4 mode (no HEVC encoder)");
+        [_hevcEncoder stop];
+    } else if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
         os_log(sLog, "HEVC encoder already active — restarting with correct dimensions %ux%u",
                _captureWidth, _captureHeight);
         [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:20000000];
@@ -537,6 +572,13 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
     /* Set up frame delivery */
     [self configureFrameDelivery];
+
+    /* For USB NCM: clear onPixelBuffer AFTER configureFrameDelivery sets it.
+     * This forces ScreenCapture to use the LZ4 onFrame path instead of HEVC. */
+    if (_usbTransport.isConnected) {
+        _capture.onPixelBuffer = nil;
+        os_log(sLog, "Cleared onPixelBuffer for USB/LZ4 mode");
+    }
 
     /* For wireless: defer capture until DTLS media channel is ready.
      * HEVC frames are sent via UDP/DTLS — sending before the media
@@ -568,7 +610,11 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
      * This window animates a color cycle to ensure steady frame delivery. */
     if (_testMode) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            NSWindow *testWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(50, 50, 300, 300)
+            /* Position top-right, 150x150 — small but enough to trigger SCStream frames */
+            NSScreen *screen = [NSScreen mainScreen];
+            CGFloat x = NSMaxX(screen.visibleFrame) - 160;
+            CGFloat y = NSMaxY(screen.visibleFrame) - 160;
+            NSWindow *testWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(x, y, 150, 150)
                                                               styleMask:NSWindowStyleMaskBorderless
                                                                 backing:NSBackingStoreBuffered
                                                                   defer:NO];
@@ -698,16 +744,16 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     if (_usbTransport.isConnected) {
         [_usbTransport sendMediaFrame:data length:len];
     } else if (_wirelessTransport.isConnected) {
-        /* Chunk the frame for UDP/DTLS transport. HEVC frames can be 10-100KB+
+        /* Chunk the frame for UDP/DTLS transport. HEVC frames can be 10-200KB+
          * which exceeds UDP MTU. UDPChunker splits into MTU-sized packets,
-         * each with its own MediaFrameHeader. iPad reassembles via UDPReassembler. */
+         * each with its own MediaFrameHeader. iPad reassembles via UDPReassembler.
+         * uint16_t chunk_total supports up to 65535 chunks. */
         if (len < sizeof(MediaFrameHeader)) return;
 
         const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
         const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
         size_t payloadLen = len - sizeof(MediaFrameHeader);
 
-        /* Chunk and send via UDP/DTLS (uint16_t chunk_total supports up to 65535 chunks) */
         WirelessTransport *transport = _wirelessTransport;
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {

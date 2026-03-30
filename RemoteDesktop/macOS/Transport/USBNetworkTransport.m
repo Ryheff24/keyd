@@ -4,6 +4,9 @@
 #import <os/log.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <ifaddrs.h>
+#import <arpa/inet.h>
+#import <net/if.h>
 
 static os_log_t transport_log(void) {
     static os_log_t log;
@@ -19,7 +22,6 @@ static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
 
 @interface USBNetworkTransport ()
-@property (nonatomic) nw_path_monitor_t pathMonitor;
 @property (nonatomic) dispatch_queue_t monitorQueue;
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t mediaListener;
@@ -28,6 +30,8 @@ static const char *kInputPortStr = "14568";
 @property (nonatomic, nullable) nw_connection_t inputConnection;
 @property (nonatomic, readwrite, nullable) nw_interface_t activeInterface;
 @property (nonatomic, readwrite) BOOL isConnected;
+@property (nonatomic, nullable) dispatch_source_t pollTimer;
+@property (nonatomic, copy, nullable) NSString *detectedLocalIP;
 @end
 
 @implementation USBNetworkTransport
@@ -215,58 +219,103 @@ static const char *kInputPortStr = "14568";
 
 #pragma mark - Public API
 
+/**
+ * Scan system interfaces for a USB NCM link-local address.
+ *
+ * NWPathMonitor cannot detect USB NCM interfaces because they only have
+ * 169.254.x.x link-local IPs with no routes, making them "unsatisfied."
+ * We use getifaddrs() to directly enumerate kernel interfaces.
+ *
+ * Returns the IPv4 link-local address (e.g., "169.254.129.221") and the
+ * interface name, or nil if no USB NCM interface is found.
+ */
+- (NSDictionary *)detectUSBNCMInterface {
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) != 0) return nil;
+
+    NSDictionary *result = nil;
+    for (struct ifaddrs *ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_RUNNING)) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+
+        struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
+        uint32_t ip = ntohl(sin->sin_addr.s_addr);
+
+        /* Link-local range: 169.254.0.0/16 */
+        if ((ip & 0xFFFF0000) != 0xA9FE0000) continue;
+
+        NSString *name = [NSString stringWithUTF8String:ifa->ifa_name];
+        /* Skip known non-USB interfaces */
+        if ([name isEqualToString:@"en0"]) continue;       /* Wi-Fi */
+        if ([name hasPrefix:@"awdl"]) continue;
+        if ([name hasPrefix:@"llw"]) continue;
+        if ([name hasPrefix:@"utun"]) continue;
+        if ([name hasPrefix:@"lo"]) continue;
+        if ([name hasPrefix:@"bridge"]) continue;           /* Thunderbolt Bridge */
+        if ([name hasPrefix:@"ap"]) continue;               /* Access point */
+
+        char addrBuf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf));
+        NSString *addrStr = [NSString stringWithUTF8String:addrBuf];
+
+        os_log(transport_log(), "USB NCM candidate: %{public}s = %{public}s (flags=0x%x)",
+               ifa->ifa_name, addrBuf, ifa->ifa_flags);
+
+        result = @{@"ip": addrStr, @"name": name};
+        break;  /* Take the first match */
+    }
+
+    freeifaddrs(ifap);
+    return result;
+}
+
 - (void)startMonitoring {
-    if (_pathMonitor) return;
+    if (_pollTimer) return;
 
     if (!_tlsIdentity) {
         os_log_error(transport_log(), "Cannot start monitoring: tlsIdentity not set");
         return;
     }
 
-    os_log(transport_log(), "Starting USB NCM path monitor (TLS/DTLS enabled)");
+    os_log(transport_log(), "Starting USB NCM interface polling via getifaddrs (TLS/DTLS enabled)");
 
-    _pathMonitor = nw_path_monitor_create_with_type(nw_interface_type_wired);
-    nw_path_monitor_set_queue(_pathMonitor, _monitorQueue);
+    /* Poll every 2 seconds for USB NCM interface appearance/disappearance.
+     * NWPathMonitor cannot detect these interfaces (link-local only, no routes). */
+    _pollTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _monitorQueue);
+    dispatch_source_set_timer(_pollTimer,
+                              DISPATCH_TIME_NOW,
+                              2 * NSEC_PER_SEC,
+                              500 * NSEC_PER_MSEC);
 
     __weak USBNetworkTransport *weakSelf = self;
-    nw_path_monitor_set_update_handler(_pathMonitor, ^(nw_path_t path) {
+    dispatch_source_set_event_handler(_pollTimer, ^{
         USBNetworkTransport *self2 = weakSelf;
         if (!self2) return;
 
-        nw_path_status_t status = nw_path_get_status(path);
-        os_log(transport_log(), "USB NCM path update: status=%d", (int)status);
+        NSDictionary *ncm = [self2 detectUSBNCMInterface];
 
-        if (status == nw_path_status_satisfied || status == nw_path_status_satisfiable) {
-            /* Extract the exact NWInterface object -- NEVER hardcode name */
-            __block nw_interface_t foundInterface = nil;
-            nw_path_enumerate_interfaces(path, ^bool(nw_interface_t interface) {
-                if (nw_interface_get_type(interface) == nw_interface_type_wired) {
-                    foundInterface = interface;
-                    return false; /* stop enumeration */
-                }
-                return true;
-            });
+        if (ncm) {
+            NSString *ip = ncm[@"ip"];
+            NSString *name = ncm[@"name"];
 
-            if (foundInterface) {
-                os_log(transport_log(), "USB NCM interface found: %{public}s (index %u)",
-                       nw_interface_get_name(foundInterface),
-                       nw_interface_get_index(foundInterface));
+            if (![ip isEqualToString:self2.detectedLocalIP]) {
+                /* New or changed USB NCM interface */
+                os_log(transport_log(), "USB NCM interface detected: %{public}@ = %{public}@", name, ip);
+                self2.detectedLocalIP = ip;
+                [self2 bindToLocalIP:ip];
 
-                if (!self2.activeInterface ||
-                    nw_interface_get_index(foundInterface) != nw_interface_get_index(self2.activeInterface)) {
-                    self2.activeInterface = foundInterface;
-                    [self2 bindToInterface:foundInterface];
-
-                    if (self2.onInterfaceChanged) {
-                        self2.onInterfaceChanged(YES, foundInterface);
-                    }
+                if (self2.onInterfaceChanged) {
+                    self2.onInterfaceChanged(YES, nil);
                 }
             }
         } else {
-            if (self2.activeInterface) {
+            if (self2.detectedLocalIP) {
+                /* USB NCM interface disappeared */
                 os_log(transport_log(), "USB NCM interface disappeared");
                 [self2 tearDownListeners];
                 self2.activeInterface = nil;
+                self2.detectedLocalIP = nil;
                 self2.isConnected = NO;
 
                 if (self2.onInterfaceChanged) {
@@ -276,16 +325,17 @@ static const char *kInputPortStr = "14568";
         }
     });
 
-    nw_path_monitor_start(_pathMonitor);
+    dispatch_resume(_pollTimer);
 }
 
 - (void)stopMonitoring {
-    if (_pathMonitor) {
-        nw_path_monitor_cancel(_pathMonitor);
-        _pathMonitor = nil;
+    if (_pollTimer) {
+        dispatch_source_cancel(_pollTimer);
+        _pollTimer = nil;
     }
     [self tearDownListeners];
     _activeInterface = nil;
+    _detectedLocalIP = nil;
     _isConnected = NO;
 }
 
@@ -358,6 +408,41 @@ static const char *kInputPortStr = "14568";
            kMediaPortStr, kInputPortStr);
 }
 
+/**
+ * Bind listeners to a specific local IP (for USB NCM detected via getifaddrs).
+ *
+ * NWPathMonitor can't provide an nw_interface_t for USB NCM interfaces since
+ * it doesn't detect them. Instead we bind to the specific link-local IP
+ * which effectively constrains traffic to the USB NCM interface.
+ */
+- (void)bindToLocalIP:(NSString *)localIP {
+    [self tearDownListeners];
+
+    const char *ip = [localIP UTF8String];
+    os_log(transport_log(), "Binding TLS/DTLS listeners to USB NCM local IP: %{public}s", ip);
+
+    /* UDP listener for media (port 14567) -- DTLS encrypted */
+    nw_parameters_t udpParams = [self createSecureUDPParameters];
+    nw_parameters_set_reuse_local_address(udpParams, true);
+    nw_parameters_set_local_endpoint(udpParams,
+        nw_endpoint_create_host(ip, kMediaPortStr));
+
+    _mediaListener = nw_listener_create(udpParams);
+    [self configureMediaListener];
+
+    /* TCP listener for input (port 14568) -- TLS 1.3 encrypted */
+    nw_parameters_t tcpParams = [self createSecureTCPParameters];
+    nw_parameters_set_reuse_local_address(tcpParams, true);
+    nw_parameters_set_local_endpoint(tcpParams,
+        nw_endpoint_create_host(ip, kInputPortStr));
+
+    _inputListener = nw_listener_create(tcpParams);
+    [self configureInputListener];
+
+    os_log(transport_log(), "USB NCM listeners created on %{public}s ports %s (DTLS) and %s (TLS)",
+           ip, kMediaPortStr, kInputPortStr);
+}
+
 - (void)configureMediaListener {
     nw_listener_set_queue(_mediaListener, _transportQueue);
 
@@ -383,7 +468,8 @@ static const char *kInputPortStr = "14568";
             nw_connection_cancel(self2.mediaConnection);
         }
         self2.mediaConnection = connection;
-        self2.isConnected = YES;
+        /* Don't set isConnected here — wait for TCP input connection.
+         * The handshake is sent via TCP, so isConnected must mean TCP is ready. */
 
         nw_connection_set_queue(connection, self2.transportQueue);
 
@@ -432,6 +518,11 @@ static const char *kInputPortStr = "14568";
         }
         self2.inputConnection = connection;
         self2.isConnected = YES;
+
+        /* Notify SessionManager that TCP is ready — handshake can now be sent */
+        if (self2.onInputConnectionReady) {
+            self2.onInputConnectionReady();
+        }
 
         nw_connection_set_queue(connection, self2.transportQueue);
 

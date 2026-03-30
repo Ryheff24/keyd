@@ -29,8 +29,14 @@ final class PairingManager {
         self.testMode = testMode
         if testMode != nil {
             // Test mode: start unpaired, no Keychain reads — each test case is a clean slate.
+            // Generate a stable keypair once so completePairing() can perform ECDH.
+            // This keypair persists across resetInMemory() calls — it's the agent's
+            // identity, not session state. Regenerating it on every reset would cause
+            // agentKeyMismatch on iOS because the QR-payload public key (injected by
+            // the test) wouldn't match the new key in the pairing response.
             isPaired = false
             pairedDeviceID = nil
+            privateKey = Curve25519.KeyAgreement.PrivateKey()
         } else {
             // Check if already paired (restore shared secret from Keychain)
             if let _ = loadSharedSecretFromKeychain() {
@@ -42,10 +48,11 @@ final class PairingManager {
 
     /// Clears in-memory pairing state without touching the Keychain.
     /// Called by TransportManager when it receives a TestReset message in test mode.
+    /// Preserves the agent's keypair (generated once in init) so the agent identity
+    /// stays stable across test resets — only session state is cleared.
     func resetInMemory() {
         isPaired = false
         pairedDeviceID = nil
-        privateKey = nil
     }
 
     var currentPublicKeyData: Data? {

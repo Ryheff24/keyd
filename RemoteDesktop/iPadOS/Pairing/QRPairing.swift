@@ -92,6 +92,9 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     private(set) var displayHeight: Int = 0
     private(set) var scaleFactor: Double = 1.0
 
+    /// The Mac's host IP from the last QR payload (used for USB NCM direct connection).
+    private(set) var pairedHost: String?
+
     /// Callback fired when pairing completes successfully.
     var onPairingComplete: (() -> Void)?
 
@@ -211,10 +214,11 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
 
             print("[CONSOLE] autoPairViaBonjourForTestMode: parsed payload, host=\(qrPayload.host), port=\(qrPayload.port)")
 
-            // Store display geometry
+            // Store display geometry and host for USB NCM
             self.displayWidth = qrPayload.displayWidth
             self.displayHeight = qrPayload.displayHeight
             self.scaleFactor = qrPayload.scaleFactor
+            self.pairedHost = qrPayload.host
 
             // Connect with TLS, accepting any cert (TEST MODE ONLY)
             self.completePairingTestMode(qrPayload: qrPayload,
@@ -530,10 +534,11 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         /* Lock out further delegate calls */
         isPairingInProgress = true
 
-        /* Store display geometry for rendering */
+        /* Store display geometry and host for USB NCM */
         displayWidth = payload.displayWidth
         displayHeight = payload.displayHeight
         scaleFactor = payload.scaleFactor
+        pairedHost = payload.host
 
         /* Stop scanning -- only one pairing at a time.
          * Must dispatch off main thread: stopRunning() blocks, and we're inside

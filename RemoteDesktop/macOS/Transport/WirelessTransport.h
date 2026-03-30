@@ -70,6 +70,13 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)sendInputEvent:(const void *)data length:(size_t)len;
 
+/**
+ * Send a media frame over TCP (with 4-byte length prefix framing).
+ * Used for large frames where UDP chunking would create too many datagrams.
+ * The iPad's TCP receive path handles framing and routes to handleReceivedFrame.
+ */
+- (void)sendMediaFrameViaTCP:(const void *)data length:(size_t)len;
+
 @end
 
 NS_ASSUME_NONNULL_END
