@@ -276,10 +276,10 @@ final class SessionManager {
             }
         }
 
-        // USB frames are not chunked (MTU is large enough) -- pass directly
-        usbTransport.onMediaReceived = { [weak self] data in
-            self?.handleReceivedFrame(data)
-        }
+        // USB media arrives via TCP (reliable delivery over USB NCM).
+        // UDP/DTLS drops packets on USB NCM due to driver buffer limits.
+        // handleInputReceived detects MediaFrameHeader and routes to handleReceivedFrame.
+        usbTransport.onMediaReceived = nil
 
         usbTransport.onInputReceived = { [weak self] data in
             self?.handleInputReceived(data)

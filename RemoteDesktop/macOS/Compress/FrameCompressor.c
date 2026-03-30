@@ -96,10 +96,31 @@ int compress_frame(FrameCompressorState *state,
     IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
 
     void  *base  = IOSurfaceGetBaseAddress(surface);
-    /* Use frame_bytes (the size our buffers were allocated for), NOT
-     * IOSurfaceGetAllocSize() which includes row-alignment padding and
-     * can exceed delta_scratch/delta_buf capacity → buffer overread. */
     size_t bytes = state->frame_bytes;
+
+    /* Handle IOSurface stride padding.
+     * IOSurface rows are often aligned to 64/256 bytes, so bytesPerRow > width*4.
+     * If stride differs, we must copy row-by-row into a packed buffer to avoid
+     * the classic "horizontal banding" corruption on the receiver. */
+    size_t surfaceBytesPerRow = IOSurfaceGetBytesPerRow(surface);
+    size_t surfaceWidth  = IOSurfaceGetWidth(surface);
+    size_t surfaceHeight = IOSurfaceGetHeight(surface);
+    size_t packedBytesPerRow = surfaceWidth * 4;
+    uint8_t *packed_buf = NULL;
+
+    if (surfaceBytesPerRow != packedBytesPerRow && surfaceHeight > 0) {
+        /* Stride mismatch — pack rows tightly */
+        packed_buf = (uint8_t *)malloc(bytes);
+        if (packed_buf) {
+            const uint8_t *src = (const uint8_t *)base;
+            for (size_t row = 0; row < surfaceHeight; row++) {
+                memcpy(packed_buf + row * packedBytesPerRow,
+                       src + row * surfaceBytesPerRow,
+                       packedBytesPerRow);
+            }
+            base = packed_buf;
+        }
+    }
 
     /* Determine keyframe vs delta */
     int is_keyframe = (state->seq == 0) ||
@@ -118,6 +139,7 @@ int compress_frame(FrameCompressorState *state,
 
         if (compressed <= 0) {
             IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+            free(packed_buf);
             return -1;
         }
 
@@ -140,6 +162,7 @@ int compress_frame(FrameCompressorState *state,
 
         if (compressed <= 0) {
             IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+            free(packed_buf);
             return -1;
         }
 
@@ -174,6 +197,12 @@ int compress_frame(FrameCompressorState *state,
 
     /* Unlock IOSurface — all pointer access complete */
     IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+
+    /* Free stride-packing buffer if allocated */
+    if (packed_buf) {
+        free(packed_buf);
+        packed_buf = NULL;
+    }
 
     /* Fill output */
     out->compressed_size = (size_t)compressed;

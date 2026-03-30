@@ -18,13 +18,13 @@
 #   - Screen Recording and Accessibility permissions granted for RemoteDesktopAgent
 #
 # What happens:
-#   1. Build Mac agent + iPad app
-#   2. Kill existing RemoteDesktopAgent
-#   3. Generate fresh TLS identity (PKCS12)
-#   4. Launch Mac agent with --test-mode (auto-shows QR, writes payload to /tmp)
-#   5. Install + launch iPad app with --test-mode (auto-pairs, runs test suite)
-#   6. Capture iPad console output, parse [TEST] lines
-#   7. Print summary and exit
+#   1. Build Mac agent + iPad app in parallel using isolated DerivedData paths
+#   2. Install the iPad app before launching either runtime
+#   3. Kill existing RemoteDesktopAgent and generate fresh TLS identity (PKCS12)
+#   4. Start Mac log capture, then launch Mac agent with --test-mode
+#   5. Wait for Mac QR readiness, preferring the payload file over log parsing
+#   6. Launch iPad app with --test-mode once the QR payload is ready
+#   7. Capture iPad console output, parse [TEST] lines, print summary, and exit
 
 set -euo pipefail
 
@@ -74,9 +74,17 @@ MAC_PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
 MAC_SCHEME="RemoteDesktopAgent"
 BUNDLE_ID="com.ryheff.keyd.remote.app"
 MAC_SUBSYSTEM="com.ryheff.keyd.remote.agent"
-DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
+DERIVED_DATA_ROOT="/tmp/keyd-e2e-derived-data"
+MAC_DERIVED_DATA="$DERIVED_DATA_ROOT/macos"
+IPAD_DERIVED_DATA="$DERIVED_DATA_ROOT/ipados"
 LOG_FILE="/tmp/e2e-results.log"
 MAC_LOG_FILE="/tmp/keyd-e2e-mac.log"
+MAC_BUILD_LOG="/tmp/keyd-e2e-build-mac.log"
+IPAD_BUILD_LOG="/tmp/keyd-e2e-build-ipad.log"
+IPAD_INSTALL_LOG="/tmp/keyd-e2e-install-ipad.log"
+QR_PAYLOAD_FILE="/tmp/keydrd-test-qr.json"
+QR_READY_LOG="Test mode: QR payload written to /tmp/keydrd-test-qr.json"
+QR_SHOWN_LOG="Test mode: auto-showing QR"
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -94,6 +102,9 @@ fi
 echo $$ > "$LOCKFILE"
 
 # ---- Cleanup ----
+MAC_BUILD_PID=""
+IPAD_BUILD_PID=""
+IPAD_INSTALL_PID=""
 MAC_PID=""
 IPAD_PID=""
 MAC_LOG_PID=""
@@ -102,24 +113,45 @@ cleanup() {
   echo ""
   echo "=== Cleaning up ==="
   # SIGTERM first, then SIGKILL after 2s if still alive
-  for pid in "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID"; do
+  for pid in "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
   sleep 2
-  for pid in "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID"; do
+  for pid in "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
   done
   # Don't wait — processes are killed, just proceed
   rm -f "$LOCKFILE"
-  rm -f /tmp/keydrd-test-qr.json
+  rm -f "$QR_PAYLOAD_FILE"
 }
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$MAC_LOG_FILE" /tmp/keydrd-test-qr.json
+rm -f "$LOG_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
 log_progress() { echo "$1"; echo "$1" >> "$LOG_FILE"; }
+
+summarize_build_log() {
+  local log_file="$1"
+  grep -E "(error:|warning:|BUILD)" "$log_file" 2>/dev/null | tail -5 || true
+}
+
+wait_for_job() {
+  local pid="$1"
+  local label="$2"
+  local log_file="$3"
+
+  if wait "$pid"; then
+    return 0
+  fi
+
+  echo "ERROR: $label failed"
+  echo "--- $label log (last 40 lines) ---"
+  tail -40 "$log_file" 2>/dev/null || true
+  return 1
+}
 
 log_progress "============================================"
 log_progress "  keyd-rd End-to-End Test Harness"
@@ -127,27 +159,75 @@ log_progress "  Timeout: ${TIMEOUT}s"
 log_progress "============================================"
 log_progress ""
 
-# ---- Step 1: Build Mac agent (clean + build to avoid stale binaries) ----
-log_progress "=== [1/6] Building Mac agent ==="
-BUILD_OUT=$(xcodebuild \
+# ---- Step 1: Build Mac agent and iPad app in parallel ----
+log_progress "=== [1/6] Building Mac agent + iPad app in parallel ==="
+xcodebuild \
   -project "$MAC_PROJECT" \
   -scheme "$MAC_SCHEME" \
   -destination "platform=macOS,arch=arm64" \
   -configuration Debug \
-  clean build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
-log_progress "$BUILD_OUT"
-log_progress ""
+  -derivedDataPath "$MAC_DERIVED_DATA" \
+  clean build \
+  > "$MAC_BUILD_LOG" 2>&1 &
+MAC_BUILD_PID=$!
 
-# ---- Step 2: Build iPad app (clean + build to avoid stale binaries) ----
-log_progress "=== [2/6] Building iPad app ==="
-BUILD_OUT=$(xcodebuild \
+xcodebuild \
   -workspace "$WORKSPACE" \
   -scheme "$IPAD_SCHEME" \
   -destination "id=$IPAD_DEVICE_ID" \
   -configuration Debug \
-  clean build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5)
-log_progress "$BUILD_OUT"
+  -derivedDataPath "$IPAD_DERIVED_DATA" \
+  clean build \
+  > "$IPAD_BUILD_LOG" 2>&1 &
+IPAD_BUILD_PID=$!
+
+MAC_BUILD_OK=true
+IPAD_BUILD_OK=true
+
+wait_for_job "$MAC_BUILD_PID" "Mac build" "$MAC_BUILD_LOG" || MAC_BUILD_OK=false
+wait_for_job "$IPAD_BUILD_PID" "iPad build" "$IPAD_BUILD_LOG" || IPAD_BUILD_OK=false
+
+MAC_BUILD_PID=""
+IPAD_BUILD_PID=""
+
+log_progress "$(summarize_build_log "$MAC_BUILD_LOG")"
+log_progress "$(summarize_build_log "$IPAD_BUILD_LOG")"
 log_progress ""
+
+if [ "$MAC_BUILD_OK" != true ] || [ "$IPAD_BUILD_OK" != true ]; then
+  exit 1
+fi
+
+MAC_APP="$MAC_DERIVED_DATA/Build/Products/Debug/RemoteDesktopAgent.app"
+if [ ! -d "$MAC_APP" ]; then
+  MAC_APP=$(find "$MAC_DERIVED_DATA" -name "RemoteDesktopAgent.app" -path "*/Debug/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+fi
+if [ -z "$MAC_APP" ] || [ ! -d "$MAC_APP" ]; then
+  echo "ERROR: Could not find built Mac .app bundle"
+  exit 1
+fi
+
+IPAD_APP="$IPAD_DERIVED_DATA/Build/Products/Debug-iphoneos/RemoteDesktopApp.app"
+if [ ! -d "$IPAD_APP" ]; then
+  IPAD_APP=$(find "$IPAD_DERIVED_DATA" -name "RemoteDesktopApp.app" -path "*/Debug-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+fi
+if [ -z "$IPAD_APP" ] || [ ! -d "$IPAD_APP" ]; then
+  echo "ERROR: Could not find built iPad .app bundle"
+  exit 1
+fi
+
+# ---- Step 2: Install iPad app before runtime launch ----
+log_progress "=== [2/6] Installing iPad app ==="
+xcrun devicectl device install app \
+  --device "$IPAD_DEVICE_ID" \
+  "$IPAD_APP" \
+  > "$IPAD_INSTALL_LOG" 2>&1 &
+IPAD_INSTALL_PID=$!
+
+wait_for_job "$IPAD_INSTALL_PID" "iPad install" "$IPAD_INSTALL_LOG"
+IPAD_INSTALL_PID=""
+grep -E "(bundleID|error|ERROR)" "$IPAD_INSTALL_LOG" 2>/dev/null || true
+echo ""
 
 # ---- Step 3: Kill existing agents, generate TLS identity ----
 log_progress "=== [3/6] Preparing Mac agent ==="
@@ -170,56 +250,56 @@ rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
 log_progress "TLS identity generated"
 log_progress ""
 
-# ---- Step 4: Launch Mac agent in test mode ----
+# ---- Step 4: Start Mac log capture, then launch Mac agent ----
 log_progress "=== [4/6] Launching Mac agent in test mode ==="
-MAC_APP=$(find "$DERIVED_DATA" -path "*RemoteDesktopAgent*" -name "RemoteDesktopAgent.app" -path "*/Debug/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
-if [ -z "$MAC_APP" ]; then
-  echo "ERROR: Could not find built Mac .app bundle"
-  exit 1
-fi
-
 MAC_LAUNCH_ARGS="--test-mode"
 if [ -n "$TRANSPORT" ]; then
   MAC_LAUNCH_ARGS="$MAC_LAUNCH_ARGS --transport $TRANSPORT"
 fi
 
+# Stream Mac logs in background (capture all agent subsystems including ScreenCapture's com.keydrd)
+log stream --predicate "subsystem == '$MAC_SUBSYSTEM' OR subsystem BEGINSWITH 'com.keydrd'" --style compact > "$MAC_LOG_FILE" 2>&1 &
+MAC_LOG_PID=$!
+sleep 1
+
 "$MAC_APP/Contents/MacOS/RemoteDesktopAgent" $MAC_LAUNCH_ARGS &
 MAC_PID=$!
 echo "Mac agent PID: $MAC_PID"
 
-# Stream Mac logs in background (capture all agent subsystems including ScreenCapture's com.keydrd)
-log stream --predicate "subsystem == '$MAC_SUBSYSTEM' OR subsystem BEGINSWITH 'com.keydrd'" --style compact > "$MAC_LOG_FILE" 2>&1 &
-MAC_LOG_PID=$!
-
-# Wait for Mac to be ready and write the QR payload file
+# ---- Step 5: Wait for Mac to be ready and write the QR payload file ----
+log_progress "=== [5/6] Waiting for Mac QR readiness ==="
 echo "Waiting for Mac to write QR payload..."
 QR_PAYLOAD_B64=""
+SAW_QR_SHOWN_LOG=false
+SAW_QR_READY_LOG=false
 for i in $(seq 1 15); do
-  if [ -f /tmp/keydrd-test-qr.json ]; then
+  if [ "$SAW_QR_SHOWN_LOG" = false ] && grep -q "$QR_SHOWN_LOG" "$MAC_LOG_FILE" 2>/dev/null; then
+    log_progress "Mac log reported QR presentation"
+    SAW_QR_SHOWN_LOG=true
+  fi
+  if [ "$SAW_QR_READY_LOG" = false ] && grep -q "$QR_READY_LOG" "$MAC_LOG_FILE" 2>/dev/null; then
+    log_progress "Mac log reported QR payload file write"
+    SAW_QR_READY_LOG=true
+  fi
+  if [ -f "$QR_PAYLOAD_FILE" ]; then
     # Base64-encode the QR payload (single line, no wrapping) to pass to iPad
-    QR_PAYLOAD_B64=$(base64 -i /tmp/keydrd-test-qr.json | tr -d '\n')
-    echo "QR payload ready (waited ${i}s, b64 length: ${#QR_PAYLOAD_B64})"
-    break
+    QR_PAYLOAD_B64=$(base64 -i "$QR_PAYLOAD_FILE" | tr -d '\n')
+    if [ -n "$QR_PAYLOAD_B64" ]; then
+      echo "QR payload ready (waited ${i}s, b64 length: ${#QR_PAYLOAD_B64})"
+      break
+    fi
   fi
   if [ "$i" -eq 15 ]; then
     echo "ERROR: Mac did not write QR payload within 15s"
+    if [ "$SAW_QR_SHOWN_LOG" = true ] || [ "$SAW_QR_READY_LOG" = true ]; then
+      echo "Mac readiness logs were observed, but the payload file was not usable"
+    fi
     echo "--- Mac logs ---"
     tail -20 "$MAC_LOG_FILE" 2>/dev/null
     exit 1
   fi
   sleep 1
 done
-echo ""
-
-# ---- Step 5: Install and launch iPad app ----
-log_progress "=== [5/6] Installing iPad app ==="
-IPAD_APP=$(find "$DERIVED_DATA" -path "*RemoteDesktop*" -name "RemoteDesktopApp.app" -path "*/Debug-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
-if [ -z "$IPAD_APP" ]; then
-  echo "ERROR: Could not find built iPad .app bundle"
-  exit 1
-fi
-
-xcrun devicectl device install app --device "$IPAD_DEVICE_ID" "$IPAD_APP" 2>&1 | grep -E "(bundleID|error|ERROR)" || true
 echo ""
 
 log_progress "=== [6/6] Launching iPad in test mode ==="

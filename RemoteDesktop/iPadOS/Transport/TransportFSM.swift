@@ -68,10 +68,10 @@ enum TransportFSM {
                 return (current, [])
             }
             if current == .idle || current == .disconnected {
-                return (.usbNCM, [.bindUSBNCM, .switchEncodeLZ4, .notifyTransportChange])
+                return (.usbNCM, [.bindUSBNCM, .switchEncodeHEVC, .notifyTransportChange])
             }
             // From WiFi or AWDL: disconnect current, then bind USB
-            return (.usbNCM, [.disconnectCurrent, .bindUSBNCM, .switchEncodeLZ4, .notifyTransportChange])
+            return (.usbNCM, [.disconnectCurrent, .bindUSBNCM, .switchEncodeHEVC, .notifyTransportChange])
         }
 
         // Per-state transitions

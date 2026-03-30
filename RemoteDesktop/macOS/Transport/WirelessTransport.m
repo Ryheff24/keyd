@@ -283,7 +283,13 @@ static const char *kInputPortStr = "14568";
     }
     mediaSendCount++;
 
-    dispatch_data_t ddata = dispatch_data_create(data, len, _transportQueue,
+    /* Copy data — the caller (chunk_frame) frees the buffer after this returns.
+     * dispatch_data_create with DISPATCH_DATA_DESTRUCTOR_DEFAULT would double-free. */
+    void *copy = malloc(len);
+    if (!copy) return;
+    memcpy(copy, data, len);
+
+    dispatch_data_t ddata = dispatch_data_create(copy, len, _transportQueue,
                                                  DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     /* For DTLS/UDP, each datagram is a complete message.
      * is_complete=true is required (false gives "Operation not supported"). */

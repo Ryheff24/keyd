@@ -343,7 +343,13 @@ static const char *kInputPortStr = "14568";
     nw_connection_t conn = _mediaConnection;
     if (!conn) return;
 
-    dispatch_data_t ddata = dispatch_data_create(data, len, _transportQueue,
+    /* Copy data — the caller (chunk_frame) frees the buffer after this returns.
+     * dispatch_data_create with DISPATCH_DATA_DESTRUCTOR_DEFAULT would double-free. */
+    void *copy = malloc(len);
+    if (!copy) return;
+    memcpy(copy, data, len);
+
+    dispatch_data_t ddata = dispatch_data_create(copy, len, _transportQueue,
                                                  DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {

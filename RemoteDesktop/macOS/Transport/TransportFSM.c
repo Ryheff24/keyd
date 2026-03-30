@@ -45,7 +45,7 @@ TransportTransition transport_fsm_transition(TransportState current,
             /* No active connection to disconnect */
             return make_transition(TRANSPORT_USB_NCM, 3,
                 EFFECT_BIND_USB_NCM,
-                EFFECT_SWITCH_ENCODE_LZ4,
+                EFFECT_SWITCH_ENCODE_HEVC,
                 EFFECT_NOTIFY_TRANSPORT_CHANGE);
         }
         /* From WIFI or AWDL: disconnect current, then bind USB */

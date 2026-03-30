@@ -405,8 +405,12 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     };
 
     /* Start USB NCM first (primary transport).
-     * Only start WiFi after a delay if USB NCM isn't detected.
-     * Running both simultaneously causes port conflicts on ::14568. */
+     * Always start WiFi advertising after a delay. USB NCM listeners bind to
+     * a specific interface, and WiFi binds to :: with SO_REUSEADDR — no conflict.
+     * WiFi advertising must always be active so the iPad can:
+     *   1. Discover the Mac via Bonjour (_keydrd._tcp)
+     *   2. Fall back to WiFi if USB disconnects
+     *   3. Run WiFi rotation tests during E2E suite */
     [_usbTransport startMonitoring];
 
     __weak SessionManager *weakSelf2 = weakSelf;
@@ -414,12 +418,12 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
                    dispatch_get_main_queue(), ^{
         SessionManager *self2 = weakSelf2;
         if (!self2) return;
-        if (!self2->_usbTransport.isConnected) {
-            os_log(sLog, "USB NCM not connected after 3s — starting WiFi advertising");
-            [self2->_wirelessTransport startAdvertising];
+        if (self2->_usbTransport.isConnected) {
+            os_log(sLog, "USB NCM connected — starting WiFi advertising anyway (fallback + Bonjour)");
         } else {
-            os_log(sLog, "USB NCM connected — skipping WiFi advertising");
+            os_log(sLog, "USB NCM not connected after 3s — starting WiFi advertising");
         }
+        [self2->_wirelessTransport startAdvertising];
     });
 }
 
@@ -557,15 +561,15 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     /* Send session handshake (also sets _captureWidth/_captureHeight) */
     [self sendSessionHandshake];
 
-    /* Re-start HEVC encoder with correct dimensions if wireless (HEVC mode).
-     * USB uses LZ4 — don't start HEVC encoder for USB NCM transport. */
-    if (_usbTransport.isConnected) {
-        os_log(sLog, "USB NCM transport — using LZ4 mode (no HEVC encoder)");
-        [_hevcEncoder stop];
-    } else if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
-        os_log(sLog, "HEVC encoder already active — restarting with correct dimensions %ux%u",
-               _captureWidth, _captureHeight);
-        [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:20000000];
+    /* Re-start HEVC encoder with correct dimensions.
+     * Both USB and WiFi use HEVC — USB at higher bitrate (40Mbps) since
+     * the wired link can handle it, WiFi at 20Mbps. */
+    int bitrate = _usbTransport.isConnected ? 40000000 : 20000000;
+    if (_hevcEncoder.isActive && _captureWidth > 0 && _captureHeight > 0) {
+        os_log(sLog, "HEVC encoder active — restarting with %ux%u @%dMbps (%s)",
+               _captureWidth, _captureHeight, bitrate / 1000000,
+               _usbTransport.isConnected ? "USB" : "WiFi");
+        [_hevcEncoder startWithWidth:_captureWidth height:_captureHeight fps:120 bitrate:bitrate];
     } else if (!_hevcEncoder.isActive) {
         os_log(sLog, "HEVC encoder not active — check switchToHEVCMode");
     }
@@ -573,17 +577,10 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
     /* Set up frame delivery */
     [self configureFrameDelivery];
 
-    /* For USB NCM: clear onPixelBuffer AFTER configureFrameDelivery sets it.
-     * This forces ScreenCapture to use the LZ4 onFrame path instead of HEVC. */
-    if (_usbTransport.isConnected) {
-        _capture.onPixelBuffer = nil;
-        os_log(sLog, "Cleared onPixelBuffer for USB/LZ4 mode");
-    }
-
     /* For wireless: defer capture until DTLS media channel is ready.
      * HEVC frames are sent via UDP/DTLS — sending before the media
      * connection is established just drops frames silently. */
-    if (_wirelessTransport.isConnected) {
+    if (_wirelessTransport.isConnected && !_usbTransport.isConnected) {
         __weak SessionManager *weakSelf = self;
         _wirelessTransport.onMediaChannelReady = ^{
             SessionManager *strongSelf = weakSelf;
@@ -593,7 +590,7 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
             [strongSelf _beginCapture];
         };
     } else {
-        /* USB: start capture immediately (media goes via separate UDP on NCM) */
+        /* USB: DTLS media is already ready (accepted before onTransportConnected) */
         [self _beginCapture];
     }
 
@@ -741,19 +738,21 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 #pragma mark - Transport Send Helpers
 
 - (void)sendMediaFrameToiPad:(const void *)data length:(size_t)len {
+    /* Both USB NCM and WiFi use HEVC + UDP chunking.
+     * HEVC frames are 10-200KB, chunked into 1400-byte DTLS datagrams.
+     * iPad reassembles via UDPReassembler. */
+    if (len < sizeof(MediaFrameHeader)) return;
+
+    const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
+    const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
+    size_t payloadLen = len - sizeof(MediaFrameHeader);
+
     if (_usbTransport.isConnected) {
-        [_usbTransport sendMediaFrame:data length:len];
+        /* USB NCM: send HEVC frames via TCP for reliable delivery.
+         * UDP/DTLS over USB NCM drops most packets when sending rapid-fire
+         * small datagrams (driver buffer overflow). TCP handles flow control. */
+        [_usbTransport sendInputEvent:data length:len];
     } else if (_wirelessTransport.isConnected) {
-        /* Chunk the frame for UDP/DTLS transport. HEVC frames can be 10-200KB+
-         * which exceeds UDP MTU. UDPChunker splits into MTU-sized packets,
-         * each with its own MediaFrameHeader. iPad reassembles via UDPReassembler.
-         * uint16_t chunk_total supports up to 65535 chunks. */
-        if (len < sizeof(MediaFrameHeader)) return;
-
-        const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
-        const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
-        size_t payloadLen = len - sizeof(MediaFrameHeader);
-
         WirelessTransport *transport = _wirelessTransport;
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
@@ -1076,6 +1075,15 @@ static const int kEcoBitrate = 8000000; /* 8 Mbps */
 
     /* Revert resolution on disconnect */
     [self revertDisplayMode];
+
+    /* Ensure WiFi advertising is active so the iPad can reconnect wirelessly.
+     * If USB connected first during startTransportMonitoring, WiFi advertising
+     * was skipped. Start it now so transport rotation tests (and real reconnections)
+     * can discover the Mac over WiFi/AWDL. */
+    if (!_wirelessTransport.isConnected) {
+        os_log(sLog, "Starting WiFi advertising for reconnection (may have been skipped earlier)");
+        [_wirelessTransport startAdvertising];
+    }
 
     _reconnectAttempt = 0;
     [self scheduleReconnect];
