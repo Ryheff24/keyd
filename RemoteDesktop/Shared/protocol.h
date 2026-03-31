@@ -44,6 +44,7 @@ _Static_assert(sizeof(MediaFrameHeader) == 25,
 #define KEYDRD_INPUT_RES_MATCH_RESPONSE   0x22  /* Mac -> iPad: resolution match result */
 #define KEYDRD_INPUT_GEOMETRY_UPDATE      0x23  /* Mac -> iPad: new display geometry */
 #define KEYDRD_INPUT_VIEWPORT_REPORT     0x24  /* iPad -> Mac: viewport pixel dimensions */
+#define KEYDRD_INPUT_PEER_ADDRESS_UPDATE 0x25  /* Mac -> iPad: new USB NCM IP before transport switch */
 #define KEYDRD_INPUT_KEEPALIVE            0x30
 #define KEYDRD_INPUT_CLOCK_SYNC_REQ       0xFE  /* iPad -> Mac: Cristian's algorithm probe */
 #define KEYDRD_INPUT_CLOCK_SYNC_RESP      0xFD  /* Mac -> iPad: clock sync response */

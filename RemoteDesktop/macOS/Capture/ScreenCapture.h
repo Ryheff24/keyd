@@ -72,6 +72,13 @@ typedef void (^ScreenCaptureReauthCallback)(void);
  */
 - (void)stopCapture;
 
+/*
+ * Update capture resolution on a running stream (no stop/start needed).
+ * Uses SCStream.updateConfiguration to avoid Sequoia re-authorization prompts.
+ * Safe to call while capturing. No-op if not currently capturing.
+ */
+- (void)updateCaptureResolution:(uint32_t)width height:(uint32_t)height;
+
 @end
 
 NS_ASSUME_NONNULL_END

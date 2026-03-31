@@ -26,6 +26,9 @@ NS_ASSUME_NONNULL_BEGIN
 /** The active USB NCM interface (nil if none detected). */
 @property (nonatomic, readonly, nullable) nw_interface_t activeInterface;
 
+/** The Mac's current USB NCM link-local IP (e.g. "169.254.180.202"). */
+@property (nonatomic, readonly, nullable) NSString *localIPAddress;
+
 /** The Mac's TLS identity (SecIdentityRef) used as server identity for all listeners. */
 @property (nonatomic, nullable) SecIdentityRef tlsIdentity;
 

@@ -113,6 +113,7 @@ enum InputEventType: UInt8 {
     case resMatchRequest    = 0x21  // iPad -> Mac: request resolution match
     case resMatchResponse   = 0x22  // Mac -> iPad: resolution match result
     case viewportReport     = 0x24  // iPad -> Mac: viewport pixel dimensions
+    case peerAddressUpdate  = 0x25  // Mac -> iPad: new USB NCM IP before transport switch
     case geometryUpdate     = 0x23  // Mac -> iPad: new display geometry
     case keepalive          = 0x30
     case clockSyncReq       = 0xFE  // iPad -> Mac: Cristian's algorithm probe

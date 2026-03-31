@@ -37,6 +37,10 @@ static const char *kInputPortStr = "14568";
 
 @implementation USBNetworkTransport
 
+- (NSString *)localIPAddress {
+    return _detectedLocalIP;
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -291,13 +295,14 @@ static const char *kInputPortStr = "14568";
 
     os_log(transport_log(), "Starting USB NCM interface polling via getifaddrs (TLS/DTLS enabled)");
 
-    /* Poll every 2 seconds for USB NCM interface appearance/disappearance.
-     * NWPathMonitor cannot detect these interfaces (link-local only, no routes). */
+    /* Poll every 500ms for USB NCM interface appearance/disappearance.
+     * NWPathMonitor cannot detect these interfaces (link-local only, no routes).
+     * Fast polling for quick transport handoff (WiFi→USB in <2s). */
     _pollTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _monitorQueue);
     dispatch_source_set_timer(_pollTimer,
                               DISPATCH_TIME_NOW,
-                              2 * NSEC_PER_SEC,
-                              500 * NSEC_PER_MSEC);
+                              500 * NSEC_PER_MSEC,
+                              100 * NSEC_PER_MSEC);
 
     __weak USBNetworkTransport *weakSelf = self;
     dispatch_source_set_event_handler(_pollTimer, ^{

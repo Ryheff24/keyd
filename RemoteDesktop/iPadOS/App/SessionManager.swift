@@ -68,8 +68,8 @@ final class SessionManager {
 
     private var reconnectAttempt: Int = 0
     private var reconnectTimer: Timer?
-    private static let maxReconnectDelay: TimeInterval = 8.0
-    private static let baseReconnectDelay: TimeInterval = 0.5
+    private static let maxReconnectDelay: TimeInterval = 2.0
+    private static let baseReconnectDelay: TimeInterval = 0.25
 
     // MARK: - Test Mode
 
@@ -263,6 +263,23 @@ final class SessionManager {
         hudViewModel.resetAutoHideTimer()
     }
 
+    // MARK: - Peer Address Update
+
+    /// Mac sends its new USB NCM IP before switching from WiFi to USB.
+    /// Update the USB transport peer address so reconnection uses the correct IP.
+    private func handlePeerAddressUpdate(_ data: Data) {
+        let payloadData = data.dropFirst(InputEventHeader.size)
+        guard let ipString = String(data: payloadData, encoding: .utf8)?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) else {
+            return
+        }
+        guard !ipString.isEmpty else { return }
+
+        print("[CONSOLE] Peer address update from Mac: \(ipString)")
+        Self.log.info("Updating USB peer address to \(ipString) (Mac switching to USB NCM)")
+        usbTransport.setPeerAddress(ipString)
+    }
+
     // MARK: - Viewport Report
 
     /// Compute the actual rendered viewport in pixels, matching MetalRenderer.computeViewport logic.
@@ -354,11 +371,11 @@ final class SessionManager {
         // Start USB NCM monitoring (primary transport).
         usbTransport.startMonitoring()
 
-        // Always start WiFi browsing after a short delay — needed as fallback
-        // when USB disconnects. The FSM handles priority (USB preempts WiFi).
-        // The Mac advertises Bonjour on all interfaces, so no port conflict
-        // on the iPad side (iPad is a connector, not a listener).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        // Start WiFi browsing as fallback. If USB is already detected, start
+        // immediately (the FSM handles priority). Otherwise delay 1s to let
+        // USB detection run first.
+        let wifiDelay: TimeInterval = usbTransport.isConnected ? 0 : 1.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + wifiDelay) { [weak self] in
             guard let self = self else { return }
             print("[CONSOLE] Starting WiFi browsing (background fallback)")
             self.wirelessTransport.startBrowsing()
@@ -651,6 +668,9 @@ final class SessionManager {
         case InputEventType.geometryUpdate.rawValue:
             handleGeometryUpdate(data)
 
+        case 0x25: // KEYDRD_INPUT_PEER_ADDRESS_UPDATE
+            handlePeerAddressUpdate(data)
+
         default:
             Self.log.debug("Unhandled input event type: 0x\(String(header.type, radix: 16))")
         }
@@ -659,23 +679,29 @@ final class SessionManager {
     // MARK: - Private: Latency Probe
 
     private func startLatencyProbeTimer() {
-        latencyProbeTimer?.invalidate()
-        latencyProbeTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.latencyProbeInterval,
-            repeats: true
-        ) { [weak self] _ in
-            self?.sendLatencyProbe()
+        DispatchQueue.main.async {
+            self.latencyProbeTimer?.invalidate()
+            print("[CONSOLE] startLatencyProbeTimer: scheduling on main run loop, state=\(self.state.rawValue), interval=\(Self.latencyProbeInterval)s")
+            let timer = Timer(timeInterval: Self.latencyProbeInterval, repeats: true) { [weak self] _ in
+                self?.sendLatencyProbe()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.latencyProbeTimer = timer
         }
     }
 
     /// Send a latency probe to Mac. Mac echoes it back immediately.
     /// Round-trip time / 2 = one-way latency estimate.
     private func sendLatencyProbe() {
-        guard state == .streaming else { return }
+        guard state == .streaming else {
+            print("[CONSOLE] sendLatencyProbe: skipped, state=\(state.rawValue)")
+            return
+        }
 
         let timestamp = currentTimestampUs()
         let header = InputEventHeader(type: InputEventType.latencyProbe.rawValue, tsUs: timestamp)
         let data = header.serialize()
+        print("[CONSOLE] sendLatencyProbe: sending tsUs=\(timestamp), usbConnected=\(usbTransport.isConnected), wifiConnected=\(wirelessTransport.isConnected)")
         sendInputEventToMac(data)
     }
 
@@ -684,6 +710,8 @@ final class SessionManager {
         let now = currentTimestampUs()
         let roundTripUs = now - header.tsUs
         let oneWayMs = Int(roundTripUs / 2000)  // microseconds -> milliseconds, halved
+
+        print("[CONSOLE] handleLatencyProbeResponse: now=\(now), sent=\(header.tsUs), rttUs=\(roundTripUs), oneWayMs=\(oneWayMs)")
 
         DispatchQueue.main.async {
             self.hudViewModel.updateLatency(oneWayMs)
@@ -750,18 +778,30 @@ final class SessionManager {
             return
         }
 
-        Self.log.info("Geometry update: \(geo.displayWidth)x\(geo.displayHeight)@\(geo.scaleFactor)x")
+        let oldW = macDisplayWidth
+        let oldH = macDisplayHeight
 
         macDisplayWidth = Int(geo.displayWidth)
         macDisplayHeight = Int(geo.displayHeight)
         macScaleFactor = geo.scaleFactor
 
+        print("[CONSOLE] Geometry update: \(oldW)x\(oldH) -> \(macDisplayWidth)x\(macDisplayHeight)@\(macScaleFactor)x")
+        Self.log.info("Geometry update: \(geo.displayWidth)x\(geo.displayHeight)@\(geo.scaleFactor)x")
+
         // Reinitialize LZ4 decompressor with new frame size
         let frameBytes = macDisplayWidth * macDisplayHeight * 4
         lz4Decompressor = LZ4Decompressor(frameBytes: frameBytes)
 
-        // Recalculate MetalRenderer viewport
+        // Recalculate MetalRenderer viewport with new Mac dimensions.
+        // This uses the actual capture dimensions from Mac (which may differ slightly
+        // from the viewport we reported, e.g. after display mode match).
         metalRenderer.setMacDisplaySize(width: macDisplayWidth, height: macDisplayHeight)
+
+        // Update stored viewport dimensions to match the new capture dims.
+        // Do NOT send a new viewport report back to Mac — that would create a loop.
+        // The Mac has already matched its display mode and is encoding at these dims.
+        viewportWidth = macDisplayWidth
+        viewportHeight = macDisplayHeight
 
         // Update HUD resolution display
         DispatchQueue.main.async {
@@ -799,13 +839,19 @@ final class SessionManager {
 
     /// Start a timer that updates the HUD FPS display every second.
     private func startFPSUpdateTimer() {
-        fpsUpdateTimer?.invalidate()
-        fpsUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            let currentFPS = self.computeCurrentFPS()
-            DispatchQueue.main.async {
-                self.hudViewModel.updateFPS(currentFPS)
+        DispatchQueue.main.async {
+            self.fpsUpdateTimer?.invalidate()
+            print("[CONSOLE] startFPSUpdateTimer: scheduling on main run loop, state=\(self.state.rawValue), frameTimestamps=\(self.frameTimestamps.count)")
+            let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                let currentFPS = self.computeCurrentFPS()
+                print("[CONSOLE] fpsTimerTick: frameTimestamps=\(self.frameTimestamps.count), computedFPS=\(currentFPS), state=\(self.state.rawValue)")
+                DispatchQueue.main.async {
+                    self.hudViewModel.updateFPS(currentFPS)
+                }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            self.fpsUpdateTimer = timer
         }
     }
 

@@ -15,11 +15,13 @@ final class UDPReassembler {
     /// If exceeded, the oldest incomplete sequence is dropped.
     /// Must be large enough to handle multiple in-flight chunked HEVC frames
     /// (a 100KB keyframe at 1400B MTU = 71 chunks, takes ~50ms over WiFi).
-    static let maxConcurrentSequences = 32
+    /// Raised from 32 to 128 to tolerate WiFi jitter without false evictions.
+    static let maxConcurrentSequences = 128
 
     /// Timeout for incomplete frames (seconds). Stale partial frames are dropped.
-    /// WiFi jitter can delay individual chunks by 50-200ms; too short = false drops.
-    static let frameTimeoutInterval: TimeInterval = 0.5  // 500ms
+    /// WiFi jitter can delay individual chunks by 100-300ms; 2s is generous enough
+    /// to avoid false purges while still bounding memory usage.
+    static let frameTimeoutInterval: TimeInterval = 2.0  // 2000ms (was 500ms)
 
     // MARK: - Types
 
@@ -62,6 +64,18 @@ final class UDPReassembler {
     private(set) var framesPurged = 0    // dropped due to timeout
     private(set) var framesDelivered = 0 // successfully reassembled + delivered
     private(set) var chunksReceived = 0  // total chunks processed
+
+    /// In-order delivery: track last delivered sequence to avoid visual glitches
+    /// from out-of-order frame completion.
+    private var lastDeliveredSeq: UInt16 = 0
+    private var hasDeliveredFirstFrame = false
+    private var outOfOrderBuffer: [UInt16: Data] = [:]
+
+    /// Stats logging interval counter (counts purge timer ticks).
+    private var statsTickCount = 0
+    /// Number of purge timer intervals between stats logs.
+    /// purgeTimer fires every frameTimeoutInterval (2s), so 3 ticks = 6 seconds.
+    private static let statsLogInterval = 3
 
     // MARK: - Init
 
@@ -150,19 +164,15 @@ final class UDPReassembler {
 
     // MARK: - Private
 
-    /// Reassemble and deliver a complete frame.
-    private func deliverCompleteFrame(seq: UInt16, pending: PendingFrame) {
-        // Remove from tracking
-        pendingFrames.removeValue(forKey: seq)
-        insertionOrder.removeAll { $0 == seq }
-
+    /// Reassemble a complete frame into deliverable data.
+    private func buildFrameData(seq: UInt16, pending: PendingFrame) -> Data? {
         // Reassemble payload in chunk_idx order
         var fullPayload = Data()
         for i in 0..<pending.chunkTotal {
             guard let chunk = pending.chunks[i] else {
                 // Should not happen if isComplete is true, but guard anyway
                 print("[CONSOLE] UDPReassembler: missing chunk \(i) for seq=\(seq) during reassembly")
-                return
+                return nil
             }
             fullPayload.append(chunk)
         }
@@ -172,7 +182,7 @@ final class UDPReassembler {
             // If we never received chunk 0's header, use a fallback
             // This shouldn't happen in practice since isComplete requires all chunks
             print("[CONSOLE] UDPReassembler: no first chunk header for seq=\(seq)")
-            return
+            return nil
         }
 
         // Create a new header with chunk_idx=0, chunk_total=1, full payload size, LAST_CHUNK flag
@@ -189,14 +199,100 @@ final class UDPReassembler {
 
         var frameData = reconstructedHeader.serialize()
         frameData.append(fullPayload)
+        return frameData
+    }
+
+    /// Reassemble and deliver a complete frame, respecting in-order delivery.
+    private func deliverCompleteFrame(seq: UInt16, pending: PendingFrame) {
+        // Remove from tracking
+        pendingFrames.removeValue(forKey: seq)
+        insertionOrder.removeAll { $0 == seq }
 
         reassembledCount += 1
-        framesDelivered += 1
         if reassembledCount <= 3 {
-            print("[CONSOLE] UDPReassembler: reassembled seq=\(seq), \(pending.chunkTotal) chunks -> \(fullPayload.count) bytes")
+            print("[CONSOLE] UDPReassembler: reassembled seq=\(seq), \(pending.chunkTotal) chunks -> \(pending.chunks.values.reduce(0) { $0 + $1.count }) bytes")
         }
 
-        onFrameReassembled?(frameData)
+        guard let frameData = buildFrameData(seq: seq, pending: pending) else { return }
+
+        // In-order delivery logic
+        if !hasDeliveredFirstFrame {
+            // First frame ever — deliver immediately and set baseline
+            hasDeliveredFirstFrame = true
+            lastDeliveredSeq = seq
+            framesDelivered += 1
+            onFrameReassembled?(frameData)
+            drainOutOfOrderBuffer()
+            return
+        }
+
+        let distance = seqDistance(from: lastDeliveredSeq, to: seq)
+
+        if distance == 0 || distance > 32768 {
+            // distance == 0: duplicate of last delivered frame
+            // distance > 32768: seq is BEHIND lastDeliveredSeq (wrapped backward), old/stale frame
+        } else if distance == 1 {
+            // Next in sequence — deliver immediately
+            lastDeliveredSeq = seq
+            framesDelivered += 1
+            onFrameReassembled?(frameData)
+            drainOutOfOrderBuffer()
+        } else if distance <= 10 {
+            // Slightly ahead (2-10 frames) — buffer and wait for gap to fill
+            outOfOrderBuffer[seq] = frameData
+            // Also check if out-of-order buffer is overflowing
+            if outOfOrderBuffer.count > 10 {
+                flushOutOfOrderBuffer()
+            }
+        } else {
+            // Gap > 10 frames — assume intermediate frames lost, skip ahead
+            flushOutOfOrderBuffer()
+            lastDeliveredSeq = seq
+            framesDelivered += 1
+            onFrameReassembled?(frameData)
+        }
+    }
+
+    /// Deliver consecutive frames from the out-of-order buffer.
+    private func drainOutOfOrderBuffer() {
+        while true {
+            let nextSeq = lastDeliveredSeq &+ 1
+            guard let frameData = outOfOrderBuffer.removeValue(forKey: nextSeq) else { break }
+            lastDeliveredSeq = nextSeq
+            framesDelivered += 1
+            onFrameReassembled?(frameData)
+        }
+    }
+
+    /// Flush all out-of-order buffered frames in sequence order (gap exceeded).
+    private func flushOutOfOrderBuffer() {
+        let sorted = outOfOrderBuffer.keys.sorted { seqDistance(from: lastDeliveredSeq, to: $0) < seqDistance(from: lastDeliveredSeq, to: $1) }
+        for seq in sorted {
+            if let frameData = outOfOrderBuffer.removeValue(forKey: seq) {
+                lastDeliveredSeq = seq
+                framesDelivered += 1
+                onFrameReassembled?(frameData)
+            }
+        }
+    }
+
+    /// Compute forward distance between two wrapping UInt16 sequence numbers.
+    /// Returns a value in [0, 65535]. A result > 32768 means `to` is behind `from`.
+    private func seqDistance(from a: UInt16, to b: UInt16) -> UInt16 {
+        return b &- a
+    }
+
+    /// Returns current loss rate (0.0 to 1.0) and resets counters for the next window.
+    func consumeLossRate() -> Float {
+        let total = framesDelivered + framesEvicted + framesPurged
+        guard total > 0 else { return 0 }
+        let lost = framesEvicted + framesPurged
+        let rate = Float(lost) / Float(total)
+        // Reset for next window
+        framesDelivered = 0
+        framesEvicted = 0
+        framesPurged = 0
+        return rate
     }
 
     /// Evict the oldest pending frame to make room for a new one.
@@ -233,6 +329,17 @@ final class UDPReassembler {
             print("[CONSOLE] UDPReassembler: PURGED seq=\(seq) (\(received)/\(total) chunks, age=\(String(format: "%.0f", (now - (pending?.createdAt ?? now)) * 1000))ms, total purged=\(framesPurged))")
             pendingFrames.removeValue(forKey: seq)
             insertionOrder.removeAll { $0 == seq }
+        }
+
+        // Periodic stats logging (every statsLogInterval purge ticks)
+        statsTickCount += 1
+        if statsTickCount >= Self.statsLogInterval {
+            statsTickCount = 0
+            let total = framesDelivered + framesEvicted + framesPurged
+            if total > 0 {
+                let lossRate = Float(framesEvicted + framesPurged) / Float(total)
+                print("[CONSOLE] UDPReassembler stats: delivered=\(framesDelivered) evicted=\(framesEvicted) purged=\(framesPurged) loss=\(String(format: "%.1f", lossRate * 100))% ooo_buffered=\(outOfOrderBuffer.count) pending=\(pendingFrames.count)")
+            }
         }
     }
 }

@@ -272,7 +272,7 @@ final class USBNetworkTransport {
         log.info("Starting USB NCM interface polling via getifaddrs")
 
         let timer = DispatchSource.makeTimerSource(queue: monitorQueue)
-        timer.schedule(deadline: .now(), repeating: .seconds(2), leeway: .milliseconds(500))
+        timer.schedule(deadline: .now(), repeating: .milliseconds(500), leeway: .milliseconds(100))
 
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
@@ -497,10 +497,10 @@ final class USBNetworkTransport {
                 self.inputConnection = nil
                 if self.mediaConnection == nil { self.isConnected = false }
             case .waiting(let error):
-                print("[CONSOLE] USBTransport: TLS input WAITING: \(error) — will retry in 2s")
+                print("[CONSOLE] USBTransport: TLS input WAITING: \(error) — will retry in 0.5s")
                 // NWConnection retry for link-local TCP is unreliable.
-                // Cancel and reconnect after a delay.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                // Cancel and reconnect after a short delay.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self, self.detectedLocalIP != nil, self.detectedMacIP != nil else { return }
                     if self.inputConnection?.state != .ready {
                         print("[CONSOLE] USBTransport: retrying TCP connection")

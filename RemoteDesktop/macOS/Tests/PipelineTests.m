@@ -545,7 +545,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
         [encodedExpect fulfill];
     };
 
-    [encoder startWithWidth:640 height:480 fps:30 bitrate:2000000];
+    [encoder startWithWidth:640 height:480 fps:30 bitrate:2000000 quality:0];
     XCTAssertTrue(encoder.isActive, @"Encoder must be active after start");
 
     /* Create BGRA CVPixelBuffer with gradient pattern */
@@ -595,7 +595,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
         }
     };
 
-    [encoder startWithWidth:640 height:480 fps:30 bitrate:2000000];
+    [encoder startWithWidth:640 height:480 fps:30 bitrate:2000000 quality:0];
 
     IOSurfaceRef surface = createTestSurface(640, 480);
     IOSurfaceLock(surface, 0, NULL);
@@ -1197,7 +1197,7 @@ static CMSampleBufferRef createFakeSampleBuffer(IOSurfaceRef surface, CMTime pts
         }
     };
 
-    [encoder startWithWidth:64 height:64 fps:30 bitrate:500000];
+    [encoder startWithWidth:64 height:64 fps:30 bitrate:500000 quality:0];
     XCTAssertTrue(encoder.isActive);
 
     /* Create deterministic BGRA gradient */
@@ -1643,7 +1643,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
         }
     };
 
-    [encoder startWithWidth:128 height:128 fps:30 bitrate:500000];
+    [encoder startWithWidth:128 height:128 fps:30 bitrate:500000 quality:0];
 
     IOSurfaceRef surface = createTestSurface(128, 128);
     IOSurfaceLock(surface, 0, NULL);
@@ -1923,7 +1923,7 @@ static void hevcKeyframeCallback(void *refcon, void *srcRefcon, OSStatus status,
         }
     };
 
-    [encoder startWithWidth:(int)W height:(int)H fps:30 bitrate:500000];
+    [encoder startWithWidth:(int)W height:(int)H fps:30 bitrate:500000 quality:0];
 
     IOSurfaceRef hevcSurface = createTestSurface(W, H);
     IOSurfaceLock(hevcSurface, 0, NULL);

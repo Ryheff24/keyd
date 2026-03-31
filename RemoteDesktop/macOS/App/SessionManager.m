@@ -443,6 +443,13 @@ static uint64_t keydrd_host_time_us(void) {
     os_log(sLog, "Transport event: %{public}s (current state: %{public}s)",
            transport_event_name(event), transport_state_name(_transportState));
 
+    /* Before WiFi→USB transition, tell iPad the Mac's new USB NCM IP
+     * so it can update its peer address before WiFi drops. */
+    if (event == TRANSPORT_EVT_WIRED_APPEARED &&
+        (_transportState == TRANSPORT_WIFI || _transportState == TRANSPORT_AWDL)) {
+        [self sendPeerAddressUpdate];
+    }
+
     TransportTransition transition = transport_fsm_transition(_transportState, event);
     _transportState = transition.next_state;
 
@@ -854,7 +861,202 @@ static uint64_t keydrd_host_time_us(void) {
     }
 }
 
+#pragma mark - Peer Address Update (Mac → iPad)
+
+- (void)sendPeerAddressUpdate {
+    /* Get Mac's USB NCM IP from the USB transport */
+    NSString *usbIP = _usbTransport.localIPAddress;
+    if (!usbIP || usbIP.length == 0) {
+        os_log(sLog, "sendPeerAddressUpdate: no USB NCM IP available");
+        return;
+    }
+
+    os_log(sLog, "Sending peer address update to iPad: %{public}@ (before WiFi→USB switch)", usbIP);
+
+    const char *ipCStr = [usbIP UTF8String];
+    size_t ipLen = strlen(ipCStr) + 1; /* include null terminator */
+    size_t totalLen = sizeof(InputEventHeader) + ipLen;
+
+    uint8_t *packet = malloc(totalLen);
+    if (!packet) return;
+
+    InputEventHeader header;
+    header.type = KEYDRD_INPUT_PEER_ADDRESS_UPDATE;
+    header.ts_us = [self currentTimestampUs];
+
+    memcpy(packet, &header, sizeof(InputEventHeader));
+    memcpy(packet + sizeof(InputEventHeader), ipCStr, ipLen);
+
+    /* Send over whatever transport is alive (WiFi at this point) */
+    [self sendInputEventToiPad:packet length:totalLen];
+    free(packet);
+}
+
 #pragma mark - Viewport Report (iPad → Mac)
+
+- (void)_autoMatchDisplayModeForViewport {
+    if (_viewportWidth == 0 || _viewportHeight == 0) return;
+
+    CGDirectDisplayID mainDisplay = CGMainDisplayID();
+
+    /* Store current display mode for revert on disconnect (if not already stored) */
+    if (!_resolutionChanged) {
+        CGDisplayModeRef currentMode = CGDisplayCopyDisplayMode(mainDisplay);
+        if (currentMode) {
+            if (_storedDisplayMode) {
+                CGDisplayModeRelease(_storedDisplayMode);
+            }
+            _storedDisplayMode = currentMode;
+            /* Don't release — we keep it for revert */
+        }
+    }
+
+    /* Get all available display modes */
+    CFArrayRef allModes = CGDisplayCopyAllDisplayModes(mainDisplay, NULL);
+    if (!allModes) {
+        os_log_error(sLog, "_autoMatchDisplayModeForViewport: failed to get display modes");
+        return;
+    }
+
+    /* Find the BEST display mode for remote desktop:
+     *
+     * PRIORITY: HiDPI (Retina) modes >> 1x modes.
+     * A 2x mode at 2880x1864 with slight SCStream downscale (0.96x) gives FAR better
+     * text quality than a 1x mode at 2704x1756 where macOS renders text without HiDPI.
+     *
+     * Algorithm:
+     * 1. First pass: find closest HiDPI mode (pixel width > logical width) where
+     *    pixel width >= 85% of viewport width.
+     * 2. If no HiDPI mode qualifies, fall back to closest 1x mode.
+     * 3. Among qualifying modes, pick the one whose pixel count is closest to viewport
+     *    (prefer modes >= viewport to avoid upscale, but accept smaller within 15% DPI). */
+    uint32_t vpW = _viewportWidth;
+    uint32_t vpH = _viewportHeight;
+    size_t vpPixelCount = (size_t)vpW * (size_t)vpH;
+    float minWidth = 0.85f * (float)vpW;
+
+    CGDisplayModeRef bestHiDPI = NULL;
+    size_t bestHiDPIDiff = SIZE_MAX;
+    size_t bestHiDPIPixelW = 0, bestHiDPIPixelH = 0;
+
+    CGDisplayModeRef best1x = NULL;
+    size_t best1xDiff = SIZE_MAX;
+    size_t best1xPixelW = 0, best1xPixelH = 0;
+
+    /* Also check the current mode — maybe it's already optimal */
+    CGDisplayModeRef currentMode = CGDisplayCopyDisplayMode(mainDisplay);
+    size_t currentPixelW = 0, currentPixelH = 0;
+    float currentScale = 1.0f;
+    if (currentMode) {
+        currentPixelW = CGDisplayModeGetPixelWidth(currentMode);
+        currentPixelH = CGDisplayModeGetPixelHeight(currentMode);
+        size_t currentLogW = CGDisplayModeGetWidth(currentMode);
+        currentScale = (currentLogW > 0) ? (float)currentPixelW / (float)currentLogW : 1.0f;
+        CGDisplayModeRelease(currentMode);
+    }
+
+    CFIndex modeCount = CFArrayGetCount(allModes);
+    os_log(sLog, "_autoMatchDisplayModeForViewport: scanning %ld modes for viewport %ux%u (minWidth=%.0f, currentScale=%.1f)",
+           (long)modeCount, vpW, vpH, minWidth, currentScale);
+
+    for (CFIndex i = 0; i < modeCount; i++) {
+        CGDisplayModeRef mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(allModes, i);
+        size_t modeW = CGDisplayModeGetPixelWidth(mode);
+        size_t modeH = CGDisplayModeGetPixelHeight(mode);
+        size_t modeLogW = CGDisplayModeGetWidth(mode);
+
+        if (modeW == 0 || modeH == 0) continue;
+
+        /* DPI constraint: pixel width must be >= 85% of viewport width */
+        if ((float)modeW < minWidth) continue;
+
+        /* Determine if this is a HiDPI (Retina) mode */
+        BOOL isHiDPI = (modeLogW > 0 && modeW > modeLogW);
+
+        /* Compute difference from viewport pixel count */
+        size_t modePixelCount = modeW * modeH;
+        size_t diff = (modePixelCount > vpPixelCount)
+            ? (modePixelCount - vpPixelCount)
+            : (vpPixelCount - modePixelCount);
+
+        if (isHiDPI) {
+            if (diff < bestHiDPIDiff) {
+                bestHiDPI = mode;
+                bestHiDPIDiff = diff;
+                bestHiDPIPixelW = modeW;
+                bestHiDPIPixelH = modeH;
+            }
+        } else {
+            if (diff < best1xDiff) {
+                best1x = mode;
+                best1xDiff = diff;
+                best1xPixelW = modeW;
+                best1xPixelH = modeH;
+            }
+        }
+    }
+
+    /* Prefer HiDPI mode; fall back to 1x only if no HiDPI available */
+    CGDisplayModeRef bestMode;
+    size_t bestPixelWidth, bestPixelHeight;
+    if (bestHiDPI) {
+        bestMode = bestHiDPI;
+        bestPixelWidth = bestHiDPIPixelW;
+        bestPixelHeight = bestHiDPIPixelH;
+        os_log(sLog, "_autoMatchDisplayModeForViewport: selected HiDPI mode %zux%zu (diff=%zu from viewport)",
+               bestPixelWidth, bestPixelHeight, bestHiDPIDiff);
+    } else if (best1x) {
+        bestMode = best1x;
+        bestPixelWidth = best1xPixelW;
+        bestPixelHeight = best1xPixelH;
+        os_log(sLog, "_autoMatchDisplayModeForViewport: no HiDPI mode, using 1x mode %zux%zu",
+               bestPixelWidth, bestPixelHeight);
+    } else {
+        bestMode = NULL;
+        bestPixelWidth = 0;
+        bestPixelHeight = 0;
+    }
+
+    if (!bestMode) {
+        os_log(sLog, "_autoMatchDisplayModeForViewport: no suitable mode found");
+        CFRelease(allModes);
+        return;
+    }
+
+    /* Check if the best mode differs from the current display mode */
+    if (bestPixelWidth == currentPixelW && bestPixelHeight == currentPixelH) {
+        os_log(sLog, "_autoMatchDisplayModeForViewport: current mode %zux%zu already optimal",
+               currentPixelW, currentPixelH);
+        CFRelease(allModes);
+        return;
+    }
+
+    /* Read logical width BEFORE releasing allModes (bestMode belongs to allModes) */
+    size_t bestLogicalWidth = CGDisplayModeGetWidth(bestMode);
+
+    /* Switch display mode */
+    os_log(sLog, "_autoMatchDisplayModeForViewport: switching %zux%zu -> %zux%zu (viewport: %ux%u)",
+           currentPixelW, currentPixelH, bestPixelWidth, bestPixelHeight, vpW, vpH);
+
+    CGError err = CGDisplaySetDisplayMode(mainDisplay, bestMode, NULL);
+    CFRelease(allModes);
+
+    if (err != kCGErrorSuccess) {
+        os_log_error(sLog, "_autoMatchDisplayModeForViewport: CGDisplaySetDisplayMode failed: %d", err);
+        return;
+    }
+
+    _resolutionChanged = YES;
+
+    /* Update capture dimensions to the new native pixel dimensions.
+     * SCStream will capture at 1:1 (no downscale blur). */
+    _captureWidth = (uint32_t)bestPixelWidth;
+    _captureHeight = (uint32_t)bestPixelHeight;
+    _captureScale = (bestLogicalWidth > 0) ? (float)bestPixelWidth / (float)bestLogicalWidth : 2.0f;
+
+    os_log(sLog, "_autoMatchDisplayModeForViewport: display mode changed to %ux%u @%.1fx",
+           _captureWidth, _captureHeight, _captureScale);
+}
 
 - (void)handleViewportReport:(const void *)data length:(size_t)length {
     if (length < sizeof(InputEventHeader) + sizeof(ViewportReportPayload)) {
@@ -872,7 +1074,13 @@ static uint64_t keydrd_host_time_us(void) {
     os_log(sLog, "iPad viewport report: %ux%u (Mac display: %ux%u)",
            _viewportWidth, _viewportHeight, _captureWidth, _captureHeight);
 
-    /* Start encoder + reconfigure capture at viewport resolution */
+    /* Try to match display mode to viewport resolution.
+     * This eliminates SCStream downscale blur by capturing at native 1:1 pixels.
+     * If a suitable mode is found, _captureWidth/_captureHeight are updated to
+     * the new native dimensions before the encoder starts. */
+    [self _autoMatchDisplayModeForViewport];
+
+    /* Start encoder + reconfigure capture at the (possibly updated) resolution */
     [self _startEncoderAtViewportResolution];
 }
 
@@ -882,27 +1090,51 @@ static uint64_t keydrd_host_time_us(void) {
         return;
     }
 
-    int bitrate = _usbTransport.isConnected ? 150000000 : 20000000;
+    /* Determine encode dimensions:
+     * If display mode was matched, _captureWidth/_captureHeight are already set
+     * to the new native pixel dimensions (1:1 capture, no downscale).
+     * Otherwise, use viewport dimensions (SCStream downscale). */
+    uint32_t encodeWidth = _captureWidth;
+    uint32_t encodeHeight = _captureHeight;
 
-    os_log(sLog, "Starting HEVC encoder at viewport resolution: %ux%u @120fps %dMbps (%s)",
-           _viewportWidth, _viewportHeight, bitrate / 1000000,
-           _usbTransport.isConnected ? "USB" : "WiFi/default");
+    /* If display mode was NOT matched (no resolution change), fall back to viewport dims */
+    if (!_resolutionChanged) {
+        encodeWidth = _viewportWidth;
+        encodeHeight = _viewportHeight;
+    }
 
-    [_hevcEncoder startWithWidth:(int)_viewportWidth
-                          height:(int)_viewportHeight
+    /* USB: quality-based encoding (CRF-like) to fix bitrate undershoot.
+     * Quality 0.85 gives excellent text clarity at actual ~20-40Mbps.
+     * WiFi: bitrate-based at 20Mbps (bandwidth constrained). */
+    int bitrate;
+    float quality;
+    if (_usbTransport.isConnected) {
+        bitrate = 0;        /* unused in quality mode */
+        quality = 0.85f;
+    } else {
+        bitrate = 20000000;
+        quality = 0.0f;     /* bitrate-based */
+    }
+
+    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps %s (capture: %ux%u, viewport: %ux%u, resChanged=%d)",
+           encodeWidth, encodeHeight,
+           quality > 0 ? "quality=0.85" : "bitrate=20Mbps",
+           _captureWidth, _captureHeight, _viewportWidth, _viewportHeight,
+           _resolutionChanged);
+
+    [_hevcEncoder startWithWidth:(int)encodeWidth
+                          height:(int)encodeHeight
                              fps:120
-                         bitrate:bitrate];
+                         bitrate:bitrate
+                         quality:quality];
 
-    /* Restart capture at viewport resolution.
-     * SCStream downscales from Mac display to viewport size in hardware. */
-    [_capture stopCapture];
-    _capture.captureWidth = _viewportWidth;
-    _capture.captureHeight = _viewportHeight;
-    [_capture startCapture];
+    /* Live-reconfigure capture resolution.
+     * Uses SCStream.updateConfiguration — no stop/start, no Sequoia re-auth prompt. */
+    [_capture updateCaptureResolution:encodeWidth height:encodeHeight];
 
     /* Update captureWidth/Height so handshake/geometry messages reflect actual encode size */
-    _captureWidth = _viewportWidth;
-    _captureHeight = _viewportHeight;
+    _captureWidth = encodeWidth;
+    _captureHeight = encodeHeight;
 
     /* Reconfigure frame delivery */
     [self configureFrameDelivery];
@@ -910,8 +1142,10 @@ static uint64_t keydrd_host_time_us(void) {
     /* Send geometry update so iPad knows the new frame dimensions */
     [self sendGeometryUpdate];
 
-    /* Begin capture if not already running */
-    [self _beginCapture];
+    /* Notify Mac UI (menu bar) of the new resolution */
+    if (self.onResolutionChanged) {
+        self.onResolutionChanged(_captureWidth, _captureHeight);
+    }
 }
 
 #pragma mark - Clock Sync (Cristian's Algorithm)
@@ -979,17 +1213,23 @@ static uint64_t keydrd_host_time_us(void) {
     if (ecoOn) {
         _isEcoMode = YES;
 
-        /* Activate HEVC at reduced resolution (1080p) and 30fps */
-        [_hevcEncoder startWithWidth:kEcoWidth height:kEcoHeight fps:kEcoFPS bitrate:kEcoBitrate];
+        /* Activate HEVC at reduced resolution (1080p) and 30fps.
+         * Eco mode always uses bitrate-based encoding (quality=0). */
+        [_hevcEncoder startWithWidth:kEcoWidth height:kEcoHeight fps:kEcoFPS bitrate:kEcoBitrate quality:0];
 
         /* Reconfigure frame delivery for HEVC path */
         [self configureFrameDelivery];
     } else {
         _isEcoMode = NO;
-        [_hevcEncoder stop];
 
-        /* Return to LZ4 path */
-        [self configureFrameDelivery];
+        /* Restart HEVC at viewport resolution (not Mac native) */
+        if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
+            [self _startEncoderAtViewportResolution];
+        } else {
+            os_log_error(sLog, "Eco OFF but no viewport — cannot restart encoder");
+            [_hevcEncoder stop];
+            [self configureFrameDelivery];
+        }
     }
 
     if (self.onModeChanged) {

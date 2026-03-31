@@ -698,17 +698,24 @@ final class DeviceTestRunner {
             let frameW = decodedFrameWidths.last!
             let frameH = decodedFrameHeights.last!
 
-            // Frames should match viewport dimensions (what Mac encodes after viewport report)
+            // Frames should match viewport dimensions (what Mac encodes after viewport report).
+            // After display mode match, Mac may encode at a slightly different resolution
+            // (closest available display mode). Accept either the initial viewport OR the
+            // current session viewport (updated via geometry update after mode match).
             let viewportMatch = frameW == vpW && frameH == vpH
+            let currentVpW = sessionManager?.viewportWidth ?? vpW
+            let currentVpH = sessionManager?.viewportHeight ?? vpH
+            let geometryMatch = frameW == currentVpW && frameH == currentVpH
+            let passed = viewportMatch || geometryMatch
 
             if let expected = expectResolution {
-                let passed = frameW == expected.width && frameH == expected.height
-                recordResult(name: "resolution", passed: passed,
+                let expPassed = frameW == expected.width && frameH == expected.height
+                recordResult(name: "resolution", passed: expPassed,
                             detail: "expected=\(expected.width)x\(expected.height), viewport=\(vpW)x\(vpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH)")
             } else {
-                // No expected value -- pass if frames match viewport
-                recordResult(name: "resolution", passed: viewportMatch,
-                            detail: "viewport=\(vpW)x\(vpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH), match=\(viewportMatch)")
+                // Pass if frames match either initial viewport or post-mode-match geometry
+                recordResult(name: "resolution", passed: passed,
+                            detail: "viewport=\(vpW)x\(vpH), geometry=\(currentVpW)x\(currentVpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH), match=\(passed)")
             }
         } else {
             // Not enough decoded frames -- report viewport dims, pass informational

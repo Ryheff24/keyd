@@ -40,6 +40,9 @@ MAC_BUILD_LOG="/tmp/keyd-run-build-mac.log"
 IPAD_BUILD_LOG="/tmp/keyd-run-build-ipad.log"
 IPAD_INSTALL_LOG="/tmp/keyd-run-install-ipad.log"
 MAC_STDOUT_LOG="/tmp/keyd-run-mac-agent.log"
+MAC_LOG_FILE="/tmp/keyd-run-mac-oslog.log"
+IPAD_LOG_FILE="/tmp/keyd-run-ipad.log"
+MAC_SUBSYSTEM="com.ryheff.keyd.remote.agent"
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -197,10 +200,15 @@ if [ -n "$TRANSPORT" ]; then
   MAC_LAUNCH_ARGS="--transport $TRANSPORT"
 fi
 
+# Start Mac os_log capture in background
+rm -f "$MAC_LOG_FILE" "$IPAD_LOG_FILE"
+log stream --predicate "subsystem == '$MAC_SUBSYSTEM' OR subsystem BEGINSWITH 'com.keydrd'" \
+  --style compact > "$MAC_LOG_FILE" 2>&1 &
+MAC_LOG_PID=$!
+
 "$MAC_APP/Contents/MacOS/RemoteDesktopAgent" $MAC_LAUNCH_ARGS > "$MAC_STDOUT_LOG" 2>&1 &
 MAC_PID=$!
 echo "Mac agent PID: $MAC_PID"
-echo "Mac agent log: $MAC_STDOUT_LOG"
 echo ""
 
 # ---- Step 5: Launch iPad app ----
@@ -208,9 +216,20 @@ echo "=== [5/5] Launching iPad app ==="
 xcrun devicectl device process launch \
   --device "$IPAD_DEVICE_ID" \
   --terminate-existing \
-  "$BUNDLE_ID"
+  --console \
+  "$BUNDLE_ID" > "$IPAD_LOG_FILE" 2>&1 &
+IPAD_LOG_PID=$!
 
 echo ""
 echo "Both apps launched."
-echo "Mac app is running with PID $MAC_PID"
+echo "Mac agent PID:  $MAC_PID"
+echo ""
+echo "=== Log files ==="
+echo "  Mac os_log:    $MAC_LOG_FILE"
+echo "  Mac stdout:    $MAC_STDOUT_LOG"
+echo "  iPad console:  $IPAD_LOG_FILE"
+echo ""
+echo "Tail logs:"
+echo "  tail -f $MAC_LOG_FILE"
+echo "  tail -f $IPAD_LOG_FILE"
 exit 0

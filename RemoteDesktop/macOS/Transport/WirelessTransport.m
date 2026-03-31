@@ -4,6 +4,7 @@
 #import <os/log.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
+#include <mach/mach_time.h>
 
 static os_log_t wireless_log(void) {
     static os_log_t log;
@@ -18,7 +19,11 @@ static os_log_t wireless_log(void) {
 static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
 
-@interface WirelessTransport ()
+@interface WirelessTransport () {
+    dispatch_queue_t _sendPacingQueue;     // serial queue for paced UDP sends
+    uint64_t _pacingIntervalTicks;         // mach absolute time ticks between chunk sends
+    uint64_t _nextSendTime;               // next allowed send time (mach absolute time)
+}
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t bonjourListener;
 @property (nonatomic, nullable) nw_listener_t mediaListener;
@@ -35,6 +40,15 @@ static const char *kInputPortStr = "14568";
     if (self) {
         _transportQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.wireless.transport",
                                                 DISPATCH_QUEUE_SERIAL);
+        _sendPacingQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.wireless.pacing",
+                                                 DISPATCH_QUEUE_SERIAL);
+
+        /* Convert 560ns pacing interval (0.56ms = 1400 bytes * 8 / 20 Mbps)
+         * from nanoseconds to mach absolute time ticks. */
+        mach_timebase_info_data_t timebase;
+        mach_timebase_info(&timebase);
+        _pacingIntervalTicks = (uint64_t)(560000ULL * timebase.denom / timebase.numer);
+        _nextSendTime = 0;
     }
     return self;
 }
@@ -281,7 +295,7 @@ static const char *kInputPortStr = "14568";
 
     static int mediaSendCount = 0;
     if (mediaSendCount < 5) {
-        os_log(wireless_log(), "sendMediaFrame: sending %zu bytes via UDP/DTLS", len);
+        os_log(wireless_log(), "sendMediaFrame: sending %zu bytes via UDP/DTLS (paced)", len);
     }
     mediaSendCount++;
 
@@ -290,17 +304,46 @@ static const char *kInputPortStr = "14568";
     void *copy = malloc(len);
     if (!copy) return;
     memcpy(copy, data, len);
+    size_t copyLen = len;
 
-    dispatch_data_t ddata = dispatch_data_create(copy, len, _transportQueue,
-                                                 DISPATCH_DATA_DESTRUCTOR_FREE);
-    /* For DTLS/UDP, each datagram is a complete message.
-     * is_complete=true is required (false gives "Operation not supported"). */
-    nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
-                       true, ^(nw_error_t _Nullable error) {
-        if (error) {
-            os_log_error(wireless_log(), "Wireless media send error: %{public}@", error);
+    /* Pace sends on a dedicated serial queue.
+     * Without pacing, a single keyframe (~100KB = 73 chunks) gets blasted
+     * via nw_connection_send in rapid succession, overwhelming WiFi AP
+     * buffers and causing burst packet loss. We space chunk sends by
+     * _pacingIntervalTicks (~0.56ms at 20 Mbps for 1400-byte chunks). */
+    dispatch_async(_sendPacingQueue, ^{
+        /* Wait until our scheduled send time */
+        uint64_t now = mach_absolute_time();
+        if (self->_nextSendTime > now) {
+            mach_wait_until(self->_nextSendTime);
         }
+
+        /* Schedule next send relative to NOW (not _nextSendTime) to avoid
+         * accumulating delay if we fell behind. */
+        self->_nextSendTime = mach_absolute_time() + self->_pacingIntervalTicks;
+
+        dispatch_data_t ddata = dispatch_data_create(copy, copyLen, self->_transportQueue,
+                                                     DISPATCH_DATA_DESTRUCTOR_FREE);
+        /* For DTLS/UDP, each datagram is a complete message.
+         * is_complete=true is required (false gives "Operation not supported"). */
+        nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                           true, ^(nw_error_t _Nullable error) {
+            if (error) {
+                os_log_error(wireless_log(), "Wireless media send error: %{public}@", error);
+            }
+        });
     });
+}
+
+- (void)resetSendPacing {
+    _nextSendTime = 0;
+}
+
+- (void)handleCongestionFeedback:(float)lossRate {
+    os_log(wireless_log(), "Congestion feedback: loss=%.1f%%", lossRate * 100);
+    if (self.onCongestionStats) {
+        self.onCongestionStats(lossRate, 0, 0);
+    }
 }
 
 - (void)sendMediaFrameViaTCP:(const void *)data length:(size_t)len {
@@ -501,6 +544,7 @@ static const char *kInputPortStr = "14568";
                 os_log(wireless_log(), "DTLS wireless media UDP connection ready");
                 WirelessTransport *self3 = weakSelf;
                 if (self3) {
+                    [self3 resetSendPacing];
                     [self3 scheduleMediaReceive:conn];
                     if (self3.onMediaChannelReady) {
                         self3.onMediaChannelReady();

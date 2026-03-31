@@ -253,6 +253,37 @@ static uint64_t keydrd_host_time_us(void) {
     os_log_info(sc_log(), "Screen capture stopped");
 }
 
+- (void)updateCaptureResolution:(uint32_t)width height:(uint32_t)height {
+    if (!_isCapturing || !_stream) {
+        os_log(sc_log(), "updateCaptureResolution: not capturing, storing %ux%u for next start",
+               width, height);
+        self.captureWidth = width;
+        self.captureHeight = height;
+        return;
+    }
+
+    SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
+    config.width = width;
+    config.height = height;
+    config.pixelFormat = kCVPixelFormatType_32BGRA;
+    config.minimumFrameInterval = CMTimeMake(1, 120);
+    config.queueDepth = 3;
+    config.showsCursor = YES;
+
+    os_log(sc_log(), "Updating capture resolution to %ux%u (live reconfigure)", width, height);
+
+    [_stream updateConfiguration:config completionHandler:^(NSError * _Nullable error) {
+        if (error) {
+            os_log_error(sc_log(), "updateConfiguration failed: %{public}@", error.localizedDescription);
+        } else {
+            os_log(sc_log(), "Capture resolution updated to %ux%u", width, height);
+        }
+    }];
+
+    self.captureWidth = width;
+    self.captureHeight = height;
+}
+
 #pragma mark - SCStreamOutput
 
 - (void)stream:(SCStream *)stream

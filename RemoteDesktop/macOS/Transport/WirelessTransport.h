@@ -46,6 +46,10 @@ NS_ASSUME_NONNULL_BEGIN
  *  SessionManager should wait for this before starting capture. */
 @property (nonatomic, copy, nullable) void (^onMediaChannelReady)(void);
 
+/** Callback fired when congestion feedback is received from the iPad.
+ *  Parameters: lossRate (0.0-1.0), framesDelivered, framesLost. */
+@property (nonatomic, copy, nullable) void (^onCongestionStats)(float lossRate, int framesDelivered, int framesLost);
+
 /**
  * Start advertising the Bonjour service and listening for connections.
  * Enables peer-to-peer (AWDL) discovery.
@@ -69,6 +73,18 @@ NS_ASSUME_NONNULL_BEGIN
  * No-op if no connection is established.
  */
 - (void)sendInputEvent:(const void *)data length:(size_t)len;
+
+/**
+ * Reset the UDP send pacing timer. Call when media connection is
+ * re-established to avoid stale delay accumulation.
+ */
+- (void)resetSendPacing;
+
+/**
+ * Handle congestion feedback from the iPad (loss rate 0.0-1.0).
+ * Logs the feedback and fires onCongestionStats callback.
+ */
+- (void)handleCongestionFeedback:(float)lossRate;
 
 /**
  * Send a media frame over TCP (with 4-byte length prefix framing).

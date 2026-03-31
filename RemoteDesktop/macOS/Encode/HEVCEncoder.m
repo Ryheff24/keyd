@@ -2,6 +2,7 @@
 #import <VideoToolbox/VideoToolbox.h>
 #import <QuartzCore/QuartzCore.h>
 #import <os/log.h>
+#import <stdatomic.h>
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -34,11 +35,15 @@ static const int kEcoMaxHeight720 = 720;
     int _originalHeight;
     int _originalFPS;
     int _originalBitrate;
+    float _originalQuality;
     int _currentWidth;
     int _currentHeight;
     int _currentFPS;
     int _currentBitrate;
+    float _currentQuality;
     uint16_t _seq;
+    atomic_int _pendingFrameCount;
+    int _skipLogCount;
 }
 
 #pragma mark - Lifecycle
@@ -48,6 +53,8 @@ static const int kEcoMaxHeight720 = 720;
     if (self) {
         _session = NULL;
         _seq = 0;
+        _pendingFrameCount = 0;
+        _skipLogCount = 0;
     }
     return self;
 }
@@ -58,7 +65,7 @@ static const int kEcoMaxHeight720 = 720;
 
 #pragma mark - Session Management
 
-- (void)startWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate {
+- (void)startWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate quality:(float)quality {
     if (_isActive) {
         [self stop];
     }
@@ -67,15 +74,19 @@ static const int kEcoMaxHeight720 = 720;
     _originalHeight = height;
     _originalFPS = fps;
     _originalBitrate = bitrate;
+    _originalQuality = quality;
+    _pendingFrameCount = 0;
 
-    [self _createSessionWithWidth:width height:height fps:fps bitrate:bitrate];
+    [self _createSessionWithWidth:width height:height fps:fps bitrate:bitrate quality:quality];
 }
 
-- (void)_createSessionWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate {
+- (void)_createSessionWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate quality:(float)quality {
     _currentWidth = width;
     _currentHeight = height;
     _currentFPS = fps;
     _currentBitrate = bitrate;
+    _currentQuality = quality;
+    _quality = quality;
 
     /* Encoder specification: enable low-latency rate control */
     NSDictionary *encoderSpec = @{
@@ -114,10 +125,23 @@ static const int kEcoMaxHeight720 = 720;
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_MaxFrameDelayCount, delayRef);
     CFRelease(delayRef);
 
-    /* AverageBitRate -- NOT ConstantBitRate (conflicts with low-latency mode per research) */
-    CFNumberRef bitrateRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bitrate);
-    VTSessionSetProperty(_session, kVTCompressionPropertyKey_AverageBitRate, bitrateRef);
-    CFRelease(bitrateRef);
+    if (quality > 0) {
+        /* Quality-based encoding (CRF-like): let the encoder decide bitrate.
+         * Fixes bitrate undershoot on low-complexity desktop content where
+         * AverageBitRate=150Mbps but actual output is only 6Mbps.
+         * Quality 0.85 gives excellent text clarity at ~20-40Mbps actual. */
+        Float32 qualityVal = (Float32)quality;
+        CFNumberRef qualityRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberFloat32Type, &qualityVal);
+        VTSessionSetProperty(_session, kVTCompressionPropertyKey_Quality, qualityRef);
+        CFRelease(qualityRef);
+        os_log_info(hevc_log(), "Using quality-based encoding: quality=%.2f", quality);
+    } else {
+        /* AverageBitRate -- NOT ConstantBitRate (conflicts with low-latency mode per research) */
+        CFNumberRef bitrateRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bitrate);
+        VTSessionSetProperty(_session, kVTCompressionPropertyKey_AverageBitRate, bitrateRef);
+        CFRelease(bitrateRef);
+        os_log_info(hevc_log(), "Using bitrate-based encoding: bitrate=%d", bitrate);
+    }
 
     /* Max keyframe interval (seconds).
      * Keyframes at native resolution can be 100-200KB (70-140 UDP chunks).
@@ -134,21 +158,22 @@ static const int kEcoMaxHeight720 = 720;
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_ExpectedFrameRate, fpsRef);
     CFRelease(fpsRef);
 
-    /* No DataRateLimits — AverageBitRate handles rate control.
+    /* No DataRateLimits — AverageBitRate/Quality handles rate control.
      * Oversized keyframes that exceed UDP chunking limits (>255 chunks)
      * fall back to TCP in sendMediaFrameToiPad. */
 
     VTCompressionSessionPrepareToEncodeFrames(_session);
     _isActive = YES;
 
-    os_log_info(hevc_log(), "HEVC encoder started: %dx%d @ %dfps, bitrate=%d",
-                width, height, fps, bitrate);
+    os_log_info(hevc_log(), "HEVC encoder started: %dx%d @ %dfps, bitrate=%d, quality=%.2f",
+                width, height, fps, bitrate, quality);
 }
 
 - (void)stop {
     /* Set inactive FIRST to prevent callbacks from delivering frames
      * while we're tearing down the session. */
     _isActive = NO;
+    _pendingFrameCount = 0;
     _onEncodedFrame = nil;
 
     if (_session) {
@@ -173,12 +198,25 @@ static const int kEcoMaxHeight720 = 720;
         return;
     }
 
+    /* Frame skip: if encoder already has a frame queued, drop this one.
+     * Prevents queue buildup that causes p95 latency spikes on keyframes.
+     * Only allow 1 frame in-flight at a time. */
+    int pending = atomic_load_explicit(&_pendingFrameCount, memory_order_relaxed);
+    if (pending > 1) {
+        _skipLogCount++;
+        if (_skipLogCount <= 5 || _skipLogCount % 100 == 0) {
+            os_log(hevc_log(), "encodePixelBuffer: SKIPPED frame (pending=%d, total skipped=%d)",
+                   pending, _skipLogCount);
+        }
+        return;
+    }
+
     static int encodeCount = 0;
     if (encodeCount < 5) {
         size_t w = CVPixelBufferGetWidth(pixelBuffer);
         size_t h = CVPixelBufferGetHeight(pixelBuffer);
-        os_log(hevc_log(), "encodePixelBuffer: encoding frame #%d (%zux%zu) ts=%.3fs",
-               encodeCount, w, h, CMTimeGetSeconds(timestamp));
+        os_log(hevc_log(), "encodePixelBuffer: encoding frame #%d (%zux%zu) ts=%.3fs pending=%d",
+               encodeCount, w, h, CMTimeGetSeconds(timestamp), pending);
     }
     encodeCount++;
 
@@ -200,6 +238,9 @@ static const int kEcoMaxHeight720 = 720;
         *tsRef = captureTimestampUs;
     }
 
+    /* Increment pending count BEFORE submitting to encoder */
+    atomic_fetch_add_explicit(&_pendingFrameCount, 1, memory_order_relaxed);
+
     /* frameProperties: nil = let encoder decide keyframe placement */
     OSStatus status = VTCompressionSessionEncodeFrame(
         _session,
@@ -213,6 +254,7 @@ static const int kEcoMaxHeight720 = 720;
 
     if (status != noErr) {
         os_log_error(hevc_log(), "VTCompressionSessionEncodeFrame failed: %d", (int)status);
+        atomic_fetch_sub_explicit(&_pendingFrameCount, 1, memory_order_relaxed);
         free(tsRef);
     }
 }
@@ -239,7 +281,7 @@ static const int kEcoMaxHeight720 = 720;
         ecoBitrate = kBitrate720;
     }
 
-    [self _createSessionWithWidth:ecoWidth height:ecoHeight fps:kEcoFPS bitrate:ecoBitrate];
+    [self _createSessionWithWidth:ecoWidth height:ecoHeight fps:kEcoFPS bitrate:ecoBitrate quality:0];
 
     os_log_info(hevc_log(), "Switched to eco mode: %dx%d @ %dfps, bitrate=%d",
                 ecoWidth, ecoHeight, kEcoFPS, ecoBitrate);
@@ -253,7 +295,8 @@ static const int kEcoMaxHeight720 = 720;
     [self _createSessionWithWidth:_originalWidth
                            height:_originalHeight
                               fps:_originalFPS
-                          bitrate:_originalBitrate];
+                          bitrate:_originalBitrate
+                          quality:_originalQuality];
 
     os_log_info(hevc_log(), "Switched to full quality: %dx%d @ %dfps",
                 _originalWidth, _originalHeight, _originalFPS);
@@ -266,6 +309,13 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
                                  OSStatus status,
                                  VTEncodeInfoFlags infoFlags,
                                  CMSampleBufferRef sampleBuffer) {
+    /* Decrement pending frame count at the very beginning of callback.
+     * This unblocks the next encodePixelBuffer call as early as possible. */
+    HEVCEncoder *encoder = (__bridge HEVCEncoder *)outputCallbackRefCon;
+    if (encoder) {
+        atomic_fetch_sub_explicit(&encoder->_pendingFrameCount, 1, memory_order_relaxed);
+    }
+
     /* Extract capture timestamp passed via sourceFrameRefcon, free in all paths */
     uint64_t captureTimestampUs = 0;
     if (sourceFrameRefCon) {
@@ -281,8 +331,6 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
         /* Informational callback (no output) — not an error */
         return;
     }
-
-    HEVCEncoder *encoder = (__bridge HEVCEncoder *)outputCallbackRefCon;
     if (!encoder || !encoder.isActive || !encoder.onEncodedFrame) return;
 
     /* Pipeline latency probe: how long from capture to encode-complete? */

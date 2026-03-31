@@ -36,6 +36,9 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 /// Whether the encoder is in eco mode (reduced resolution + 30fps).
 @property (nonatomic, assign, readonly) BOOL isEcoMode;
 
+/// Current quality value (0 = bitrate-based, >0 = quality-based CRF).
+@property (nonatomic, assign, readonly) float quality;
+
 /// Callback for encoded frames. Set before calling -start.
 @property (nonatomic, copy, nullable) HEVCEncoderOutputBlock onEncodedFrame;
 
@@ -43,8 +46,9 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 /// @param width   Frame width in pixels.
 /// @param height  Frame height in pixels.
 /// @param fps     Target frames per second.
-/// @param bitrate Target average bitrate in bits per second.
-- (void)startWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate;
+/// @param bitrate Target average bitrate in bits per second (used when quality <= 0).
+/// @param quality Quality level 0.0-1.0 (0 = use bitrate, >0 = quality-based CRF encoding).
+- (void)startWithWidth:(int)width height:(int)height fps:(int)fps bitrate:(int)bitrate quality:(float)quality;
 
 /// Encode a single pixel buffer. Must be called on the compress queue.
 /// @param pixelBuffer       CVPixelBuffer in BGRA format.
