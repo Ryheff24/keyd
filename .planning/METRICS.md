@@ -16,17 +16,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `43.9 fps` | `70.2 fps` | `60.0 fps` | ❌ |
-| Frame pacing CV | `0.721` | `0.707` | `0.350` | ❌ |
-| Pipeline latency median | `3279 ms` | `13 ms` | `20 ms` | ❌ |
-| Pipeline latency p95 | `8297 ms` | `32 ms` | `50 ms` | ❌ |
-| Pipeline latency avg | `3510 ms` | `26 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency median | `1498 ms` | `33 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `8157 ms` | `54 ms` | `40 ms` | ❌ |
-| Glass-to-glass latency avg | `2628 ms` | `47 ms` | `25 ms` | ❌ |
-| Heavy-load FPS | `35.9 fps` | `54.8 fps` | `30.0 fps` | ✅ |
-| Heavy-load pipeline median | `7880 ms` | `4550 ms` | `100 ms` | ❌ |
-| Heavy-load pipeline p95 | `9762 ms` | `8016 ms` | `150 ms` | ❌ |
+| FPS | `45.5 fps` | `70.2 fps` | `60.0 fps` | ❌ |
+| Frame pacing CV | `1.125` | `0.707` | `0.350` | ❌ |
+| Pipeline latency median | `2896 ms` | `13 ms` | `20 ms` | ❌ |
+| Pipeline latency p95 | `8115 ms` | `32 ms` | `50 ms` | ❌ |
+| Pipeline latency avg | `3258 ms` | `26 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency median | `1123 ms` | `33 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `7981 ms` | `54 ms` | `40 ms` | ❌ |
+| Glass-to-glass latency avg | `2418 ms` | `47 ms` | `25 ms` | ❌ |
+| Heavy-load FPS | `45.4 fps` | `54.8 fps` | `30.0 fps` | ✅ |
+| Heavy-load pipeline median | `6238 ms` | `4550 ms` | `100 ms` | ❌ |
+| Heavy-load pipeline p95 | `9349 ms` | `8016 ms` | `150 ms` | ❌ |
 | Security rejection | `0` | `0` | `1` | ❌ |
 | Overall pass rate | `76.0%` | `92.0%` | `100.0%` | ❌ |
 
@@ -40,3 +40,4 @@ Rules:
 | 2026-04-01 | 18:29:46 EDT | `6078be2` | `2752x1786` | `43.5 fps` | `0.779` | `3622/8759/3740 ms` | `1779/8522/2814 ms` | `35.2 fps, 8478/9907 ms` | `0` | `22/28` | Test Run2 |
 | 2026-04-01 | 19:00:10 EDT | `50821a3` | `2752x1786` | `43.4 fps` | `0.707` | `3419/9260/3828 ms` | `1646/9068/2856 ms` | `54.8 fps, 4550/8016 ms` | `0` | `22/27` | Validate default all-transports rotation |
 | 2026-04-01 | 19:04:09 EDT | `37407bf` | `2752x1786` | `43.9 fps` | `0.721` | `3279/8297/3510 ms` | `1498/8157/2628 ms` | `35.9 fps, 7880/9762 ms` | `0` | `19/25` | Validate usb-only transport subset |
+| 2026-04-01 | 19:06:34 EDT | `d7c080b` | `2752x1786` | `45.5 fps` | `1.125` | `2896/8115/3258 ms` | `1123/7981/2418 ms` | `45.4 fps, 6238/9349 ms` | `0` | `19/25` | Revalidate usb-only after bonjour skip fix |
