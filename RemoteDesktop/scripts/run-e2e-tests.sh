@@ -9,9 +9,8 @@
 #   --latency-target-ms N         Latency target for tiered test (median RTT)
 #   --expect-resolution WxH       Expected resolution (e.g. 2560x1600)
 #   --expect-fps N                Minimum expected FPS (e.g. 60)
-#   --notes TEXT                  Required when reporting is enabled; added to the
-#                                  report commit message and metrics changelog
-#   --disable-reporting           Do not create a report commit or update METRICS.md
+#   --notes TEXT                  Required; added to the report commit message and
+#                                  metrics changelog
 #   --capture-file PATH           Use a file-backed synthetic frame source on Mac
 #                                  If omitted, auto-uses /tmp/keydrd-capture-mimic.mov when present
 #   --stress-capture              Force procedural full-frame stress source on Mac
@@ -50,7 +49,6 @@ STRESS_CAPTURE=false
 REAL_CAPTURE=false
 FULL_SUITE=false
 WIRED_ONLY=false
-DISABLE_REPORTING=false
 REPORT_NOTES=""
 
 # First positional arg can be timeout
@@ -71,8 +69,6 @@ while [[ $# -gt 0 ]]; do
       EXPECT_FPS="$2"; shift 2 ;;
     --notes)
       REPORT_NOTES="$2"; shift 2 ;;
-    --disable-reporting)
-      DISABLE_REPORTING=true; shift ;;
     --capture-file)
       CAPTURE_FILE="$2"; shift 2 ;;
     --stress-capture)
@@ -95,12 +91,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ "$DISABLE_REPORTING" = false ] && [ -z "$REPORT_NOTES" ]; then
-  echo "ERROR: --notes is required unless --disable-reporting is set"
+if [ -z "$REPORT_NOTES" ]; then
+  echo "ERROR: --notes is required"
   exit 1
 fi
-if [ "$FULL_SUITE" = true ] && [ "$DISABLE_REPORTING" = false ]; then
-  echo "ERROR: reporting is not supported with --full-suite; rerun with --disable-reporting"
+if [ "$FULL_SUITE" = true ]; then
+  echo "ERROR: --full-suite is not compatible with required reporting yet"
   exit 1
 fi
 
@@ -117,6 +113,7 @@ DERIVED_DATA_ROOT="/tmp/keyd-e2e-derived-data"
 MAC_DERIVED_DATA="$DERIVED_DATA_ROOT/macos"
 IPAD_DERIVED_DATA="$DERIVED_DATA_ROOT/ipados"
 LOG_FILE="/tmp/e2e-results.log"
+IPAD_LOG_FILE="/tmp/keyd-e2e-ipad.log"
 MAC_LOG_FILE="/tmp/keyd-e2e-mac.log"
 MAC_BUILD_LOG="/tmp/keyd-e2e-build-mac.log"
 IPAD_BUILD_LOG="/tmp/keyd-e2e-build-ipad.log"
@@ -175,7 +172,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -271,8 +268,9 @@ log_progress "============================================"
 log_progress "  keyd-rd End-to-End Test Harness"
 log_progress "  Timeout: ${TIMEOUT}s"
 log_progress "============================================"
-log_progress "  Mac log:      $MAC_LOG_FILE"
 log_progress "  Results log:  $LOG_FILE"
+log_progress "  iPad log:     $IPAD_LOG_FILE"
+log_progress "  Mac log:      $MAC_LOG_FILE"
 log_progress "  Build logs:   $MAC_BUILD_LOG, $IPAD_BUILD_LOG"
 log_progress ""
 
@@ -288,14 +286,14 @@ extract_metric_value() {
 }
 
 collect_report_metrics() {
-  REPORT_RESOLUTION_LINE=$(grep -E '\[TEST\] (PASS|FAIL): resolution \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_FPS_LINE=$(grep -E '\[TEST\] (PASS|FAIL): fps \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_FRAME_PACING_LINE=$(grep -E '\[TEST\] (PASS|FAIL): frame-pacing \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_PIPELINE_LINE=$(grep -E '\[TEST\] (PASS|FAIL): pipeline-latency \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_G2G_LINE=$(grep -E '\[TEST\] (PASS|FAIL): glass-to-glass-latency \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_HEAVY_LOAD_LINE=$(grep -E '\[TEST\] (PASS|FAIL): heavy-load \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_SECURITY_LINE=$(grep -E '\[TEST\] (PASS|FAIL): sec-untrusted-cert \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  REPORT_COMPLETE_LINE=$(grep -E '\[TEST\] COMPLETE:' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_RESOLUTION_LINE=$(grep -E '\[TEST\] (PASS|FAIL): resolution \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_FPS_LINE=$(grep -E '\[TEST\] (PASS|FAIL): fps \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_FRAME_PACING_LINE=$(grep -E '\[TEST\] (PASS|FAIL): frame-pacing \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_PIPELINE_LINE=$(grep -E '\[TEST\] (PASS|FAIL): pipeline-latency \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_G2G_LINE=$(grep -E '\[TEST\] (PASS|FAIL): glass-to-glass-latency \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_HEAVY_LOAD_LINE=$(grep -E '\[TEST\] (PASS|FAIL): heavy-load \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_SECURITY_LINE=$(grep -E '\[TEST\] (PASS|FAIL): sec-untrusted-cert \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_COMPLETE_LINE=$(grep -E '\[TEST\] COMPLETE:' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
 
   REPORT_USB_RESOLUTION=$(extract_metric_value "USB resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*viewport=([0-9]+x[0-9]+).*/\1/p')")
   REPORT_FPS=$(extract_metric_value "FPS" "$(echo "$REPORT_FPS_LINE" | sed -nE 's/.*\(([0-9]+(\.[0-9]+)?) fps.*/\1/p')")
@@ -372,11 +370,6 @@ commit_metrics_to_branch() {
 }
 
 run_reporting() {
-  if [ "$DISABLE_REPORTING" = true ]; then
-    log_progress "Reporting disabled -- skipping report commit and metrics update"
-    return 0
-  fi
-
   collect_report_metrics
 
   log_progress "=== Reporting: creating tested snapshot commit ==="
@@ -622,7 +615,14 @@ xcrun devicectl device process launch \
   --console \
   "$BUNDLE_ID" \
   -- "${IPAD_LAUNCH_ARGS[@]}" \
-  2>&1 | tee -a "$LOG_FILE" &
+  2>&1 | tee -a "$IPAD_LOG_FILE" | awk -v results_log="$LOG_FILE" '
+    /\[TEST\]/ {
+      print
+      print >> results_log
+      fflush()
+      fflush(results_log)
+    }
+  ' &
 IPAD_PID=$!
 
 # ---- Wait for test results ----
@@ -645,19 +645,19 @@ wait_and_parse_results() {
       break
     fi
 
-    if grep -q "\[TEST\] COMPLETE:" "$LOG_FILE" 2>/dev/null; then
+    if grep -q "\[TEST\] COMPLETE:" "$IPAD_LOG_FILE" 2>/dev/null; then
       # Give a moment for any remaining output
       sleep 1
       break
     fi
 
     # Detect app crash (signal termination)
-    if grep -q "terminated due to signal" "$LOG_FILE" 2>/dev/null; then
+    if grep -q "terminated due to signal" "$IPAD_LOG_FILE" 2>/dev/null; then
       echo ""
       echo "CRASH DETECTED: iPad app terminated by signal"
-      grep "signal" "$LOG_FILE" 2>/dev/null | tail -1
+      grep "signal" "$IPAD_LOG_FILE" 2>/dev/null | tail -1
       echo "--- Last 20 iPad console lines ---"
-      grep "\[CONSOLE\]" "$LOG_FILE" 2>/dev/null | tail -20
+      grep "\[CONSOLE\]" "$IPAD_LOG_FILE" 2>/dev/null | tail -20
       echo "--- Last 20 Mac agent lines ---"
       tail -20 "$MAC_LOG_FILE" 2>/dev/null
       break
@@ -698,9 +698,9 @@ wait_and_parse_results() {
     return 1
   }
 
-  if [ -f "$LOG_FILE" ]; then
+  if [ -f "$IPAD_LOG_FILE" ]; then
     # Extract [TEST] lines
-    grep "\[TEST\]" "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+    grep "\[TEST\]" "$IPAD_LOG_FILE" 2>/dev/null | while IFS= read -r line; do
       if ! is_high_signal_test_line "$line"; then
         continue
       fi
@@ -739,8 +739,8 @@ wait_and_parse_results() {
       fi
     done
 
-    PASSED=$(grep -c "\[TEST\] PASS:" "$LOG_FILE" 2>/dev/null) || PASSED=0
-    FAILED=$(grep -c "\[TEST\] FAIL:" "$LOG_FILE" 2>/dev/null) || FAILED=0
+    PASSED=$(grep -c "\[TEST\] PASS:" "$IPAD_LOG_FILE" 2>/dev/null) || PASSED=0
+    FAILED=$(grep -c "\[TEST\] FAIL:" "$IPAD_LOG_FILE" 2>/dev/null) || FAILED=0
     TOTAL=$((PASSED + FAILED))
 
     echo ""
@@ -749,6 +749,13 @@ wait_and_parse_results() {
     printf "  Failed: \033[31m%s\033[0m\n" "$FAILED"
     echo "  Total:  $TOTAL"
     echo "--------------------------------------------"
+    {
+      echo "--------------------------------------------"
+      echo "Passed: $PASSED"
+      echo "Failed: $FAILED"
+      echo "Total: $TOTAL"
+      echo "--------------------------------------------"
+    } >> "$LOG_FILE"
     summarize_frame_checks
 
     if [ "$FAILED" -gt 0 ]; then
@@ -767,7 +774,7 @@ wait_and_parse_results() {
       echo "WARNING: No test output found"
       echo ""
       echo "--- iPad console (last 50 lines) ---"
-      tail -50 "$LOG_FILE" 2>/dev/null || echo "(no output)"
+      tail -50 "$IPAD_LOG_FILE" 2>/dev/null || echo "(no output)"
       echo ""
       echo "--- Mac agent logs (last 30 lines) ---"
       tail -30 "$MAC_LOG_FILE" 2>/dev/null || echo "(no Mac logs)"
@@ -816,7 +823,7 @@ if [ "$FULL_SUITE" = true ]; then
     # Kill and re-launch iPad with this latency target
     kill "$IPAD_PID" 2>/dev/null || true
     sleep 2
-    rm -f "$LOG_FILE"
+    rm -f "$LOG_FILE" "$IPAD_LOG_FILE"
 
     TIER_ARGS=(--test-mode --qr-payload "$QR_PAYLOAD_B64" --latency-target-ms "$TIER")
     if [ -n "$TRANSPORT" ]; then
@@ -829,7 +836,7 @@ if [ "$FULL_SUITE" = true ]; then
       --console \
       "$BUNDLE_ID" \
       -- "${TIER_ARGS[@]}" \
-      2>&1 | tee -a "$LOG_FILE" &
+      > "$IPAD_LOG_FILE" 2>&1 &
     IPAD_PID=$!
 
     set +e

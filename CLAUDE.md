@@ -1,6 +1,6 @@
 # keyd Project Instructions
 
-## Physical Device Testing — MANDATORY for all agents
+
 
 The user will ONLY perform simple physical actions on devices (tap buttons, scan QR codes, plug/unplug cables). They will NOT:
 - Paste logs
