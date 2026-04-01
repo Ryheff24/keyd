@@ -788,8 +788,10 @@ if [ "$FULL_SUITE" = true ]; then
   # tier sweep to find the minimum achievable latency target.
 
   # First run: basic suite (all 14 tests, no latency target constraint)
+  set +e
   wait_and_parse_results "basic + extended (no latency target)"
   BASIC_RESULT=$?
+  set -e
 
   if [ "$BASIC_RESULT" -ne 0 ]; then
     echo ""
@@ -830,8 +832,10 @@ if [ "$FULL_SUITE" = true ]; then
       2>&1 | tee -a "$LOG_FILE" &
     IPAD_PID=$!
 
+    set +e
     wait_and_parse_results "latency-tier=${TIER}ms"
     TIER_RESULT=$?
+    set -e
 
     if [ "$TIER_RESULT" -ne 0 ]; then
       echo ""
@@ -860,8 +864,10 @@ if [ "$FULL_SUITE" = true ]; then
 fi
 
 # ---- Single run mode ----
+set +e
 wait_and_parse_results ""
 RESULT=$?
+set -e
 
 run_reporting
 
