@@ -590,11 +590,14 @@ final class USBNetworkTransport {
     private func drainUSBTCPBuffer() {
         while tcpBuffer.count >= 4 {
             let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
-                let raw = buf.load(as: UInt32.self)
+                guard let base = buf.baseAddress else { return 0 }
+                var raw: UInt32 = 0
+                memcpy(&raw, base, 4)
                 return Int(UInt32(bigEndian: raw))
             }
 
-            guard msgLen > 0, msgLen < 4_000_000 else {
+            guard msgLen > 0, msgLen < 20_000_000 else {
+                print("[CONSOLE] USBTransport: TCP message too large or invalid: \(msgLen) bytes, dropping buffer")
                 tcpBuffer.removeAll()
                 return
             }
@@ -614,7 +617,11 @@ final class USBNetworkTransport {
         mediaConnection = nil
         inputConnection?.cancel()
         inputConnection = nil
-        tcpBuffer.removeAll()
+        // Clear tcpBuffer on transportQueue to avoid data race with
+        // drainUSBTCPBuffer running on the same queue from receive callbacks.
+        transportQueue.async { [weak self] in
+            self?.tcpBuffer.removeAll()
+        }
     }
 
     deinit {

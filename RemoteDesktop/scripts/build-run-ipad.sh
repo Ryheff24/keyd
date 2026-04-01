@@ -5,11 +5,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/async-index.sh"
+
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 SCHEME="RemoteDesktopApp"
 BUNDLE_ID="com.ryheff.keyd.remote.app"
 DEVICE_ID="00000000-00000000000000A1"
-CONFIG="Debug"
+CONFIG="Release"
 LOG_SUBSYSTEM="com.ryheff.keyd.remote.app"
 
 cd "$(dirname "$0")/.."
@@ -21,6 +24,8 @@ xcodebuild \
   -destination "id=$DEVICE_ID" \
   -configuration "$CONFIG" \
   build 2>&1 | tail -5
+
+start_async_index "build-run-ipad.sh"
 
 echo ""
 echo "=== Installing on iPad ==="

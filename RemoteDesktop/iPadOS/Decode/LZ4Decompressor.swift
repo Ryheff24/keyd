@@ -67,16 +67,16 @@ final class LZ4Decompressor {
     ///   The pointer is valid until the next call to `decompress` or until
     ///   this LZ4Decompressor is deallocated.
     func decompress(data: Data, header: MediaFrameHeader, frameBytes: Int) -> UnsafeRawPointer? {
-        guard frameBytes == self.frameBytes else {
+        guard frameBytes <= self.frameBytes else {
             os_log(.error, log: Self.log,
-                   "Frame size mismatch: expected %d, got %d", self.frameBytes, frameBytes)
+                   "Frame too large for buffer: capacity %d, requested %d", self.frameBytes, frameBytes)
             return nil
         }
 
         if header.isKeyframe {
-            return decompressKeyframe(data: data)
+            return decompressKeyframe(data: data, expectedBytes: frameBytes)
         } else if header.isDelta {
-            return decompressDelta(data: data)
+            return decompressDelta(data: data, expectedBytes: frameBytes)
         } else {
             os_log(.error, log: Self.log, "Unknown frame type: flags=0x%02x", header.flags)
             return nil
@@ -86,7 +86,7 @@ final class LZ4Decompressor {
     // MARK: - Private
 
     /// Decompress a keyframe: LZ4 decompress, update keyframe reference.
-    private func decompressKeyframe(data: Data) -> UnsafeRawPointer? {
+    private func decompressKeyframe(data: Data, expectedBytes: Int) -> UnsafeRawPointer? {
         let compressedSize = data.count
         let result = data.withUnsafeBytes { buffer -> Int32 in
             guard let src = buffer.baseAddress else { return -1 }
@@ -94,25 +94,25 @@ final class LZ4Decompressor {
                 src.assumingMemoryBound(to: CChar.self),
                 decompressBuffer.assumingMemoryBound(to: CChar.self),
                 Int32(compressedSize),
-                Int32(frameBytes)
+                Int32(expectedBytes)
             )
         }
 
         guard result > 0 else {
             os_log(.error, log: Self.log,
-                   "LZ4_decompress_safe failed for keyframe: result=%d, compressed=%d",
-                   result, compressedSize)
+                   "LZ4_decompress_safe failed for keyframe: result=%d, compressed=%d, expected=%d",
+                   result, compressedSize, expectedBytes)
             return nil
         }
 
         // Update keyframe reference for future delta frames
-        memcpy(keyframeReference, decompressBuffer, frameBytes)
+        memcpy(keyframeReference, decompressBuffer, expectedBytes)
 
         return UnsafeRawPointer(decompressBuffer)
     }
 
     /// Decompress a delta frame: LZ4 decompress delta, apply XOR against reference.
-    private func decompressDelta(data: Data) -> UnsafeRawPointer? {
+    private func decompressDelta(data: Data, expectedBytes: Int) -> UnsafeRawPointer? {
         let compressedSize = data.count
 
         // Step 1: LZ4 decompress the delta data into tempDeltaBuffer
@@ -122,22 +122,22 @@ final class LZ4Decompressor {
                 src.assumingMemoryBound(to: CChar.self),
                 tempDeltaBuffer.assumingMemoryBound(to: CChar.self),
                 Int32(compressedSize),
-                Int32(frameBytes)
+                Int32(expectedBytes)
             )
         }
 
         guard result > 0 else {
             os_log(.error, log: Self.log,
-                   "LZ4_decompress_safe failed for delta: result=%d, compressed=%d",
-                   result, compressedSize)
+                   "LZ4_decompress_safe failed for delta: result=%d, compressed=%d, expected=%d",
+                   result, compressedSize, expectedBytes)
             return nil
         }
 
         // Step 2: Apply XOR delta: output = delta ^ keyframeReference
-        apply_delta(tempDeltaBuffer, keyframeReference, decompressBuffer, frameBytes)
+        apply_delta(tempDeltaBuffer, keyframeReference, decompressBuffer, expectedBytes)
 
         // Step 3: Update keyframe reference with the reconstructed frame
-        memcpy(keyframeReference, decompressBuffer, frameBytes)
+        memcpy(keyframeReference, decompressBuffer, expectedBytes)
 
         return UnsafeRawPointer(decompressBuffer)
     }

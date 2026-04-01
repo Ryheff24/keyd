@@ -45,8 +45,8 @@ There are **three separate issues** compounding into one bad visual result:
 | Actual viewport | 2752x1786 (letterboxed for Mac aspect ratio) |
 | SCStream capture | 2752x1786 (downscaled from 3600x2338) |
 | HEVC encode | 2752x1786 |
-| Bitrate target | 150 Mbps (USB) / 20 Mbps (WiFi) |
-| Bitrate actual | ~6 Mbps (AverageBitRate undershoot) |
+| Encode mode (USB) | Quality-based, quality=0.95 (actual ~30-50 Mbps) |
+| Encode mode (WiFi) | Bitrate-based, AverageBitRate=20 Mbps |
 | Pipeline latency | 29ms median (good) |
 
 ---
@@ -132,13 +132,15 @@ There are **three separate issues** compounding into one bad visual result:
 
 ## Recommended Path
 
-**Option C + D** — Display mode match for pixel-perfect resolution, plus quality-based encoding for consistent visual quality.
+**Option D (quality-based encoding) only.** Display mode matching (Options A/C) was implemented and reverted.
 
-This gives:
-- Native-quality text rendering (no interpolation blur)
-- Low latency (small frames, ~29ms pipeline)
-- Consistent visual quality (no bitrate undershoot)
-- Clean revert on disconnect
+**Why display mode matching failed:** macOS uses Retina (2x) UI scaling. When CGDisplaySetDisplayMode switches to a mode matching the iPad viewport, the closest available mode is often a 1x (non-Retina) mode. This halves the logical resolution of all Mac UI — text, icons, and chrome render at half the point density, making everything look terrible on the remote desktop. The 0.764x SCStream downscale blur is far less damaging than losing Retina entirely.
+
+**Current approach:**
+- SCStream captures at Mac native (3600x2338), downscales to iPad viewport (2752x1786)
+- USB: Quality-based encoding at 0.95 (raised from 0.85 for sharper text)
+- WiFi: Bitrate-based at 20 Mbps (bandwidth constrained)
+- Pipeline latency stays at ~29ms
 
 ---
 
@@ -147,11 +149,12 @@ This gives:
 ### Wired (USB NCM)
 | Issue | Status | Impact |
 |-------|--------|--------|
-| Resolution quality (blur from SCStream downscale) | **Fixed** — auto display mode match (2704x1756 1:1 capture) | High → Resolved |
-| Bitrate undershoot (6 Mbps actual vs 150 target) | **Fixed** — quality-based encoding (CRF 0.85) | Medium → Resolved |
+| Resolution quality (SCStream downscale blur) | **Open** — 0.764x non-integer downscale softens text. Display mode matching reverted (1x mode destroys Retina quality). Mitigated by Quality=0.95. | Medium |
+| Display mode matching | **Reverted** — macOS uses Retina 2x UI scaling; switching display mode picked 1x non-Retina, halving logical resolution. Removed call to `_autoMatchDisplayModeForViewport`. | N/A |
+| Bitrate undershoot (6 Mbps actual vs 150 target) | **Fixed (USB)** — quality-based encoding at 0.95 (raised from 0.85 for text clarity) | Medium → Resolved |
 | Pipeline latency | **Improved** — 28ms median (was 29ms), p95=34ms (was 75ms) | Low |
-| Pipeline latency p95/max spikes | **Fixed** — frame skip on encoder queue >1 (max 47ms, was 92ms) | Medium → Resolved |
-| FPS | **Improved** — 74.8fps (was ~50fps) | Medium → Low |
+| Pipeline latency p95/max spikes | **Fixed** — frame skip on encoder queue >2 (relaxed from >1 to reduce drops) | Medium → Resolved |
+| FPS | **Improved** — 74.8fps (was ~50fps), frame skip threshold relaxed to allow 2 in-flight | Medium → Low |
 | Frame jitter | **Fixed** — 4.8ms stddev, 0 stutters, p95=17ms | Low |
 | WiFi→USB handoff takes 15-20s | **Investigating** | Medium |
 | Eco→normal mode broken | **Fixed** — restarts HEVC at viewport res | Low |
@@ -166,7 +169,7 @@ This gives:
 | Lossy reassembler (32-frame limit, 500ms timeout) | **Fixed** — 128 concurrent, 2s timeout, in-order delivery | Medium → Resolved |
 | No congestion control | **Partial** — loss rate tracking + stats logging added | Medium |
 | DTLS overhead on 1400B chunks | **Open** | ~73 datagrams per 100KB keyframe |
-| Quality (20 Mbps target) | **Open** | Low quality + same bitrate undershoot |
+| Quality (20 Mbps target) | **Open** — bitrate-based at 20Mbps, still needs quality-based option | Low quality, needs work |
 | WiFi transport E2E | **Fixed** — 2591 frames rendered in rotation test | Critical → Resolved |
 
 ### Both Transports
@@ -174,5 +177,5 @@ This gives:
 |-------|--------|--------|
 | No mutual TLS (mTLS) | **Known gap** | Security — unauthenticated clients can connect |
 | FPS ceiling at ~50fps (target 120) | **Improved** — 74.8fps (encode time is bottleneck) | Medium |
-| iPad UI menu doesn't close on outside tap | **Open** | UX annoyance |
+| iPad UI menu doesn't close on outside tap | **Fixed** — tap gesture on background dismisses expanded HUD panel | UX → Resolved |
 | Ghostty screen recording dialogs during E2E | **Fixed** — using updateConfiguration | Low |

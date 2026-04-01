@@ -21,6 +21,27 @@
 - (void)cancelOperation:(id)sender { [self close]; }
 @end
 
+@interface StressPatternView : NSView
+@property (nonatomic, assign) uint64_t frameIndex;
+@end
+
+@implementation StressPatternView
+- (BOOL)isOpaque { return YES; }
+- (void)drawRect:(NSRect)dirtyRect {
+    CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
+    if (!ctx) return;
+    CGFloat scale = self.window.screen.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor;
+    if (scale <= 0.0) scale = 1.0;
+
+    CGContextSaveGState(ctx);
+    CGContextScaleCTM(ctx, 1.0 / scale, 1.0 / scale);
+    KeydRenderStressScene(ctx,
+                          CGSizeMake(self.bounds.size.width * scale, self.bounds.size.height * scale),
+                          self.frameIndex);
+    CGContextRestoreGState(ctx);
+}
+@end
+
 static os_log_t sLog;
 
 /* Reconnection backoff intervals (seconds) */
@@ -77,23 +98,42 @@ static uint64_t keydrd_host_time_us(void) {
 /* Resolution matching: stored original display mode for revert on disconnect */
 @property (nonatomic, assign) CGDisplayModeRef storedDisplayMode;
 @property (nonatomic, assign) BOOL resolutionChanged;
+@property (nonatomic, copy, nullable) NSString *testCaptureFilePath;
+@property (nonatomic, assign) BOOL testCaptureStressMode;
 
 /* Latency probe */
 @property (nonatomic, strong, nullable) NSTimer *latencyProbeTimer;
 
 /* QR code display window */
 @property (nonatomic, strong, nullable) NSWindow *qrWindow;
+@property (nonatomic, strong, nullable) NSWindow *stressWindow;
+@property (nonatomic, strong, nullable) NSTimer *stressWindowTimer;
 
 @end
 
 @implementation SessionManager
 
-- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode {
+- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode wiredOnly:(BOOL)wiredOnly {
+    return [self initWithTestMode:testMode
+                   automationMode:automationMode
+                        wiredOnly:wiredOnly
+              testCaptureFilePath:nil
+            testCaptureStressMode:NO];
+}
+
+- (instancetype)initWithTestMode:(BOOL)testMode
+                  automationMode:(BOOL)automationMode
+                       wiredOnly:(BOOL)wiredOnly
+             testCaptureFilePath:(NSString *)testCaptureFilePath
+           testCaptureStressMode:(BOOL)testCaptureStressMode {
     self = [super init];
     if (self) {
         sLog = os_log_create("com.ryheff.keyd.remote.agent", "SessionManager");
         _testMode = testMode;
         _automationMode = automationMode;
+        _wiredOnly = wiredOnly;
+        _testCaptureFilePath = [testCaptureFilePath copy];
+        _testCaptureStressMode = testCaptureStressMode;
         _sessionState = SESSION_STOPPED;
         _transportState = TRANSPORT_IDLE;
         _compressorInitialized = NO;
@@ -105,6 +145,8 @@ static uint64_t keydrd_host_time_us(void) {
 
         /* Create pipeline components */
         _capture = [[ScreenCapture alloc] init];
+        _capture.testCaptureFilePath = _testCaptureFilePath;
+        _capture.testCaptureStressMode = _testCaptureStressMode;
         _hevcEncoder = [[HEVCEncoder alloc] init];
         _usbTransport = [[USBNetworkTransport alloc] init];
         _wirelessTransport = [[WirelessTransport alloc] init];
@@ -143,6 +185,10 @@ static uint64_t keydrd_host_time_us(void) {
     self.permissionTimer = nil;
     [self.latencyProbeTimer invalidate];
     self.latencyProbeTimer = nil;
+    [self.stressWindowTimer invalidate];
+    self.stressWindowTimer = nil;
+    [self.stressWindow orderOut:nil];
+    self.stressWindow = nil;
 
     [_capture stopCapture];
     [_hevcEncoder stop];
@@ -285,16 +331,16 @@ static uint64_t keydrd_host_time_us(void) {
         return;
     }
 
-    /* Scale QR to reasonable display size (each module -> 8px) */
-    CGFloat scale = 8.0;
+    /* Scale QR to small display size (each module -> 3px) */
+    CGFloat scale = 3.0;
     CIImage *scaled = [ciImage imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
     NSCIImageRep *rep = [NSCIImageRep imageRepWithCIImage:scaled];
     NSImage *qrImage = [[NSImage alloc] initWithSize:rep.size];
     [qrImage addRepresentation:rep];
 
     CGFloat imageSize = rep.size.width;
-    CGFloat padding = 32;
-    CGFloat labelHeight = 40;
+    CGFloat padding = 12;
+    CGFloat labelHeight = 28;
     CGFloat windowWidth = imageSize + padding * 2;
     CGFloat windowHeight = imageSize + padding * 2 + labelHeight;
 
@@ -323,10 +369,10 @@ static uint64_t keydrd_host_time_us(void) {
     [contentView addSubview:imageView];
 
     /* Label */
-    NSTextField *label = [NSTextField labelWithString:@"Scan this QR code with the RemoteDesktop iPad app"];
-    label.frame = NSMakeRect(0, 8, windowWidth, 24);
+    NSTextField *label = [NSTextField labelWithString:@"Scan with iPad"];
+    label.frame = NSMakeRect(0, 4, windowWidth, 20);
     label.alignment = NSTextAlignmentCenter;
-    label.font = [NSFont systemFontOfSize:13];
+    label.font = [NSFont systemFontOfSize:11];
     label.textColor = NSColor.secondaryLabelColor;
     [contentView addSubview:label];
 
@@ -425,18 +471,22 @@ static uint64_t keydrd_host_time_us(void) {
      *   3. Run WiFi rotation tests during E2E suite */
     [_usbTransport startMonitoring];
 
-    __weak SessionManager *weakSelf2 = weakSelf;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        SessionManager *self2 = weakSelf2;
-        if (!self2) return;
-        if (self2->_usbTransport.isConnected) {
-            os_log(sLog, "USB NCM connected — starting WiFi advertising anyway (fallback + Bonjour)");
-        } else {
-            os_log(sLog, "USB NCM not connected after 3s — starting WiFi advertising");
-        }
-        [self2->_wirelessTransport startAdvertising];
-    });
+    if (!_wiredOnly) {
+        __weak SessionManager *weakSelf2 = weakSelf;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            SessionManager *self2 = weakSelf2;
+            if (!self2) return;
+            if (self2->_usbTransport.isConnected) {
+                os_log(sLog, "USB NCM connected — starting WiFi advertising anyway (fallback + Bonjour)");
+            } else {
+                os_log(sLog, "USB NCM not connected after 3s — starting WiFi advertising");
+            }
+            [self2->_wirelessTransport startAdvertising];
+        });
+    } else {
+        os_log(sLog, "Wired-only mode — WiFi/AWDL advertising disabled");
+    }
 }
 
 - (void)handleTransportEvent:(TransportEvent)event {
@@ -512,11 +562,21 @@ static uint64_t keydrd_host_time_us(void) {
 #pragma mark - Encode Mode Switching
 
 - (void)switchToLZ4Mode {
-    os_log(sLog, "Switching to LZ4 mode (full quality)");
+    os_log(sLog, "Switching to LZ4 mode (lossless, <1ms encode — wired USB only)");
     _isEcoMode = NO;
     [_hevcEncoder stop];
 
-    /* Reconfigure capture for LZ4 compression */
+    /* Capture resolution will be set to viewport dims when iPad sends viewport report.
+     * If viewport already known (reconnect), resize now. */
+    if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
+        os_log(sLog, "LZ4: resizing capture to viewport %ux%u", _viewportWidth, _viewportHeight);
+        [_capture updateCaptureResolution:_viewportWidth height:_viewportHeight];
+        _captureWidth = _viewportWidth;
+        _captureHeight = _viewportHeight;
+        [self sendGeometryUpdate];
+    }
+
+    /* Reconfigure capture for LZ4 compression (clears onPixelBuffer so LZ4 path runs) */
     [self configureFrameDelivery];
 
     if (self.onModeChanged) {
@@ -583,12 +643,15 @@ static uint64_t keydrd_host_time_us(void) {
     /* Send session handshake (also sets _captureWidth/_captureHeight) */
     [self sendSessionHandshake];
 
-    /* Encoder starts when iPad sends viewport report (after receiving this handshake).
-     * If viewport already known (reconnect), start immediately. */
-    if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
+    /* HEVC encoder starts when iPad sends viewport report (after receiving this handshake).
+     * Only needed for WiFi/AWDL — USB uses LZ4 (no HEVC encoder). */
+    if (_usbTransport.isConnected) {
+        os_log(sLog, "USB LZ4 mode — no HEVC encoder needed, capture at native %ux%u",
+               _captureWidth, _captureHeight);
+    } else if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
         [self _startEncoderAtViewportResolution];
     } else {
-        os_log(sLog, "Encoder deferred — waiting for iPad viewport report after handshake");
+        os_log(sLog, "HEVC encoder deferred — waiting for iPad viewport report after handshake");
     }
 
     /* Set up frame delivery */
@@ -606,8 +669,22 @@ static uint64_t keydrd_host_time_us(void) {
             os_log(sLog, "DTLS media channel ready -- starting capture now");
             [strongSelf _beginCapture];
         };
+    } else if (_usbTransport.isConnected && !_hevcEncoder.isActive) {
+        /* USB LZ4 mode: defer capture until viewport report arrives.
+         * Starting now would capture at 3600x2338 (handshake res), then resize
+         * when viewport arrives — but transitional frames at the old size crash
+         * the iPad LZ4 decompressor (buffer sized for new dims, frame is old size).
+         * Capture starts in handleViewportReport after resize + geometry update. */
+        if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
+            /* Viewport already known (reconnect) — start immediately at viewport res */
+            os_log(sLog, "USB LZ4: viewport known (%ux%u), starting capture now",
+                   _viewportWidth, _viewportHeight);
+            [self _beginCapture];
+        } else {
+            os_log(sLog, "USB LZ4: deferring capture until viewport report (avoids size mismatch crash)");
+        }
     } else {
-        /* USB: DTLS media is already ready (accepted before onTransportConnected) */
+        /* USB HEVC or other: start capture immediately */
         [self _beginCapture];
     }
 
@@ -618,34 +695,76 @@ static uint64_t keydrd_host_time_us(void) {
 - (void)_beginCapture {
     [_capture startCapture];
 
-    /* In test mode, show a persistent animated window that continuously changes
-     * the screen content. SCStream only delivers frames when pixels change —
-     * a static desktop produces only idle frames with no pixel data.
-     * This window animates a color cycle to ensure steady frame delivery. */
-    if (_testMode) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            /* Position top-right, 150x150 — small but enough to trigger SCStream frames */
-            NSScreen *screen = [NSScreen mainScreen];
-            CGFloat x = NSMaxX(screen.visibleFrame) - 160;
-            CGFloat y = NSMaxY(screen.visibleFrame) - 160;
-            NSWindow *testWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(x, y, 150, 150)
-                                                              styleMask:NSWindowStyleMaskBorderless
-                                                                backing:NSBackingStoreBuffered
-                                                                  defer:NO];
-            testWindow.level = NSFloatingWindowLevel;
-            testWindow.backgroundColor = [NSColor redColor];
-            [testWindow orderFront:nil];
+    /* In explicit real-capture mode, show the same stress scene that synthetic mode
+     * renders directly. This isolates ScreenCaptureKit as the primary variable. */
+    if (_testMode && _testCaptureFilePath.length == 0 && !_testCaptureStressMode) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            CGDirectDisplayID capturedDisplay = CGMainDisplayID();
+            NSScreen *screen = nil;
+            for (NSScreen *s in [NSScreen screens]) {
+                NSDictionary *desc = [s deviceDescription];
+                NSNumber *screenNumber = desc[@"NSScreenNumber"];
+                if (screenNumber && [screenNumber unsignedIntValue] == capturedDisplay) {
+                    screen = s;
+                    break;
+                }
+            }
+            if (!screen) screen = [NSScreen mainScreen];
+            [self.stressWindowTimer invalidate];
+            self.stressWindowTimer = nil;
+            [self.stressWindow orderOut:nil];
 
-            /* Animate at ~30fps to keep SCStream producing complete frames continuously.
-             * Each tick changes the background color, ensuring pixels differ every frame. */
-            __block CGFloat hue = 0;
-            [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(NSTimer *timer) {
-                hue = fmod(hue + 0.02, 1.0);
-                testWindow.backgroundColor = [NSColor colorWithHue:hue saturation:1.0 brightness:1.0 alpha:1.0];
+            NSWindow *stressWindow = [[NSWindow alloc] initWithContentRect:screen.frame
+                                                                 styleMask:NSWindowStyleMaskBorderless
+                                                                   backing:NSBackingStoreBuffered
+                                                                     defer:NO];
+            stressWindow.level = NSFloatingWindowLevel + 1;
+            stressWindow.opaque = YES;
+            stressWindow.backgroundColor = NSColor.blackColor;
+            stressWindow.ignoresMouseEvents = YES;
+            stressWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+
+            StressPatternView *patternView = [[StressPatternView alloc] initWithFrame:stressWindow.contentView.bounds];
+            patternView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+            stressWindow.contentView = patternView;
+
+            self.stressWindow = stressWindow;
+            [stressWindow orderFront:nil];
+            os_log(sLog, "Test mode: real-capture stress window active at %.0fx%.0f",
+                   screen.frame.size.width, screen.frame.size.height);
+
+            __weak SessionManager *weakSelf = self;
+            self.stressWindowTimer = [NSTimer scheduledTimerWithTimeInterval:1.0/120.0 repeats:YES block:^(NSTimer *timer) {
+                SessionManager *strongSelf = weakSelf;
+                if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) {
+                    [timer invalidate];
+                    return;
+                }
+                StressPatternView *view = (StressPatternView *)strongSelf.stressWindow.contentView;
+                if (![view isKindOfClass:[StressPatternView class]]) {
+                    return;
+                }
+                view.frameIndex += 1;
+                if (view.frameIndex < 10 || view.frameIndex % 120 == 0) {
+                    CGFloat scale = strongSelf.stressWindow.screen.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor;
+                    if (scale <= 0.0) scale = 1.0;
+                    size_t pixelWidth = (size_t)llround(view.bounds.size.width * scale);
+                    size_t pixelHeight = (size_t)llround(view.bounds.size.height * scale);
+                    uint64_t sig = KeydStressSceneSignature(CGSizeMake(pixelWidth, pixelHeight), view.frameIndex);
+                    uint32_t sceneCRC = KeydStressSceneCRC(pixelWidth, pixelHeight, view.frameIndex);
+                    os_log(sLog, "FRAME-CHECK source real-capture frame=%llu sig=%{public}016llx scene_crc=%08x size=%zux%zu scale=%.2f",
+                           view.frameIndex, sig, sceneCRC, pixelWidth, pixelHeight, scale);
+                }
+                [view setNeedsDisplay:YES];
             }];
-
-            os_log(sLog, "Test mode: animated window active for continuous frame delivery");
         });
+    } else if (_testMode && (_testCaptureFilePath.length > 0 || _testCaptureStressMode)) {
+        if (_testCaptureStressMode) {
+            os_log(sLog, "Test mode: using procedural full-frame stress capture");
+        } else {
+            os_log(sLog, "Test mode: using synthetic capture frames from %{public}@",
+                   _testCaptureFilePath);
+        }
     }
 }
 
@@ -713,19 +832,38 @@ static uint64_t keydrd_host_time_us(void) {
         memcpy(packet, &output->header, sizeof(MediaFrameHeader));
         memcpy(packet + sizeof(MediaFrameHeader), output->buf, output->compressed_size);
 
+        /* Log frame sizes for debugging bandwidth issues */
+        static int lz4SendCount = 0;
+        if (lz4SendCount < 10 || lz4SendCount % 200 == 0) {
+            BOOL isKey = (output->header.flags & KEYDRD_FLAG_KEYFRAME) != 0;
+            os_log(sLog, "LZ4 frame #%d: %zu bytes compressed (%s), seq=%u",
+                   lz4SendCount, output->compressed_size,
+                   isKey ? "KEYFRAME" : "delta",
+                   output->header.seq);
+        }
+        lz4SendCount++;
+
         [strongSelf sendMediaFrameToiPad:packet length:totalLen];
 
         free(packet);
     };
 
-    /* Raw pixel buffer callback — feeds HEVC encoder when active */
-    _capture.onPixelBuffer = ^(CVPixelBufferRef pixelBuffer, CMTime timestamp, uint64_t captureTimestampUs) {
-        SessionManager *strongSelf = weakSelf;
-        if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
-        if (!strongSelf->_hevcEncoder.isActive) return;
+    /* Raw pixel buffer callback — feeds HEVC encoder when active.
+     * CRITICAL: only set this when HEVC is active. ScreenCapture.didOutputSampleBuffer
+     * checks `if (self.onPixelBuffer)` — if non-nil, it skips LZ4 compression entirely.
+     * Setting a block that just returns early still prevents LZ4 from running. */
+    if (_hevcEncoder.isActive) {
+        _capture.onPixelBuffer = ^(CVPixelBufferRef pixelBuffer, CMTime timestamp, uint64_t captureTimestampUs) {
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
+            if (!strongSelf->_hevcEncoder.isActive) return;
 
-        [strongSelf->_hevcEncoder encodePixelBuffer:pixelBuffer timestamp:timestamp captureTimestampUs:captureTimestampUs];
-    };
+            [strongSelf->_hevcEncoder encodePixelBuffer:pixelBuffer timestamp:timestamp captureTimestampUs:captureTimestampUs];
+        };
+    } else {
+        /* LZ4 mode: clear onPixelBuffer so ScreenCapture falls through to LZ4 compression */
+        _capture.onPixelBuffer = nil;
+    }
 
     /* HEVC encoder output callback */
     _hevcEncoder.onEncodedFrame = ^(const void *data, size_t len, MediaFrameHeader header) {
@@ -1074,13 +1212,33 @@ static uint64_t keydrd_host_time_us(void) {
     os_log(sLog, "iPad viewport report: %ux%u (Mac display: %ux%u)",
            _viewportWidth, _viewportHeight, _captureWidth, _captureHeight);
 
-    /* Try to match display mode to viewport resolution.
-     * This eliminates SCStream downscale blur by capturing at native 1:1 pixels.
-     * If a suitable mode is found, _captureWidth/_captureHeight are updated to
-     * the new native dimensions before the encoder starts. */
-    [self _autoMatchDisplayModeForViewport];
+    /* In LZ4 mode (wired USB), no HEVC encoder needed.
+     * Resize capture to viewport dims, send geometry update to iPad so LZ4
+     * decompressor uses the correct size, THEN start capture.
+     * Order matters: geometry update must arrive before frames at new size. */
+    if (!_hevcEncoder.isActive && _usbTransport.isConnected) {
+        os_log(sLog, "LZ4 mode (USB) — setting capture to viewport %ux%u, then starting capture",
+               _viewportWidth, _viewportHeight);
+        _captureWidth = _viewportWidth;
+        _captureHeight = _viewportHeight;
 
-    /* Start encoder + reconfigure capture at the (possibly updated) resolution */
+        /* Tell iPad the frame size BEFORE any frames arrive */
+        [self sendGeometryUpdate];
+
+        /* Set capture resolution (SCStream config update) */
+        _capture.captureWidth = _viewportWidth;
+        _capture.captureHeight = _viewportHeight;
+
+        /* NOW start capture — iPad decompressor is already at correct size */
+        [self _beginCapture];
+
+        if (self.onResolutionChanged) {
+            self.onResolutionChanged(_captureWidth, _captureHeight);
+        }
+        return;
+    }
+
+    /* HEVC mode (WiFi): start encoder + reconfigure capture at viewport resolution */
     [self _startEncoderAtViewportResolution];
 }
 
@@ -1090,37 +1248,30 @@ static uint64_t keydrd_host_time_us(void) {
         return;
     }
 
-    /* Determine encode dimensions:
-     * If display mode was matched, _captureWidth/_captureHeight are already set
-     * to the new native pixel dimensions (1:1 capture, no downscale).
-     * Otherwise, use viewport dimensions (SCStream downscale). */
-    uint32_t encodeWidth = _captureWidth;
-    uint32_t encodeHeight = _captureHeight;
+    /* Always use viewport dimensions for encoding — no display mode matching.
+     * SCStream downscales from Mac native (e.g. 3600x2338) to viewport (2752x1786). */
+    uint32_t encodeWidth = _viewportWidth;
+    uint32_t encodeHeight = _viewportHeight;
 
-    /* If display mode was NOT matched (no resolution change), fall back to viewport dims */
-    if (!_resolutionChanged) {
-        encodeWidth = _viewportWidth;
-        encodeHeight = _viewportHeight;
-    }
-
-    /* USB: quality-based encoding (CRF-like) to fix bitrate undershoot.
-     * Quality 0.85 gives excellent text clarity at actual ~20-40Mbps.
+    /* USB: AverageBitRate=40Mbps — realistic target the encoder can track.
+     * At 150Mbps the encoder undershoots to 6Mbps (too much headroom).
+     * At 40Mbps it produces 15-30Mbps actual = good text quality + fast encode.
+     * Quality-based (0.85-0.95) was tried but makes encoder work much harder
+     * per frame (~40ms vs ~20ms), causing stutter on complex content.
      * WiFi: bitrate-based at 20Mbps (bandwidth constrained). */
     int bitrate;
     float quality;
     if (_usbTransport.isConnected) {
-        bitrate = 0;        /* unused in quality mode */
-        quality = 0.85f;
+        bitrate = 40000000; /* 40 Mbps — realistic target, not undershooting */
+        quality = 0.0f;     /* bitrate-based, faster than quality-based */
     } else {
         bitrate = 20000000;
         quality = 0.0f;     /* bitrate-based */
     }
 
-    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps %s (capture: %ux%u, viewport: %ux%u, resChanged=%d)",
-           encodeWidth, encodeHeight,
-           quality > 0 ? "quality=0.85" : "bitrate=20Mbps",
-           _captureWidth, _captureHeight, _viewportWidth, _viewportHeight,
-           _resolutionChanged);
+    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps bitrate=%dMbps (capture: %ux%u, viewport: %ux%u)",
+           encodeWidth, encodeHeight, bitrate / 1000000,
+           _captureWidth, _captureHeight, _viewportWidth, _viewportHeight);
 
     [_hevcEncoder startWithWidth:(int)encodeWidth
                           height:(int)encodeHeight
@@ -1446,7 +1597,7 @@ static uint64_t keydrd_host_time_us(void) {
      * If USB connected first during startTransportMonitoring, WiFi advertising
      * was skipped. Start it now so transport rotation tests (and real reconnections)
      * can discover the Mac over WiFi/AWDL. */
-    if (!_wirelessTransport.isConnected) {
+    if (!_wiredOnly && !_wirelessTransport.isConnected) {
         os_log(sLog, "Starting WiFi advertising for reconnection (may have been skipped earlier)");
         [_wirelessTransport startAdvertising];
     }

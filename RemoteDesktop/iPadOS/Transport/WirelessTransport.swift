@@ -438,7 +438,9 @@ final class WirelessTransport {
     private func drainTCPBuffer() {
         while tcpBuffer.count >= 4 {
             let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
-                let raw = buf.load(as: UInt32.self)
+                guard let base = buf.baseAddress else { return 0 }
+                var raw: UInt32 = 0
+                memcpy(&raw, base, 4)
                 return Int(UInt32(bigEndian: raw))
             }
 

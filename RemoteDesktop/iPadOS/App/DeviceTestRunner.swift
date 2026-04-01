@@ -58,7 +58,7 @@ final class DeviceTestRunner {
 
     // Overall timeout
     private var overallTimer: Timer?
-    private static let overallTimeout: TimeInterval = 180 // 5s stabilize + 10s fps + 10s throughput + 3x(5s teardown + 15s connection) + buffer
+    private static let overallTimeout: TimeInterval = 225 // 5s stabilize + 10s fps + 10s throughput + 12s heavy-load + 5s latency + 3x(5s teardown + 15s connection) + 10s wifi baselines + buffer
 
     // --- New test state ---
 
@@ -80,8 +80,8 @@ final class DeviceTestRunner {
     private var tieredLatencyComplete = false
     private var tieredLatencyProbes: [Int] = [] // RTTs in microseconds
     private var tieredLatencyProbesSent = 0
-    private static let tieredLatencyProbeCount = 20
-    private static let tieredLatencyProbeSpacingMs: Int = 50
+    private static let tieredLatencyProbeCount = 50
+    private static let tieredLatencyProbeSpacingMs: Int = 100
 
     // Pipeline latency (capture-to-decode, using host-time ts_us)
     private var pipelineLatenciesUs: [Int64] = []
@@ -95,6 +95,7 @@ final class DeviceTestRunner {
 
     /// Expose clock offset for latency probes in SessionManager
     var clockOffsetForProbe: Int64 { clockOffsetUs }
+    var clockOffsetCalibratedForLogging: Bool { clockOffsetCalibrated }
     private var clockSyncSamples: [(offset: Int64, rtt: Int64)] = []
     private var clockSyncProbesSent = 0
     private var clockSyncComplete = false
@@ -195,6 +196,12 @@ final class DeviceTestRunner {
         // frame bytes actually received from the transport.
         if throughputTestActive && !throughputTestComplete {
             throughputFrames += 1
+        }
+
+        // Feed WiFi baseline measurement during WiFi rotation phase
+        if wifiMeasurementActive {
+            wifiMeasurementFrameCount += 1
+            wifiMeasurementFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
         }
     }
 
@@ -861,8 +868,35 @@ final class DeviceTestRunner {
 
             self.recordResult(name: "fps", passed: passed, detail: detail)
 
-            self.runFrameLossTest()
+            // Run frame pacing test using the same interval data
+            self.runFramePacingTest(intervals: intervals)
         }
+    }
+
+    // MARK: - Test 12b: Frame Pacing Consistency (wired)
+
+    private func runFramePacingTest(intervals: [Double]) {
+        print("[TEST] RUNNING: frame-pacing")
+
+        guard !intervals.isEmpty else {
+            recordResult(name: "frame-pacing", passed: false, detail: "no frame intervals to analyze")
+            runFrameLossTest()
+            return
+        }
+
+        let mean = intervals.reduce(0, +) / Double(intervals.count)
+        let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+        let stddev = sqrt(variance)
+
+        // Coefficient of variation = stddev / mean
+        let cv = mean > 0 ? stddev / mean : 999.0
+
+        // PASS if CV < 0.35 (35% variation)
+        let passed = cv < 0.35
+        let detail = "cv=\(String(format: "%.3f", cv)), stddev=\(String(format: "%.1f", stddev))ms, mean=\(String(format: "%.1f", mean))ms"
+
+        recordResult(name: "frame-pacing", passed: passed, detail: detail)
+        runFrameLossTest()
     }
 
     // MARK: - Test 13: Frame Loss (reassembler drops)
@@ -1060,7 +1094,7 @@ final class DeviceTestRunner {
 
             self.reportPipelineLatency()
             self.reportGlassToGlassLatency()
-            self.runTransportRotationTests()
+            self.runHeavyLoadTest()
         }
     }
 
@@ -1069,6 +1103,17 @@ final class DeviceTestRunner {
     private func reportPipelineLatency() {
         guard !pipelineLatenciesUs.isEmpty else {
             print("[TEST] INFO: pipeline-latency (no samples — clock skew too large or no frames)")
+            recordResult(name: "pipeline-latency", passed: false,
+                        detail: "no samples collected — screen likely black")
+            return
+        }
+
+        // Minimum sample count: if we have very few samples, the screen is effectively black
+        let minSamples = 50
+        if pipelineLatenciesUs.count < minSamples {
+            print("[TEST] INFO: pipeline-latency (only \(pipelineLatenciesUs.count) samples — too few, screen likely not rendering)")
+            recordResult(name: "pipeline-latency", passed: false,
+                        detail: "only \(pipelineLatenciesUs.count) samples (need \(minSamples)+) — insufficient frame delivery")
             return
         }
 
@@ -1098,8 +1143,17 @@ final class DeviceTestRunner {
     private func reportGlassToGlassLatency() {
         guard !glassToGlassLatenciesUs.isEmpty else {
             print("[TEST] INFO: glass-to-glass-latency (no samples — presentedHandler not firing or clock skew)")
-            recordResult(name: "glass-to-glass-latency", passed: true,
-                        detail: "no samples collected (informational)")
+            recordResult(name: "glass-to-glass-latency", passed: false,
+                        detail: "no samples collected — screen likely black")
+            return
+        }
+
+        // Minimum sample count: if we have very few samples, the screen is effectively black
+        let minSamples = 50
+        if glassToGlassLatenciesUs.count < minSamples {
+            print("[TEST] INFO: glass-to-glass-latency (only \(glassToGlassLatenciesUs.count) samples — too few)")
+            recordResult(name: "glass-to-glass-latency", passed: false,
+                        detail: "only \(glassToGlassLatenciesUs.count) samples (need \(minSamples)+) — insufficient frame delivery")
             return
         }
 
@@ -1132,6 +1186,59 @@ final class DeviceTestRunner {
                     detail: "capture-to-presented: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
     }
 
+    // MARK: - Heavy Load Test
+
+    /// Measures FPS and latency during heavy screen changes (Mac stress window).
+    /// The Mac shows a fullscreen animated gradient at T+30s that stresses the
+    /// LZ4 delta pipeline with near-full-frame changes.
+    private func runHeavyLoadTest() {
+        print("[TEST] INFO: === Heavy Load Test (waiting for Mac stress window) ===")
+
+        // Wait 2s for the Mac stress window to be fully active,
+        // then collect metrics for 10 seconds.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else { return }
+
+            let startRendered = self.sessionManager?.metalRenderer.renderedFrameCount ?? 0
+            let startPipelineCount = self.pipelineLatenciesUs.count
+            let startTime = CFAbsoluteTimeGetCurrent()
+
+            // After 10s, collect results
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+                guard let self = self else { return }
+
+                let endRendered = self.sessionManager?.metalRenderer.renderedFrameCount ?? 0
+                let endPipelineCount = self.pipelineLatenciesUs.count
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+
+                let hlFrames = endRendered - startRendered
+                let hlFPS = elapsed > 0 ? Double(hlFrames) / elapsed : 0
+
+                // Pipeline latency for frames received during heavy load
+                let safeEnd = min(endPipelineCount, self.pipelineLatenciesUs.count)
+                let safeStart = min(startPipelineCount, safeEnd)
+                let hlPipeline = Array(self.pipelineLatenciesUs[safeStart..<safeEnd])
+                var hlMedianMs: Int64 = 0
+                var hlP95Ms: Int64 = 0
+                if !hlPipeline.isEmpty {
+                    let sorted = hlPipeline.sorted()
+                    hlMedianMs = sorted[sorted.count / 2] / 1000
+                    let p95Idx = min(Int(Double(sorted.count) * 0.95), sorted.count - 1)
+                    hlP95Ms = sorted[p95Idx] / 1000
+                }
+
+                print("[TEST] INFO: heavy-load (fps=\(String(format: "%.1f", hlFPS)), frames=\(hlFrames), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms, samples=\(hlPipeline.count), duration=\(String(format: "%.1f", elapsed))s)")
+
+                // Heavy load targets: fps >= 10, pipeline p95 < 200ms
+                let passed = hlFPS >= 10.0 && (hlPipeline.isEmpty || hlP95Ms < 200)
+                self.recordResult(name: "heavy-load", passed: passed,
+                            detail: "fps=\(String(format: "%.1f", hlFPS)), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms")
+
+                self.runTransportRotationTests()
+            }
+        }
+    }
+
     // MARK: - Multi-Transport Rotation Tests
 
     /// Transport names to test in order.
@@ -1147,6 +1254,13 @@ final class DeviceTestRunner {
     private var rotationHandshakeReceived = false
     private var rotationFramesRendered = 0
     private var rotationTransportType: String = ""
+
+    /// WiFi baseline measurement state (collected during WiFi rotation phase).
+    private var wifiMeasurementActive = false
+    private var wifiMeasurementStartTime: CFAbsoluteTime = 0
+    private var wifiMeasurementFrameTimestamps: [CFAbsoluteTime] = []
+    private var wifiMeasurementFrameCount = 0
+    private static let wifiMeasurementDuration: TimeInterval = 10.0
 
     /// Entry point for multi-transport testing.
     /// Runs after all single-transport tests complete.
@@ -1168,6 +1282,15 @@ final class DeviceTestRunner {
 
         let transport = Self.transportOrder[transportRotationIdx]
         print("[TEST] INFO: --- Transport rotation: testing \(transport) (\(transportRotationIdx + 1)/\(Self.transportOrder.count)) ---")
+
+        // In wired-only mode, skip WiFi and AWDL rotation tests
+        let isWiredOnly = sessionManager?.isWiredOnly ?? false
+        if isWiredOnly && (transport == "wifi" || transport == "awdl") {
+            print("[TEST] INFO: \(transport) test skipped — wired-only mode")
+            completeTransportRotation(transport: transport, passed: true,
+                                     detail: "SKIPPED — wired-only mode")
+            return
+        }
 
         // AWDL cannot be tested when WiFi infrastructure is available.
         // NWConnection always prefers WiFi over AWDL on the same network.
@@ -1260,6 +1383,11 @@ final class DeviceTestRunner {
 
         if connected && rendered > rotationFramesRendered + 3 {
             // Got connection + at least 3 new rendered frames
+            if transport == "wifi" {
+                // Run WiFi baseline measurements before completing
+                runWiFiBaselineMeasurements(detectedType: detectedType, newFrames: rendered - rotationFramesRendered)
+                return
+            }
             completeTransportRotation(transport: transport, passed: true,
                                      detail: "connected=\(detectedType), \(rendered - rotationFramesRendered) new frames rendered")
             return
@@ -1273,6 +1401,99 @@ final class DeviceTestRunner {
         // Not ready yet, poll again
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.pollTransportConnection(transport: transport, deadline: deadline)
+        }
+    }
+
+    // MARK: - WiFi Baseline Measurements
+
+    /// Collect WiFi performance baselines (FPS, latency, jitter, frame loss, resolution).
+    /// All results are INFO-level (no pass/fail) to establish baselines.
+    private func runWiFiBaselineMeasurements(detectedType: String, newFrames: Int) {
+        print("[TEST] INFO: === WiFi Baseline Measurements (10s collection period) ===")
+
+        guard let sm = sessionManager else {
+            print("[TEST] INFO: wifi-baselines skipped — sessionManager nil")
+            completeTransportRotation(transport: "wifi", passed: true,
+                                     detail: "connected=\(detectedType), \(newFrames) new frames rendered (baselines skipped)")
+            return
+        }
+
+        // Reset WiFi measurement state
+        wifiMeasurementActive = true
+        wifiMeasurementStartTime = CFAbsoluteTimeGetCurrent()
+        wifiMeasurementFrameTimestamps = []
+        wifiMeasurementFrameCount = 0
+
+        // Snapshot pipeline latencies and reassembler stats at start
+        let pipelineLatencyStartCount = pipelineLatenciesUs.count
+        let reassemblerStartDelivered = sm.udpReassembler.framesDelivered
+        let reassemblerStartEvicted = sm.udpReassembler.framesEvicted
+        let reassemblerStartPurged = sm.udpReassembler.framesPurged
+
+        // Collect for wifiMeasurementDuration seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.wifiMeasurementDuration) { [weak self] in
+            guard let self = self else { return }
+            self.wifiMeasurementActive = false
+
+            let elapsed = CFAbsoluteTimeGetCurrent() - self.wifiMeasurementStartTime
+            let timestamps = self.wifiMeasurementFrameTimestamps
+            let frameCount = timestamps.count
+
+            // 1. WiFi FPS
+            let avgFPS: Double = elapsed > 0 ? Double(frameCount) / elapsed : 0
+            print("[TEST] INFO: wifi-fps (avg=\(String(format: "%.1f", avgFPS)) fps, \(frameCount) frames in \(String(format: "%.1f", elapsed))s)")
+
+            // 2. WiFi Latency (pipeline latencies collected during measurement window)
+            let wifiPipelineLatencies = Array(self.pipelineLatenciesUs.suffix(from: min(pipelineLatencyStartCount, self.pipelineLatenciesUs.count)))
+            if !wifiPipelineLatencies.isEmpty {
+                let sorted = wifiPipelineLatencies.sorted()
+                let count = sorted.count
+                let minMs = sorted.first! / 1000
+                let medianMs = sorted[count / 2] / 1000
+                let p95Idx = min(Int(Double(count) * 0.95), count - 1)
+                let p95Ms = sorted[p95Idx] / 1000
+                print("[TEST] INFO: wifi-latency (pipeline: min=\(minMs)ms, median=\(medianMs)ms, p95=\(p95Ms)ms)")
+            } else {
+                print("[TEST] INFO: wifi-latency (no pipeline samples during measurement)")
+            }
+
+            // 3. WiFi Jitter
+            if timestamps.count >= 2 {
+                var intervals: [Double] = []
+                for i in 1..<timestamps.count {
+                    intervals.append((timestamps[i] - timestamps[i-1]) * 1000.0)
+                }
+                let mean = intervals.reduce(0, +) / Double(intervals.count)
+                let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+                let stddev = sqrt(variance)
+                let stutters = intervals.filter { $0 > 100.0 }.count
+                print("[TEST] INFO: wifi-jitter (stddev=\(String(format: "%.1f", stddev))ms, stutters=\(stutters))")
+            } else {
+                print("[TEST] INFO: wifi-jitter (insufficient frames for interval analysis)")
+            }
+
+            // 4. WiFi Frame Loss (reassembler delta during measurement)
+            if let sm = self.sessionManager {
+                let delivered = sm.udpReassembler.framesDelivered - reassemblerStartDelivered
+                let evicted = sm.udpReassembler.framesEvicted - reassemblerStartEvicted
+                let purged = sm.udpReassembler.framesPurged - reassemblerStartPurged
+                let total = delivered + evicted + purged
+                let lossPct: Double = total > 0 ? Double(evicted + purged) / Double(total) * 100.0 : 0
+                print("[TEST] INFO: wifi-frame-loss (delivered=\(delivered), evicted=\(evicted), purged=\(purged), loss=\(String(format: "%.1f", lossPct))%)")
+            }
+
+            // 5. WiFi Resolution (check last decoded frame dims vs viewport)
+            if let lastW = self.decodedFrameWidths.last, let lastH = self.decodedFrameHeights.last {
+                let vpW = self.sessionManager?.viewportWidth ?? 0
+                let vpH = self.sessionManager?.viewportHeight ?? 0
+                print("[TEST] INFO: wifi-resolution (frame=\(lastW)x\(lastH), viewport=\(vpW)x\(vpH))")
+            } else {
+                print("[TEST] INFO: wifi-resolution (no decoded frame dimensions available)")
+            }
+
+            // Complete the WiFi rotation with pass
+            self.completeTransportRotation(transport: "wifi", passed: true,
+                                          detail: "connected=\(detectedType), \(newFrames) new frames, wifi baselines collected")
         }
     }
 
@@ -1660,8 +1881,10 @@ final class DeviceTestRunner {
         var allTests = ["bonjour-discovery", "tls-connection", "ecdh-exchange",
                        "transport-detected", "session-handshake", "frame-reception",
                        "frame-decompression", "latency-probe", "keepalive",
-                       "resolution", "fps", "frame-loss", "latency-tiered", "throughput",
-                       "pipeline-latency",
+                       "resolution", "fps", "frame-pacing", "frame-loss",
+                       "latency-tiered", "throughput",
+                       "pipeline-latency", "glass-to-glass-latency",
+                       "heavy-load",
                        "transport-usb", "transport-wifi", "transport-awdl", "multi-transport",
                        "sec-cleartext-tcp", "sec-cleartext-udp", "sec-untrusted-cert",
                        "sec-pairing-port-closed"]

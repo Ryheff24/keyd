@@ -37,3 +37,10 @@ void apply_delta(const void *delta, const void *prev_keyframe,
 
 /* Update reference buffer with new keyframe. Takes write lock, swaps active. */
 void update_keyframe_reference(DeltaBuffer *db, const void *keyframe);
+
+/* Fused: compute XOR delta AND update reference in one pass.
+ * Eliminates the separate update_keyframe_reference memcpy.
+ * Returns 1 if any pixel changed (dirty), 0 if frame identical.
+ * Uses NEON SIMD on ARM64 for maximum throughput.
+ * MUST be called from a serial queue (no locking). */
+int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_out);

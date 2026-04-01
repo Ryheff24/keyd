@@ -19,6 +19,7 @@
 		A1000016000000000000000A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000016000000000000000F /* Network.framework */; };
 		A1000017000000000000000A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000017000000000000000F /* Security.framework */; };
 		A1000018000000000000000A /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000018000000000000000F /* ServiceManagement.framework */; };
+		A1000019000000000000000A /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000019000000000000000F /* AVFoundation.framework */; };
 		A1000020000000000000000A /* FrameCompressor.c in Sources */ = {isa = PBXBuildFile; fileRef = A1000020000000000000000F /* FrameCompressor.c */; };
 		A1000022000000000000000A /* ScreenCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000022000000000000000F /* ScreenCapture.m */; };
 		A1000024000000000000000A /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000024000000000000000F /* libz.tbd */; };
@@ -71,6 +72,7 @@
 		A1000016000000000000000F /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		A1000017000000000000000F /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		A1000018000000000000000F /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
+		A1000019000000000000000F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		A1000020000000000000000F /* FrameCompressor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = FrameCompressor.c; sourceTree = "<group>"; };
 		A1000021000000000000000F /* FrameCompressor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FrameCompressor.h; sourceTree = "<group>"; };
 		A1000022000000000000000F /* ScreenCapture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ScreenCapture.m; sourceTree = "<group>"; };
@@ -120,6 +122,7 @@
 				A1000017000000000000000A /* Security.framework in Frameworks */,
 				A1000024000000000000000A /* libz.tbd in Frameworks */,
 				A1000018000000000000000A /* ServiceManagement.framework in Frameworks */,
+				A1000019000000000000000A /* AVFoundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -190,6 +193,7 @@
 				A1000017000000000000000F /* Security.framework */,
 				A1000024000000000000000F /* libz.tbd */,
 				A1000018000000000000000F /* ServiceManagement.framework */,
+				A1000019000000000000000F /* AVFoundation.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";

@@ -42,6 +42,9 @@ typedef NS_ENUM(NSInteger, SessionState) {
 /** Whether running in automation mode (auto-shows QR and writes payload file). */
 @property (nonatomic, assign, readonly) BOOL automationMode;
 
+/** Wired-only mode: disables WiFi/AWDL transport and Bonjour advertising. */
+@property (nonatomic, assign, readonly) BOOL wiredOnly;
+
 /* ---- Callbacks to StatusBarController ---- */
 @property (nonatomic, copy, nullable) void (^onTransportStateChanged)(TransportState state);
 @property (nonatomic, copy, nullable) void (^onModeChanged)(BOOL isEco);
@@ -49,7 +52,12 @@ typedef NS_ENUM(NSInteger, SessionState) {
 @property (nonatomic, copy, nullable) void (^onSessionStateChanged)(SessionState state);
 @property (nonatomic, copy, nullable) void (^onPermissionStatusChanged)(BOOL screenGranted, BOOL accessibilityGranted);
 
-- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode;
+- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode wiredOnly:(BOOL)wiredOnly;
+- (instancetype)initWithTestMode:(BOOL)testMode
+                  automationMode:(BOOL)automationMode
+                       wiredOnly:(BOOL)wiredOnly
+             testCaptureFilePath:(nullable NSString *)testCaptureFilePath
+           testCaptureStressMode:(BOOL)testCaptureStressMode;
 
 /**
  * Start the session lifecycle.

@@ -44,6 +44,10 @@ NS_ASSUME_NONNULL_BEGIN
 /** Callback fired when the TCP input connection is accepted (ready to send handshake). */
 @property (nonatomic, copy, nullable) void (^onInputConnectionReady)(void);
 
+/** Callback fired when the TCP input connection is lost (iPad disconnected).
+ *  SessionManager uses this to trigger transport FSM disconnect event. */
+@property (nonatomic, copy, nullable) void (^onInputConnectionLost)(void);
+
 /**
  * Start monitoring for USB NCM interfaces.
  * When an interface is detected, listeners are created automatically.

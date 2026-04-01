@@ -24,6 +24,21 @@ func keydrdHostTimeUs() -> UInt64 {
     UInt64(CACurrentMediaTime() * 1_000_000)
 }
 
+// Packed protocol payloads can start at unaligned offsets inside `Data` buffers
+// (for example after a 9-byte InputEventHeader). Read them with memcpy-based
+// helpers rather than typed pointer loads, which can trap on ARM.
+@inline(__always)
+private func readUInt32(from base: UnsafePointer<UInt8>, offset: Int) -> UInt32 {
+    var value: UInt32 = 0
+    memcpy(&value, base + offset, 4)
+    return value
+}
+
+@inline(__always)
+private func readFloat32(from base: UnsafePointer<UInt8>, offset: Int) -> Float {
+    Float(bitPattern: readUInt32(from: base, offset: offset))
+}
+
 // MARK: - MediaFrameHeader Flags
 
 struct MediaFrameFlags: OptionSet {
@@ -291,15 +306,19 @@ struct ResolutionMatchResponse {
     let newHeight: UInt32
     let newScale: Float
 
-    static var size: Int {
-        MemoryLayout<ResolutionMatchResponse>.size
-    }
+    static let size = 13
 
     static func parse(from data: Data, offset: Int) -> ResolutionMatchResponse? {
         guard data.count >= offset + Self.size else { return nil }
         return data.withUnsafeBytes { buffer -> ResolutionMatchResponse? in
-            guard let base = buffer.baseAddress else { return nil }
-            return (base + offset).assumingMemoryBound(to: ResolutionMatchResponse.self).pointee
+            guard let rawBase = buffer.baseAddress else { return nil }
+            let base = rawBase.assumingMemoryBound(to: UInt8.self) + offset
+            return ResolutionMatchResponse(
+                result: base[0],
+                newWidth: readUInt32(from: base, offset: 1),
+                newHeight: readUInt32(from: base, offset: 5),
+                newScale: readFloat32(from: base, offset: 9)
+            )
         }
     }
 }
@@ -313,15 +332,19 @@ struct GeometryUpdatePayload {
     let scaleFactor: Float
     let aspectRatio: Float
 
-    static var size: Int {
-        MemoryLayout<GeometryUpdatePayload>.size
-    }
+    static let size = 16
 
     static func parse(from data: Data, offset: Int) -> GeometryUpdatePayload? {
         guard data.count >= offset + Self.size else { return nil }
         return data.withUnsafeBytes { buffer -> GeometryUpdatePayload? in
-            guard let base = buffer.baseAddress else { return nil }
-            return (base + offset).assumingMemoryBound(to: GeometryUpdatePayload.self).pointee
+            guard let rawBase = buffer.baseAddress else { return nil }
+            let base = rawBase.assumingMemoryBound(to: UInt8.self) + offset
+            return GeometryUpdatePayload(
+                displayWidth: readUInt32(from: base, offset: 0),
+                displayHeight: readUInt32(from: base, offset: 4),
+                scaleFactor: readFloat32(from: base, offset: 8),
+                aspectRatio: readFloat32(from: base, offset: 12)
+            )
         }
     }
 }

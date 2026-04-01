@@ -7,6 +7,14 @@
 
 static os_log_t sLog;
 
+static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString *flag) {
+    NSUInteger idx = [args indexOfObject:flag];
+    if (idx == NSNotFound || idx + 1 >= args.count) {
+        return nil;
+    }
+    return args[idx + 1];
+}
+
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
@@ -25,10 +33,28 @@ static os_log_t sLog;
     /* ---- Prevent macOS from auto-terminating our menu-bar-only agent ---- */
     [[NSProcessInfo processInfo] disableAutomaticTermination:@"Menu bar agent must stay running"];
 
-    /* ---- Detect --test-mode flag (pattern from keyd v1.0) ---- */
-    _testMode = [[NSProcessInfo processInfo].arguments containsObject:@"--test-mode"];
+    /* ---- Detect --test-mode and --wired-only flags ---- */
+    NSArray *args = [NSProcessInfo processInfo].arguments;
+    _testMode = [args containsObject:@"--test-mode"];
+    BOOL wiredOnly = [args containsObject:@"--wired-only"];
+    _testCaptureFilePath = [valueForArgument(args, @"--test-capture-file") copy];
+    _realCaptureMode = [args containsObject:@"--real-capture"];
+    BOOL explicitStressCapture = [args containsObject:@"--stress-capture"];
+    _testCaptureStressMode = _testMode && !_realCaptureMode && (_testCaptureFilePath.length == 0 || explicitStressCapture);
     if (_testMode) {
-        os_log(sLog, "Running in test mode");
+        os_log(sLog, "Running in test mode%{public}s%{public}s%{public}s",
+               wiredOnly ? " (wired-only)" : "",
+               _testCaptureFilePath ? " with synthetic capture file" : "",
+               _testCaptureStressMode ? " with stress capture" : "");
+        if (_testCaptureFilePath) {
+            os_log(sLog, "Test capture file: %{public}@", _testCaptureFilePath);
+        }
+        if (_testCaptureStressMode) {
+            os_log(sLog, "Stress capture mode enabled");
+        }
+        if (_realCaptureMode) {
+            os_log(sLog, "Real desktop capture explicitly enabled");
+        }
     }
 
     /* ---- Register login item via SMAppService (RD-AGENT-03) ---- */
@@ -40,7 +66,11 @@ static os_log_t sLog;
     _statusBar = [[StatusBarController alloc] init];
 
     /* ---- Create SessionManager (owns all pipeline components) ---- */
-    _sessionManager = [[SessionManager alloc] initWithTestMode:_testMode automationMode:_automationMode];
+    _sessionManager = [[SessionManager alloc] initWithTestMode:_testMode
+                                                automationMode:_automationMode
+                                                     wiredOnly:wiredOnly
+                                           testCaptureFilePath:_testCaptureFilePath
+                                         testCaptureStressMode:_testCaptureStressMode];
 
     /* Wire SessionManager state changes to StatusBarController */
     __weak StatusBarController *weakBar = _statusBar;

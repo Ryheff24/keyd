@@ -11,7 +11,7 @@ IOS_LABELS ?=
 
 DEVICE_SELECTORS := $(filter ipad iphone ios mac,$(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)))
 
-.PHONY: deploy run attach stop index test-integration ipad iphone ios mac
+.PHONY: deploy run attach stop index index-remote index-legacy index-all test-integration ipad iphone ios mac
 
 deploy: test-integration
 	@WORKSPACE_PATH="$(WORKSPACE_PATH)" \
@@ -166,11 +166,32 @@ test-integration:
 	IOS_BUNDLE_ID="$(IOS_BUNDLE_ID)" \
 	$(SCRIPT) test-integration
 
-index:
+index: index-remote
+	@echo "==> Index complete. Store: $(DERIVED_DATA)/Index.noindex/DataStore"
+
+index-remote:
 	@echo "==> Indexing SharedProtocol (SPM)..."
 	cd SharedProtocol && swift build \
 		-Xswiftc -index-store-path \
 		-Xswiftc "$(CURDIR)/SharedProtocol/.build/index/store"
+	@echo "==> Indexing RemoteDesktopAgent (macOS)..."
+	xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj \
+		-scheme RemoteDesktopAgent \
+		-destination "platform=macOS,arch=arm64" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		COMPILER_INDEX_STORE_ENABLE=YES \
+		INDEX_ENABLE_DATA_STORE=YES \
+		build 2>&1 | grep -E "^(error:|warning: |Build (succeeded|FAILED))" || true
+	@echo "==> Indexing RemoteDesktopApp (iPadOS)..."
+	xcodebuild -project RemoteDesktop/iPadOS/RemoteDesktopApp.xcodeproj \
+		-scheme RemoteDesktopApp \
+		-destination "generic/platform=iOS" \
+		-derivedDataPath "$(DERIVED_DATA)" \
+		COMPILER_INDEX_STORE_ENABLE=YES \
+		INDEX_ENABLE_DATA_STORE=YES \
+		build 2>&1 | grep -E "^(error:|warning: |Build (succeeded|FAILED))" || true
+
+index-legacy:
 	@echo "==> Indexing KeydAgent (macOS)..."
 	xcodebuild -project macOS/KeydAgent.xcodeproj \
 		-scheme KeydAgent \
@@ -187,6 +208,8 @@ index:
 		COMPILER_INDEX_STORE_ENABLE=YES \
 		INDEX_ENABLE_DATA_STORE=YES \
 		build 2>&1 | grep -E "^(error:|warning: |Build (succeeded|FAILED))" || true
+
+index-all: index-remote index-legacy
 	@echo "==> Index complete. Store: $(DERIVED_DATA)/Index.noindex/DataStore"
 
 ipad iphone ios mac:

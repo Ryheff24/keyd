@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/async-index.sh"
+
 LOCKFILE="/tmp/keyd-mac-debug.lock"
 if [ -f "$LOCKFILE" ]; then
   OLD_PID=$(cat "$LOCKFILE" 2>/dev/null || true)
@@ -30,7 +33,7 @@ trap cleanup EXIT
 
 PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
 SCHEME="RemoteDesktopAgent"
-CONFIG="Debug"
+CONFIG="Release"
 SUBSYSTEM="com.ryheff.keyd.remote.agent"
 TIMEOUT="${1:-60}"
 DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
@@ -45,7 +48,9 @@ xcodebuild \
   -configuration "$CONFIG" \
   build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5
 
-APP_PATH=$(find "$DERIVED_DATA" -path "*RemoteDesktopAgent*" -name "RemoteDesktopAgent.app" -path "*/Debug/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+start_async_index "mac-debug.sh"
+
+APP_PATH=$(find "$DERIVED_DATA" -path "*RemoteDesktopAgent*" -name "RemoteDesktopAgent.app" -path "*/Release/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
 if [ -z "$APP_PATH" ]; then
   echo "ERROR: Could not find built .app bundle"
   exit 1

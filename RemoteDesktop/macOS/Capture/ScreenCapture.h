@@ -6,6 +6,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/* Shared stress-scene renderer used by both synthetic capture and real-capture test windows.
+ * Draws a full-frame moving-box pattern where every tile changes each frame. */
+FOUNDATION_EXPORT void KeydRenderStressScene(CGContextRef ctx, CGSize size, uint64_t frameIndex);
+FOUNDATION_EXPORT uint64_t KeydStressSceneSignature(CGSize size, uint64_t frameIndex);
+FOUNDATION_EXPORT uint32_t KeydStressSceneCRC(size_t pixelWidth, size_t pixelHeight, uint64_t frameIndex);
+
 /*
  * ScreenCapture.h
  * ScreenCaptureKit-based display capture with LZ4+delta compression.
@@ -53,6 +59,16 @@ typedef void (^ScreenCaptureReauthCallback)(void);
  * If 0, uses the display's native pixel dimensions. */
 @property (nonatomic, assign) uint32_t captureWidth;
 @property (nonatomic, assign) uint32_t captureHeight;
+
+/* Optional file-backed synthetic source for test runs.
+ * When set, startCapture generates frames from this file instead of live display capture.
+ * Supported by common macOS still image formats plus video files readable by AVFoundation. */
+@property (nonatomic, copy, nullable) NSString *testCaptureFilePath;
+
+/* Optional procedural worst-case synthetic source for test runs.
+ * When enabled, startCapture generates full-frame pixel patterns where every pixel changes
+ * on every frame to stress the compression + encode path. */
+@property (nonatomic, assign) BOOL testCaptureStressMode;
 
 /*
  * Request screen recording permission.

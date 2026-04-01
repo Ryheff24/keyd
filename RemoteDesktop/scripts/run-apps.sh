@@ -6,17 +6,24 @@
 #
 # Options:
 #   --transport usb|wifi|awdl     Optional transport hint for Mac agent
+#   --wired-only                  Disable WiFi/AWDL, USB only
 #   --help                        Show usage
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/async-index.sh"
+
 # ---- Parse arguments ----
 TRANSPORT=""
+WIRED_ONLY=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --transport)
       TRANSPORT="$2"; shift 2 ;;
+    --wired-only)
+      WIRED_ONLY=true; shift ;;
     --help)
       grep '^#' "$0" | sed -e 's/^# \{0,1\}//'
       exit 0 ;;
@@ -108,7 +115,7 @@ xcodebuild \
   -project "$MAC_PROJECT" \
   -scheme "$MAC_SCHEME" \
   -destination "platform=macOS,arch=arm64" \
-  -configuration Debug \
+  -configuration Release \
   -derivedDataPath "$MAC_DERIVED_DATA" \
   clean build \
   > "$MAC_BUILD_LOG" 2>&1 &
@@ -118,7 +125,7 @@ xcodebuild \
   -workspace "$WORKSPACE" \
   -scheme "$IPAD_SCHEME" \
   -destination "id=$IPAD_DEVICE_ID" \
-  -configuration Debug \
+  -configuration Release \
   -derivedDataPath "$IPAD_DERIVED_DATA" \
   clean build \
   > "$IPAD_BUILD_LOG" 2>&1 &
@@ -141,18 +148,20 @@ if [ "$MAC_BUILD_OK" != true ] || [ "$IPAD_BUILD_OK" != true ]; then
   exit 1
 fi
 
-MAC_APP="$MAC_DERIVED_DATA/Build/Products/Debug/RemoteDesktopAgent.app"
+start_async_index "run-apps.sh"
+
+MAC_APP="$MAC_DERIVED_DATA/Build/Products/Release/RemoteDesktopAgent.app"
 if [ ! -d "$MAC_APP" ]; then
-  MAC_APP=$(find "$MAC_DERIVED_DATA" -name "RemoteDesktopAgent.app" -path "*/Debug/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+  MAC_APP=$(find "$MAC_DERIVED_DATA" -name "RemoteDesktopAgent.app" -path "*/Release/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
 fi
 if [ -z "$MAC_APP" ] || [ ! -d "$MAC_APP" ]; then
   echo "ERROR: Could not find built Mac .app bundle"
   exit 1
 fi
 
-IPAD_APP="$IPAD_DERIVED_DATA/Build/Products/Debug-iphoneos/RemoteDesktopApp.app"
+IPAD_APP="$IPAD_DERIVED_DATA/Build/Products/Release-iphoneos/RemoteDesktopApp.app"
 if [ ! -d "$IPAD_APP" ]; then
-  IPAD_APP=$(find "$IPAD_DERIVED_DATA" -name "RemoteDesktopApp.app" -path "*/Debug-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+  IPAD_APP=$(find "$IPAD_DERIVED_DATA" -name "RemoteDesktopApp.app" -path "*/Release-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
 fi
 if [ -z "$IPAD_APP" ] || [ ! -d "$IPAD_APP" ]; then
   echo "ERROR: Could not find built iPad .app bundle"
@@ -197,7 +206,10 @@ echo ""
 echo "=== [4/5] Launching Mac agent ==="
 MAC_LAUNCH_ARGS=""
 if [ -n "$TRANSPORT" ]; then
-  MAC_LAUNCH_ARGS="--transport $TRANSPORT"
+  MAC_LAUNCH_ARGS="$MAC_LAUNCH_ARGS --transport $TRANSPORT"
+fi
+if [ "$WIRED_ONLY" = true ]; then
+  MAC_LAUNCH_ARGS="$MAC_LAUNCH_ARGS --wired-only"
 fi
 
 # Start Mac os_log capture in background

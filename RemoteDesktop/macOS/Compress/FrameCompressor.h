@@ -39,6 +39,7 @@ typedef struct {
     uint32_t         keyframe_interval_frames;  /* keyframes every N frames (default 120) */
     CompressOutput   output;                    /* pre-allocated output */
     uint8_t         *delta_scratch;             /* pre-allocated scratch for delta XOR */
+    uint8_t         *packed_buf;               /* pre-allocated stride-packing buffer (avoids malloc/frame) */
     size_t           frame_bytes;               /* raw frame size in bytes */
     size_t           last_keyframe_compressed;  /* compressed size of last keyframe */
     dispatch_queue_t compress_queue;            /* high-priority serial queue */

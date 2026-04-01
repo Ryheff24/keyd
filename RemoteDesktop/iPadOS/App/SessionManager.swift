@@ -76,6 +76,9 @@ final class SessionManager {
     /// Whether running in test mode (--test-mode flag). Skips QR camera, auto-pairs, runs E2E tests.
     let isTestMode: Bool = ProcessInfo.processInfo.arguments.contains("--test-mode")
 
+    /// Wired-only mode: disables WiFi/AWDL transport browsing.
+    let isWiredOnly: Bool = ProcessInfo.processInfo.arguments.contains("--wired-only")
+
     /// E2E test runner (created in test mode only).
     private(set) var testRunner: DeviceTestRunner?
 
@@ -371,14 +374,16 @@ final class SessionManager {
         // Start USB NCM monitoring (primary transport).
         usbTransport.startMonitoring()
 
-        // Start WiFi browsing as fallback. If USB is already detected, start
-        // immediately (the FSM handles priority). Otherwise delay 1s to let
-        // USB detection run first.
-        let wifiDelay: TimeInterval = usbTransport.isConnected ? 0 : 1.0
-        DispatchQueue.main.asyncAfter(deadline: .now() + wifiDelay) { [weak self] in
-            guard let self = self else { return }
-            print("[CONSOLE] Starting WiFi browsing (background fallback)")
-            self.wirelessTransport.startBrowsing()
+        // Start WiFi browsing as fallback (unless wired-only mode).
+        if !isWiredOnly {
+            let wifiDelay: TimeInterval = usbTransport.isConnected ? 0 : 1.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + wifiDelay) { [weak self] in
+                guard let self = self else { return }
+                print("[CONSOLE] Starting WiFi browsing (background fallback)")
+                self.wirelessTransport.startBrowsing()
+            }
+        } else {
+            print("[CONSOLE] Wired-only mode — WiFi/AWDL browsing disabled")
         }
     }
 
@@ -482,7 +487,11 @@ final class SessionManager {
             let nowUs = keydrdHostTimeUs()
             let recvElapsedMs = (Int64(nowUs) - Int64(header.tsUs) + (testRunner?.clockOffsetForProbe ?? 0)) / 1000
             if frameRecvCount <= 10 || frameRecvCount % 100 == 0 {
-                print("[CONSOLE] LATENCY-PROBE ipad-recv: \(recvElapsedMs)ms since capture (seq=\(header.seq))")
+                if testRunner?.clockOffsetCalibratedForLogging == true {
+                    print("[CONSOLE] LATENCY-PROBE ipad-recv: \(recvElapsedMs)ms since capture (seq=\(header.seq))")
+                } else {
+                    print("[CONSOLE] LATENCY-PROBE ipad-recv: pending clock sync (seq=\(header.seq), captureTsUs=\(header.tsUs), nowUs=\(nowUs))")
+                }
             }
         }
 
@@ -522,15 +531,26 @@ final class SessionManager {
             }
 
             let frameBytes = macDisplayWidth * macDisplayHeight * 4
+            // Safety: skip frames where dimensions don't match decompressor buffer
+            guard frameBytes > 0, frameBytes <= decompressor.frameBytes else {
+                if frameRecvCount <= 20 || frameRecvCount % 500 == 0 {
+                    print("[CONSOLE] LZ4: skipping frame, frameBytes=\(frameBytes) bufCap=\(decompressor.frameBytes) macDims=\(macDisplayWidth)x\(macDisplayHeight)")
+                }
+                return
+            }
+
             guard let pixels = decompressor.decompress(data: payload,
                                                         header: header,
                                                         frameBytes: frameBytes) else {
+                if frameRecvCount <= 20 || frameRecvCount % 500 == 0 {
+                    print("[CONSOLE] LZ4: decompress returned nil, frameBytes=\(frameBytes) payload=\(payload.count) seq=\(header.seq)")
+                }
                 return
             }
 
             decompressedSize = frameBytes
 
-            // Report decoded dimensions for resolution test (LZ4 uses handshake dimensions)
+            // Report decoded dimensions for resolution test
             testRunner?.reportDecodedFrameDimensions(width: macDisplayWidth, height: macDisplayHeight)
 
             metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight, captureTimestampUs: header.tsUs)
@@ -788,9 +808,18 @@ final class SessionManager {
         print("[CONSOLE] Geometry update: \(oldW)x\(oldH) -> \(macDisplayWidth)x\(macDisplayHeight)@\(macScaleFactor)x")
         Self.log.info("Geometry update: \(geo.displayWidth)x\(geo.displayHeight)@\(geo.scaleFactor)x")
 
-        // Reinitialize LZ4 decompressor with new frame size
-        let frameBytes = macDisplayWidth * macDisplayHeight * 4
-        lz4Decompressor = LZ4Decompressor(frameBytes: frameBytes)
+        // Only GROW the LZ4 decompressor buffer, never shrink.
+        // During transport rotation, stale frames at the old (larger) size may still
+        // be in transit. Shrinking the buffer causes LZ4_decompress_safe to overrun → crash.
+        let newFrameBytes = macDisplayWidth * macDisplayHeight * 4
+        if let existing = lz4Decompressor {
+            if newFrameBytes > existing.frameBytes {
+                print("[CONSOLE] LZ4 decompressor: growing buffer \(existing.frameBytes) -> \(newFrameBytes)")
+                lz4Decompressor = LZ4Decompressor(frameBytes: newFrameBytes)
+            }
+        } else {
+            lz4Decompressor = LZ4Decompressor(frameBytes: newFrameBytes)
+        }
 
         // Recalculate MetalRenderer viewport with new Mac dimensions.
         // This uses the actual capture dimensions from Mac (which may differ slightly

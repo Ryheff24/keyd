@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/async-index.sh"
+
 LOCKFILE="/tmp/keyd-ipad-debug.lock"
 if [ -f "$LOCKFILE" ]; then
   OLD_PID=$(cat "$LOCKFILE" 2>/dev/null || true)
@@ -32,7 +35,7 @@ WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 SCHEME="RemoteDesktopApp"
 BUNDLE_ID="com.ryheff.keyd.remote.app"
 DEVICE_ID="00000000-0000-0000-0000-00000000000A"
-CONFIG="Debug"
+CONFIG="Release"
 TIMEOUT="${1:-60}"
 DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
 
@@ -46,7 +49,9 @@ xcodebuild \
   -configuration "$CONFIG" \
   build 2>&1 | grep -E "(error:|warning:|BUILD)" | tail -5
 
-APP_PATH=$(find "$DERIVED_DATA" -path "*RemoteDesktop*" -name "RemoteDesktopApp.app" -path "*/Debug-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
+start_async_index "ipad-debug.sh"
+
+APP_PATH=$(find "$DERIVED_DATA" -path "*RemoteDesktop*" -name "RemoteDesktopApp.app" -path "*/Release-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
 if [ -z "$APP_PATH" ]; then
   echo "ERROR: Could not find built .app bundle"
   exit 1

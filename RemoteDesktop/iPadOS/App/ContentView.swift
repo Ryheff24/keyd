@@ -70,6 +70,19 @@ struct ContentView: View {
                     ReconnectingOverlay(onRetryNow: { sessionManager.retryNow() })
                 }
 
+                // Dismiss HUD menu on outside tap (covers full screen behind HUD)
+                if sessionManager.hudViewModel.isExpanded {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            print("[CONSOLE] HUD dismiss: tapped outside expanded menu")
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                sessionManager.hudViewModel.isExpanded = false
+                            }
+                        }
+                }
+
                 // HUD overlay (streaming/reconnecting only)
                 if sessionManager.state != .connecting {
                     HUDView(viewModel: sessionManager.hudViewModel)
