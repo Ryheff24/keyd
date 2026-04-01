@@ -113,10 +113,14 @@ static uint64_t keydrd_host_time_us(void) {
 
 @implementation SessionManager
 
-- (instancetype)initWithTestMode:(BOOL)testMode automationMode:(BOOL)automationMode wiredOnly:(BOOL)wiredOnly {
+- (instancetype)initWithTestMode:(BOOL)testMode
+                  automationMode:(BOOL)automationMode
+                       wiredOnly:(BOOL)wiredOnly
+                    wirelessOnly:(BOOL)wirelessOnly {
     return [self initWithTestMode:testMode
                    automationMode:automationMode
                         wiredOnly:wiredOnly
+                     wirelessOnly:wirelessOnly
               testCaptureFilePath:nil
             testCaptureStressMode:NO];
 }
@@ -124,6 +128,7 @@ static uint64_t keydrd_host_time_us(void) {
 - (instancetype)initWithTestMode:(BOOL)testMode
                   automationMode:(BOOL)automationMode
                        wiredOnly:(BOOL)wiredOnly
+                    wirelessOnly:(BOOL)wirelessOnly
              testCaptureFilePath:(NSString *)testCaptureFilePath
            testCaptureStressMode:(BOOL)testCaptureStressMode {
     self = [super init];
@@ -132,6 +137,7 @@ static uint64_t keydrd_host_time_us(void) {
         _testMode = testMode;
         _automationMode = automationMode;
         _wiredOnly = wiredOnly;
+        _wirelessOnly = wirelessOnly;
         _testCaptureFilePath = [testCaptureFilePath copy];
         _testCaptureStressMode = testCaptureStressMode;
         _sessionState = SESSION_STOPPED;
@@ -469,7 +475,11 @@ static uint64_t keydrd_host_time_us(void) {
      *   1. Discover the Mac via Bonjour (_keydrd._tcp)
      *   2. Fall back to WiFi if USB disconnects
      *   3. Run WiFi rotation tests during E2E suite */
-    [_usbTransport startMonitoring];
+    if (!_wirelessOnly) {
+        [_usbTransport startMonitoring];
+    } else {
+        os_log(sLog, "Wireless-only mode — USB monitoring disabled");
+    }
 
     if (!_wiredOnly) {
         __weak SessionManager *weakSelf2 = weakSelf;
@@ -477,7 +487,9 @@ static uint64_t keydrd_host_time_us(void) {
                        dispatch_get_main_queue(), ^{
             SessionManager *self2 = weakSelf2;
             if (!self2) return;
-            if (self2->_usbTransport.isConnected) {
+            if (self2->_wirelessOnly) {
+                os_log(sLog, "Wireless-only mode — starting WiFi advertising");
+            } else if (self2->_usbTransport.isConnected) {
                 os_log(sLog, "USB NCM connected — starting WiFi advertising anyway (fallback + Bonjour)");
             } else {
                 os_log(sLog, "USB NCM not connected after 3s — starting WiFi advertising");

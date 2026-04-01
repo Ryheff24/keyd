@@ -5,7 +5,9 @@
 # Usage: ./RemoteDesktop/scripts/run-e2e-tests.sh [timeout_seconds] [options]
 #
 # Options:
-#   --transport usb|wifi|awdl     Assert transport type (default: usb)
+#   --transport usb|wifi|awdl     Assert the initial connected transport type
+#   --transports LIST             Comma-separated transport rotation set
+#                                  (default: usb,wifi,awdl)
 #   --latency-target-ms N         Latency target for tiered test (median RTT)
 #   --expect-resolution WxH       Expected resolution (e.g. 2560x1600)
 #   --expect-fps N                Minimum expected FPS (e.g. 60)
@@ -15,7 +17,7 @@
 #                                  If omitted, auto-uses /tmp/keydrd-capture-mimic.mov when present
 #   --stress-capture              Force procedural full-frame stress source on Mac
 #   --real-capture                Use live ScreenCaptureKit desktop capture instead
-#   --wired-only                  USB only — no WiFi/AWDL transport or tests (default)
+#   --wired-only                  Shorthand for --transports usb
 #   --full-suite                  Run all test combinations sequentially
 #
 # Default timeout: 180 seconds. Exit code 0 = all tests passed, 1 = failures.
@@ -41,6 +43,7 @@ source "$SCRIPT_DIR/async-index.sh"
 # ---- Parse arguments ----
 TIMEOUT="180"
 TRANSPORT=""
+ROTATION_TRANSPORTS=""
 LATENCY_TARGET=""
 EXPECT_RESOLUTION=""
 EXPECT_FPS=""
@@ -61,6 +64,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --transport)
       TRANSPORT="$2"; shift 2 ;;
+    --transports)
+      ROTATION_TRANSPORTS="$2"; shift 2 ;;
     --latency-target-ms)
       LATENCY_TARGET="$2"; shift 2 ;;
     --expect-resolution)
@@ -100,6 +105,60 @@ if [ "$FULL_SUITE" = true ]; then
   exit 1
 fi
 
+normalize_transport_list() {
+  local raw="$1"
+  local normalized=()
+  local seen_usb=false
+  local seen_wifi=false
+  local seen_awdl=false
+  local item
+
+  IFS=',' read -r -a items <<< "$raw"
+  for item in "${items[@]}"; do
+    item="$(printf "%s" "$item" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    case "$item" in
+      usb)
+        if [ "$seen_usb" = false ]; then
+          normalized+=("usb")
+          seen_usb=true
+        fi
+        ;;
+      wifi)
+        if [ "$seen_wifi" = false ]; then
+          normalized+=("wifi")
+          seen_wifi=true
+        fi
+        ;;
+      awdl)
+        if [ "$seen_awdl" = false ]; then
+          normalized+=("awdl")
+          seen_awdl=true
+        fi
+        ;;
+      "")
+        ;;
+      *)
+        echo "ERROR: invalid transport '$item' in --transports (expected usb,wifi,awdl)"
+        return 1
+        ;;
+    esac
+  done
+
+  if [ "${#normalized[@]}" -eq 0 ]; then
+    echo "ERROR: --transports must include at least one of usb,wifi,awdl"
+    return 1
+  fi
+
+  local result=""
+  for item in "${normalized[@]}"; do
+    if [ -n "$result" ]; then
+      result+=","
+    fi
+    result+="$item"
+  done
+  printf "%s" "$result"
+}
+
 # ---- Configuration ----
 IPAD_DEVICE_ID="00000000-0000-0000-0000-00000000000A"
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
@@ -122,11 +181,29 @@ QR_PAYLOAD_FILE="/tmp/keydrd-test-qr.json"
 QR_READY_LOG="Test mode: QR payload written to /tmp/keydrd-test-qr.json"
 QR_SHOWN_LOG="Test mode: auto-showing QR"
 DEFAULT_CAPTURE_FILE="/tmp/keydrd-capture-mimic.mov"
+WIRELESS_ONLY=false
 
-if [ -z "$TRANSPORT" ]; then
-  TRANSPORT="usb"
+if [ "$WIRED_ONLY" = true ]; then
+  ROTATION_TRANSPORTS="usb"
 fi
-WIRED_ONLY=true
+if [ -z "$ROTATION_TRANSPORTS" ]; then
+  ROTATION_TRANSPORTS="usb,wifi,awdl"
+fi
+ROTATION_TRANSPORTS="$(normalize_transport_list "$ROTATION_TRANSPORTS")"
+
+case ",$ROTATION_TRANSPORTS," in
+  *,usb,*)
+    WIRED_ONLY=false
+    ;;
+  *)
+    WIRELESS_ONLY=true
+    ;;
+esac
+if [ "$ROTATION_TRANSPORTS" = "usb" ]; then
+  WIRED_ONLY=true
+  WIRELESS_ONLY=false
+fi
+
 if [ -z "$CAPTURE_FILE" ] && [ "$STRESS_CAPTURE" = false ] && [ "$REAL_CAPTURE" = false ] && [ -f "$DEFAULT_CAPTURE_FILE" ]; then
   CAPTURE_FILE="$DEFAULT_CAPTURE_FILE"
 fi
@@ -272,6 +349,7 @@ log_progress "  Results log:  $LOG_FILE"
 log_progress "  iPad log:     $IPAD_LOG_FILE"
 log_progress "  Mac log:      $MAC_LOG_FILE"
 log_progress "  Build logs:   $MAC_BUILD_LOG, $IPAD_BUILD_LOG"
+log_progress "  Transport rotation set: $ROTATION_TRANSPORTS"
 log_progress ""
 
 # ---- Reporting helpers ----
@@ -515,11 +593,10 @@ if [ -n "$CAPTURE_FILE" ] && [ "$REAL_CAPTURE" = true ]; then
 fi
 
 MAC_LAUNCH_ARGS=(--test-mode)
-if [ -n "$TRANSPORT" ]; then
-  MAC_LAUNCH_ARGS+=(--transport "$TRANSPORT")
-fi
 if [ "$WIRED_ONLY" = true ]; then
   MAC_LAUNCH_ARGS+=(--wired-only)
+elif [ "$WIRELESS_ONLY" = true ]; then
+  MAC_LAUNCH_ARGS+=(--wireless-only)
 fi
 if [ -n "$CAPTURE_FILE" ]; then
   MAC_LAUNCH_ARGS+=(--test-capture-file "$CAPTURE_FILE")
@@ -587,6 +664,7 @@ echo ""
 log_progress "=== [6/6] Launching iPad in test mode ==="
 # Build launch arguments array
 IPAD_LAUNCH_ARGS=(--test-mode --qr-payload "$QR_PAYLOAD_B64")
+IPAD_LAUNCH_ARGS+=(--transports "$ROTATION_TRANSPORTS")
 
 # Append optional flags
 if [ -n "$TRANSPORT" ]; then
@@ -603,6 +681,8 @@ if [ -n "$EXPECT_FPS" ]; then
 fi
 if [ "$WIRED_ONLY" = true ]; then
   IPAD_LAUNCH_ARGS+=(--wired-only)
+elif [ "$WIRELESS_ONLY" = true ]; then
+  IPAD_LAUNCH_ARGS+=(--wireless-only)
 fi
 
 log_progress "iPad launch args: ${IPAD_LAUNCH_ARGS[*]}"

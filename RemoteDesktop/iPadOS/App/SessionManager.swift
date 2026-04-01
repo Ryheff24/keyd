@@ -79,6 +79,9 @@ final class SessionManager {
     /// Wired-only mode: disables WiFi/AWDL transport browsing.
     let isWiredOnly: Bool = ProcessInfo.processInfo.arguments.contains("--wired-only")
 
+    /// Wireless-only mode: disables USB monitoring and starts wireless directly.
+    let isWirelessOnly: Bool = ProcessInfo.processInfo.arguments.contains("--wireless-only")
+
     /// E2E test runner (created in test mode only).
     private(set) var testRunner: DeviceTestRunner?
 
@@ -92,7 +95,7 @@ final class SessionManager {
         Self.log.info("[SessionManager] init called, initial state=\(self.state.rawValue)")
         Self.log.info("[SessionManager] qrPairing.isPaired=\(self.qrPairing.isPaired)")
         if isTestMode {
-            print("[CONSOLE] SessionManager: TEST MODE enabled")
+            print("[CONSOLE] SessionManager: TEST MODE enabled (wiredOnly=\(isWiredOnly), wirelessOnly=\(isWirelessOnly))")
             testRunner = DeviceTestRunner(sessionManager: self)
         }
     }
@@ -371,15 +374,23 @@ final class SessionManager {
             self?.handleInputReceived(data)
         }
 
-        // Start USB NCM monitoring (primary transport).
-        usbTransport.startMonitoring()
+        // Start transports based on launch mode.
+        if !isWirelessOnly {
+            usbTransport.startMonitoring()
+        } else {
+            print("[CONSOLE] Wireless-only mode — USB monitoring disabled")
+        }
 
-        // Start WiFi browsing as fallback (unless wired-only mode).
+        // Start WiFi browsing unless wired-only mode disables it.
         if !isWiredOnly {
             let wifiDelay: TimeInterval = usbTransport.isConnected ? 0 : 1.0
             DispatchQueue.main.asyncAfter(deadline: .now() + wifiDelay) { [weak self] in
                 guard let self = self else { return }
-                print("[CONSOLE] Starting WiFi browsing (background fallback)")
+                if self.isWirelessOnly {
+                    print("[CONSOLE] Starting WiFi browsing (wireless-only mode)")
+                } else {
+                    print("[CONSOLE] Starting WiFi browsing (background fallback)")
+                }
                 self.wirelessTransport.startBrowsing()
             }
         } else {

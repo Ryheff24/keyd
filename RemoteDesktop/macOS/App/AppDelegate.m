@@ -33,10 +33,11 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
     /* ---- Prevent macOS from auto-terminating our menu-bar-only agent ---- */
     [[NSProcessInfo processInfo] disableAutomaticTermination:@"Menu bar agent must stay running"];
 
-    /* ---- Detect --test-mode and --wired-only flags ---- */
+    /* ---- Detect --test-mode / transport mode flags ---- */
     NSArray *args = [NSProcessInfo processInfo].arguments;
     _testMode = [args containsObject:@"--test-mode"];
     BOOL wiredOnly = [args containsObject:@"--wired-only"];
+    BOOL wirelessOnly = [args containsObject:@"--wireless-only"];
     _testCaptureFilePath = [valueForArgument(args, @"--test-capture-file") copy];
     _realCaptureMode = [args containsObject:@"--real-capture"];
     BOOL explicitStressCapture = [args containsObject:@"--stress-capture"];
@@ -46,6 +47,9 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
                wiredOnly ? " (wired-only)" : "",
                _testCaptureFilePath ? " with synthetic capture file" : "",
                _testCaptureStressMode ? " with stress capture" : "");
+        if (wirelessOnly) {
+            os_log(sLog, "Wireless-only mode enabled");
+        }
         if (_testCaptureFilePath) {
             os_log(sLog, "Test capture file: %{public}@", _testCaptureFilePath);
         }
@@ -69,6 +73,7 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
     _sessionManager = [[SessionManager alloc] initWithTestMode:_testMode
                                                 automationMode:_automationMode
                                                      wiredOnly:wiredOnly
+                                                  wirelessOnly:wirelessOnly
                                            testCaptureFilePath:_testCaptureFilePath
                                          testCaptureStressMode:_testCaptureStressMode];
 

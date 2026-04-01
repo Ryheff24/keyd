@@ -119,8 +119,10 @@ final class DeviceTestRunner {
     private let expectFPS: Int?
     private let latencyTargetMs: Int?
     private let expectTransport: String?
+    private let selectedTransports: [String]
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "E2ETest")
+    private static let availableTransports = ["usb", "wifi", "awdl"]
 
     // MARK: - Init
 
@@ -163,7 +165,19 @@ final class DeviceTestRunner {
             self.expectTransport = nil
         }
 
-        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport))")
+        if let idx = args.firstIndex(of: "--transports"), idx + 1 < args.count {
+            let requested = Set(
+                args[idx + 1]
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            )
+            let normalized = Self.availableTransports.filter { requested.contains($0) }
+            self.selectedTransports = normalized.isEmpty ? Self.availableTransports : normalized
+        } else {
+            self.selectedTransports = Self.availableTransports
+        }
+
+        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport)), transports=\(self.selectedTransports.joined(separator: ","))")
 
         // Wire renderer callback — this is the source of truth for "frame shown on screen"
         sessionManager.metalRenderer.onFrameRendered = { [weak self] in
@@ -1241,10 +1255,7 @@ final class DeviceTestRunner {
 
     // MARK: - Multi-Transport Rotation Tests
 
-    /// Transport names to test in order.
-    private static let transportOrder = ["usb", "wifi", "awdl"]
-
-    /// Index into transportOrder for current rotation phase.
+    /// Index into selectedTransports for current rotation phase.
     private var transportRotationIdx = 0
 
     /// Tracks which transports passed during rotation.
@@ -1266,7 +1277,7 @@ final class DeviceTestRunner {
     /// Runs after all single-transport tests complete.
     private func runTransportRotationTests() {
         print("[TEST] INFO: === Starting multi-transport rotation tests ===")
-        print("[TEST] INFO: Will test each protocol: USB NCM, WiFi, AWDL")
+        print("[TEST] INFO: Will test selected protocols: \(selectedTransports.joined(separator: ", "))")
 
         transportRotationIdx = 0
         transportRotationResults = [:]
@@ -1274,14 +1285,14 @@ final class DeviceTestRunner {
     }
 
     private func startNextTransportRotation() {
-        guard transportRotationIdx < Self.transportOrder.count else {
+        guard transportRotationIdx < selectedTransports.count else {
             // All transports tested, evaluate results
             evaluateTransportRotation()
             return
         }
 
-        let transport = Self.transportOrder[transportRotationIdx]
-        print("[TEST] INFO: --- Transport rotation: testing \(transport) (\(transportRotationIdx + 1)/\(Self.transportOrder.count)) ---")
+        let transport = selectedTransports[transportRotationIdx]
+        print("[TEST] INFO: --- Transport rotation: testing \(transport) (\(transportRotationIdx + 1)/\(selectedTransports.count)) ---")
 
         // In wired-only mode, skip WiFi and AWDL rotation tests
         let isWiredOnly = sessionManager?.isWiredOnly ?? false
@@ -1506,19 +1517,12 @@ final class DeviceTestRunner {
     }
 
     private func evaluateTransportRotation() {
-        // AWDL is expected to be skipped when WiFi infrastructure is available.
-        // Only require USB and WiFi for the multi-transport pass.
-        let requiredTransports = Self.transportOrder.filter { $0 != "awdl" }
-        let requiredPassed = requiredTransports.allSatisfy { transportRotationResults[$0] == true }
-        let awdlPassed = transportRotationResults["awdl"] == true
-
-        let summary = Self.transportOrder.map { t in
+        let summary = selectedTransports.map { t in
             let status = transportRotationResults[t] == true ? "PASS" : "FAIL"
             return "\(t)=\(status)"
         }.joined(separator: ", ")
 
-        // Pass if all required transports pass (AWDL skip counts as pass)
-        let allPassed = requiredPassed && awdlPassed
+        let allPassed = selectedTransports.allSatisfy { transportRotationResults[$0] == true }
         recordResult(name: "multi-transport", passed: allPassed,
                     detail: summary)
 
@@ -1533,17 +1537,18 @@ final class DeviceTestRunner {
     private func runSecurityTests() {
         print("[TEST] INFO: === Security Tests ===")
 
-        // Reconnect USB so we have a known Mac IP to target
         guard let sm = sessionManager else {
             print("[TEST] INFO: skipping security tests — no sessionManager")
             finishTests()
             return
         }
 
-        sm.usbTransport.startMonitoring()
+        if !sm.isWirelessOnly {
+            sm.usbTransport.startMonitoring()
+        }
 
-        // Wait for USB to reconnect so we know the Mac IP
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+        // Give the transport layer a moment to settle before probing the Mac.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.runCleartextTCPTest()
         }
     }
@@ -1553,30 +1558,13 @@ final class DeviceTestRunner {
     private func runCleartextTCPTest() {
         print("[TEST] RUNNING: sec-cleartext-tcp")
 
-        guard let sm = sessionManager else {
+        guard sessionManager != nil else {
             recordResult(name: "sec-cleartext-tcp", passed: false, detail: "no sessionManager")
             runCleartextUDPTest()
             return
         }
 
-        // Get Mac IP from the USB transport's current connection endpoint
-        guard sm.usbTransport.isConnected else {
-            recordResult(name: "sec-cleartext-tcp", passed: false, detail: "USB not connected — cannot determine Mac IP")
-            runCleartextUDPTest()
-            return
-        }
-
-        // Use the QR payload host that was set via setPeerAddress
-        let args = ProcessInfo.processInfo.arguments
-        var macHost: String?
-        if let idx = args.firstIndex(of: "--qr-payload"), idx + 1 < args.count {
-            if let jsonData = Data(base64Encoded: args[idx + 1]),
-               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                macHost = json["host"] as? String
-            }
-        }
-
-        guard let host = macHost else {
+        guard let host = qrPayloadHost() else {
             recordResult(name: "sec-cleartext-tcp", passed: false, detail: "cannot determine Mac IP from QR payload")
             runCleartextUDPTest()
             return
@@ -1643,16 +1631,7 @@ final class DeviceTestRunner {
     private func runCleartextUDPTest() {
         print("[TEST] RUNNING: sec-cleartext-udp")
 
-        let args = ProcessInfo.processInfo.arguments
-        var macHost: String?
-        if let idx = args.firstIndex(of: "--qr-payload"), idx + 1 < args.count {
-            if let jsonData = Data(base64Encoded: args[idx + 1]),
-               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                macHost = json["host"] as? String
-            }
-        }
-
-        guard let host = macHost else {
+        guard let host = qrPayloadHost() else {
             recordResult(name: "sec-cleartext-udp", passed: false, detail: "cannot determine Mac IP")
             runUntrustedCertTest()
             return
@@ -1712,16 +1691,7 @@ final class DeviceTestRunner {
     private func runUntrustedCertTest() {
         print("[TEST] RUNNING: sec-untrusted-cert")
 
-        let args = ProcessInfo.processInfo.arguments
-        var macHost: String?
-        if let idx = args.firstIndex(of: "--qr-payload"), idx + 1 < args.count {
-            if let jsonData = Data(base64Encoded: args[idx + 1]),
-               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                macHost = json["host"] as? String
-            }
-        }
-
-        guard let host = macHost else {
+        guard let host = qrPayloadHost() else {
             recordResult(name: "sec-untrusted-cert", passed: false, detail: "cannot determine Mac IP")
             runPairingPortClosedTest()
             return
@@ -1793,16 +1763,7 @@ final class DeviceTestRunner {
     private func runPairingPortClosedTest() {
         print("[TEST] RUNNING: sec-pairing-port-closed")
 
-        let args = ProcessInfo.processInfo.arguments
-        var macHost: String?
-        if let idx = args.firstIndex(of: "--qr-payload"), idx + 1 < args.count {
-            if let jsonData = Data(base64Encoded: args[idx + 1]),
-               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                macHost = json["host"] as? String
-            }
-        }
-
-        guard let host = macHost else {
+        guard let host = qrPayloadHost() else {
             recordResult(name: "sec-pairing-port-closed", passed: false, detail: "cannot determine Mac IP")
             finishTests()
             return
@@ -1855,6 +1816,18 @@ final class DeviceTestRunner {
 
     // MARK: - Results
 
+    private func qrPayloadHost() -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let idx = args.firstIndex(of: "--qr-payload"), idx + 1 < args.count else {
+            return nil
+        }
+        guard let jsonData = Data(base64Encoded: args[idx + 1]),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            return nil
+        }
+        return json["host"] as? String
+    }
+
     private func recordResult(name: String, passed: Bool, detail: String) {
         testResults.append((name: name, passed: passed, detail: detail))
         let status = passed ? "PASS" : "FAIL"
@@ -1885,9 +1858,10 @@ final class DeviceTestRunner {
                        "latency-tiered", "throughput",
                        "pipeline-latency", "glass-to-glass-latency",
                        "heavy-load",
-                       "transport-usb", "transport-wifi", "transport-awdl", "multi-transport",
                        "sec-cleartext-tcp", "sec-cleartext-udp", "sec-untrusted-cert",
                        "sec-pairing-port-closed"]
+        allTests.append(contentsOf: selectedTransports.map { "transport-\($0)" })
+        allTests.append("multi-transport")
         if expectTransport != nil {
             allTests.append("transport-assertion")
         }
