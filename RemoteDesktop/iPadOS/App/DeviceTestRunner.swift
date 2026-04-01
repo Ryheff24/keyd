@@ -241,6 +241,12 @@ final class DeviceTestRunner {
     /// Run the Bonjour discovery test. Called after pairing completes and
     /// transport monitoring starts (Mac is now advertising _keydrd._tcp).
     func runBonjourDiscoveryTestAfterPairing() {
+        if let sm = sessionManager, sm.isWiredOnly && !selectedTransports.contains("wifi") && !selectedTransports.contains("awdl") {
+            recordResult(name: "bonjour-discovery", passed: true,
+                         detail: "SKIPPED — wireless advertising disabled for usb-only transport set")
+            bonjourDiscoveryComplete = true
+            return
+        }
         runBonjourDiscoveryTest()
     }
 
