@@ -9,6 +9,9 @@
 #   --latency-target-ms N         Latency target for tiered test (median RTT)
 #   --expect-resolution WxH       Expected resolution (e.g. 2560x1600)
 #   --expect-fps N                Minimum expected FPS (e.g. 60)
+#   --notes TEXT                  Required when reporting is enabled; added to the
+#                                  report commit message and metrics changelog
+#   --disable-reporting           Do not create a report commit or update METRICS.md
 #   --capture-file PATH           Use a file-backed synthetic frame source on Mac
 #                                  If omitted, auto-uses /tmp/keydrd-capture-mimic.mov when present
 #   --stress-capture              Force procedural full-frame stress source on Mac
@@ -47,6 +50,8 @@ STRESS_CAPTURE=false
 REAL_CAPTURE=false
 FULL_SUITE=false
 WIRED_ONLY=false
+DISABLE_REPORTING=false
+REPORT_NOTES=""
 
 # First positional arg can be timeout
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -64,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       EXPECT_RESOLUTION="$2"; shift 2 ;;
     --expect-fps)
       EXPECT_FPS="$2"; shift 2 ;;
+    --notes)
+      REPORT_NOTES="$2"; shift 2 ;;
+    --disable-reporting)
+      DISABLE_REPORTING=true; shift ;;
     --capture-file)
       CAPTURE_FILE="$2"; shift 2 ;;
     --stress-capture)
@@ -86,6 +95,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [ "$DISABLE_REPORTING" = false ] && [ -z "$REPORT_NOTES" ]; then
+  echo "ERROR: --notes is required unless --disable-reporting is set"
+  exit 1
+fi
+if [ "$FULL_SUITE" = true ] && [ "$DISABLE_REPORTING" = false ]; then
+  echo "ERROR: reporting is not supported with --full-suite; rerun with --disable-reporting"
+  exit 1
+fi
+
 # ---- Configuration ----
 IPAD_DEVICE_ID="00000000-0000-0000-0000-00000000000A"
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
@@ -94,6 +112,7 @@ MAC_PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
 MAC_SCHEME="RemoteDesktopAgent"
 BUNDLE_ID="com.ryheff.keyd.remote.app"
 MAC_SUBSYSTEM="com.ryheff.keyd.remote.agent"
+METRICS_BRANCH="metrics"
 DERIVED_DATA_ROOT="/tmp/keyd-e2e-derived-data"
 MAC_DERIVED_DATA="$DERIVED_DATA_ROOT/macos"
 IPAD_DERIVED_DATA="$DERIVED_DATA_ROOT/ipados"
@@ -256,6 +275,139 @@ log_progress "  Mac log:      $MAC_LOG_FILE"
 log_progress "  Results log:  $LOG_FILE"
 log_progress "  Build logs:   $MAC_BUILD_LOG, $IPAD_BUILD_LOG"
 log_progress ""
+
+# ---- Reporting helpers ----
+extract_metric_value() {
+  local label="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    echo "ERROR: could not parse $label from test log"
+    return 1
+  fi
+  printf "%s" "$value"
+}
+
+collect_report_metrics() {
+  REPORT_RESOLUTION_LINE=$(grep -E '\[TEST\] (PASS|FAIL): resolution \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_FPS_LINE=$(grep -E '\[TEST\] (PASS|FAIL): fps \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_FRAME_PACING_LINE=$(grep -E '\[TEST\] (PASS|FAIL): frame-pacing \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_PIPELINE_LINE=$(grep -E '\[TEST\] (PASS|FAIL): pipeline-latency \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_G2G_LINE=$(grep -E '\[TEST\] (PASS|FAIL): glass-to-glass-latency \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_HEAVY_LOAD_LINE=$(grep -E '\[TEST\] (PASS|FAIL): heavy-load \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_SECURITY_LINE=$(grep -E '\[TEST\] (PASS|FAIL): sec-untrusted-cert \(' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+  REPORT_COMPLETE_LINE=$(grep -E '\[TEST\] COMPLETE:' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+
+  REPORT_USB_RESOLUTION=$(extract_metric_value "USB resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*viewport=([0-9]+x[0-9]+).*/\1/p')")
+  REPORT_FPS=$(extract_metric_value "FPS" "$(echo "$REPORT_FPS_LINE" | sed -nE 's/.*\(([0-9]+(\.[0-9]+)?) fps.*/\1/p')")
+  REPORT_FRAME_PACING_CV=$(extract_metric_value "frame pacing CV" "$(echo "$REPORT_FRAME_PACING_LINE" | sed -nE 's/.*cv=([0-9]+(\.[0-9]+)?).*/\1/p')")
+
+  read -r REPORT_PIPELINE_MEDIAN REPORT_PIPELINE_P95 REPORT_PIPELINE_AVG <<<"$(extract_metric_value "pipeline latency" "$(echo "$REPORT_PIPELINE_LINE" | sed -nE 's/.*median=([0-9]+(\.[0-9]+)?)ms, p95=([0-9]+(\.[0-9]+)?)ms, avg=([0-9]+(\.[0-9]+)?)ms.*/\1 \3 \5/p')")"
+  read -r REPORT_G2G_MEDIAN REPORT_G2G_P95 REPORT_G2G_AVG <<<"$(extract_metric_value "glass-to-glass latency" "$(echo "$REPORT_G2G_LINE" | sed -nE 's/.*median=([0-9]+(\.[0-9]+)?)ms, p95=([0-9]+(\.[0-9]+)?)ms, avg=([0-9]+(\.[0-9]+)?)ms.*/\1 \3 \5/p')")"
+  read -r REPORT_HEAVY_LOAD_FPS REPORT_HEAVY_LOAD_MEDIAN REPORT_HEAVY_LOAD_P95 <<<"$(extract_metric_value "heavy-load metrics" "$(echo "$REPORT_HEAVY_LOAD_LINE" | sed -nE 's/.*fps=([0-9]+(\.[0-9]+)?), pipeline: median=([0-9]+(\.[0-9]+)?)ms p95=([0-9]+(\.[0-9]+)?)ms.*/\1 \3 \5/p')")"
+  read -r REPORT_OVERALL_PASSED REPORT_OVERALL_TOTAL <<<"$(extract_metric_value "overall result" "$(echo "$REPORT_COMPLETE_LINE" | sed -nE 's/.*COMPLETE: ([0-9]+)\/([0-9]+) passed.*/\1 \2/p')")"
+
+  if echo "$REPORT_SECURITY_LINE" | grep -q '\[TEST\] PASS:'; then
+    REPORT_SECURITY_REJECTION="1"
+  elif echo "$REPORT_SECURITY_LINE" | grep -q '\[TEST\] FAIL:'; then
+    REPORT_SECURITY_REJECTION="0"
+  else
+    echo "ERROR: could not parse security rejection result from test log"
+    return 1
+  fi
+}
+
+create_report_commit() {
+  local summary subject
+  summary="usb ${REPORT_USB_RESOLUTION}, ${REPORT_FPS}fps, g2g ${REPORT_G2G_MEDIAN}/${REPORT_G2G_P95}/${REPORT_G2G_AVG}ms, overall ${REPORT_OVERALL_PASSED}/${REPORT_OVERALL_TOTAL}"
+  subject="test-run: ${summary}"
+
+  if ! git diff --quiet -- .planning/METRICS.md || ! git diff --cached --quiet -- .planning/METRICS.md; then
+    echo "ERROR: .planning/METRICS.md has uncommitted changes; reporting refuses to continue"
+    return 1
+  fi
+
+  git add -A -- . ':(exclude).planning/METRICS.md' ':(exclude)scripts/__pycache__'
+  git commit --allow-empty -m "$subject" -m "Notes: $REPORT_NOTES" -m "Frame pacing CV: $REPORT_FRAME_PACING_CV
+Pipeline latency (median/p95/avg ms): $REPORT_PIPELINE_MEDIAN/$REPORT_PIPELINE_P95/$REPORT_PIPELINE_AVG
+Glass-to-glass latency (median/p95/avg ms): $REPORT_G2G_MEDIAN/$REPORT_G2G_P95/$REPORT_G2G_AVG
+Heavy-load FPS: $REPORT_HEAVY_LOAD_FPS
+Heavy-load pipeline (median/p95 ms): $REPORT_HEAVY_LOAD_MEDIAN/$REPORT_HEAVY_LOAD_P95
+Security rejection: $REPORT_SECURITY_REJECTION
+Overall: $REPORT_OVERALL_PASSED/$REPORT_OVERALL_TOTAL"
+}
+
+commit_metrics_to_branch() {
+  local tested_commit="$1"
+  local worktree_dir status
+  worktree_dir="$(mktemp -d /tmp/keyd-metrics-worktree.XXXXXX)"
+  status=0
+
+  if ! git show-ref --verify --quiet "refs/heads/$METRICS_BRANCH"; then
+    git branch "$METRICS_BRANCH"
+  fi
+
+  if ! git worktree add --quiet "$worktree_dir" "$METRICS_BRANCH"; then
+    rm -rf "$worktree_dir"
+    echo "ERROR: failed to create temporary worktree for metrics branch"
+    return 1
+  fi
+
+  mkdir -p "$worktree_dir/.planning"
+  cp "$PWD/.planning/METRICS.md" "$worktree_dir/.planning/METRICS.md"
+
+  (
+    cd "$worktree_dir" || exit 1
+
+    if git diff --quiet HEAD -- .planning/METRICS.md 2>/dev/null; then
+      echo "Metrics branch already up to date"
+      exit 0
+    fi
+
+    git add .planning/METRICS.md
+    git commit -m "metrics: record results for $tested_commit" -m "Notes: $REPORT_NOTES"
+  ) || status=$?
+
+  git worktree remove --force "$worktree_dir" >/dev/null 2>&1 || rm -rf "$worktree_dir"
+  return "$status"
+}
+
+run_reporting() {
+  if [ "$DISABLE_REPORTING" = true ]; then
+    log_progress "Reporting disabled -- skipping report commit and metrics update"
+    return 0
+  fi
+
+  collect_report_metrics
+
+  log_progress "=== Reporting: creating tested snapshot commit ==="
+  create_report_commit
+  REPORT_COMMIT_ID="$(git rev-parse --short=7 HEAD)"
+  log_progress "Report commit created: $REPORT_COMMIT_ID"
+
+  log_progress "=== Reporting: updating METRICS.md ==="
+  python3 scripts/update_metrics.py \
+    --commit-id "$REPORT_COMMIT_ID" \
+    --usb-resolution "$REPORT_USB_RESOLUTION" \
+    --fps "$REPORT_FPS" \
+    --frame-pacing-cv "$REPORT_FRAME_PACING_CV" \
+    --pipeline-median-ms "$REPORT_PIPELINE_MEDIAN" \
+    --pipeline-p95-ms "$REPORT_PIPELINE_P95" \
+    --pipeline-avg-ms "$REPORT_PIPELINE_AVG" \
+    --g2g-median-ms "$REPORT_G2G_MEDIAN" \
+    --g2g-p95-ms "$REPORT_G2G_P95" \
+    --g2g-avg-ms "$REPORT_G2G_AVG" \
+    --heavy-load-fps "$REPORT_HEAVY_LOAD_FPS" \
+    --heavy-load-pipeline-median-ms "$REPORT_HEAVY_LOAD_MEDIAN" \
+    --heavy-load-pipeline-p95-ms "$REPORT_HEAVY_LOAD_P95" \
+    --security-rejection "$REPORT_SECURITY_REJECTION" \
+    --overall "$REPORT_OVERALL_PASSED/$REPORT_OVERALL_TOTAL" \
+    --notes "$REPORT_NOTES"
+  log_progress "METRICS.md updated for commit $REPORT_COMMIT_ID"
+
+  log_progress "=== Reporting: committing METRICS.md to $METRICS_BRANCH branch ==="
+  commit_metrics_to_branch "$REPORT_COMMIT_ID"
+  log_progress "METRICS.md committed on $METRICS_BRANCH for tested commit $REPORT_COMMIT_ID"
+}
 
 # ---- Step 1: Build Mac agent and iPad app in parallel ----
 log_progress "=== [1/6] Building Mac agent + iPad app in parallel ==="
@@ -711,10 +863,13 @@ fi
 wait_and_parse_results ""
 RESULT=$?
 
+run_reporting
+
+echo ""
 if [ "$RESULT" -ne 0 ]; then
+  echo "Test run completed with failures."
   exit 1
 fi
 
-echo ""
 echo "All tests passed."
 exit 0
