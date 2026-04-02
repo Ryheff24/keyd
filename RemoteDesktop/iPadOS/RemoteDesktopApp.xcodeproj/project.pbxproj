@@ -33,6 +33,7 @@
 		B2000062000000000000000A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000062000000000000000F /* ContentView.swift */; };
 		B2000063000000000000000A /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000063000000000000000F /* SessionManager.swift */; };
 		B2000070000000000000000A /* DeviceTestRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000070000000000000000F /* DeviceTestRunner.swift */; };
+		B2000071000000000000000A /* E2ETestThresholds.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000071000000000000000F /* E2ETestThresholds.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -69,6 +70,7 @@
 		B2000062000000000000000F /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B2000063000000000000000F /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
 		B2000070000000000000000F /* DeviceTestRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceTestRunner.swift; sourceTree = "<group>"; };
+		B2000071000000000000000F /* E2ETestThresholds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ETestThresholds.swift; sourceTree = "<group>"; };
 		B20000FF000000000000000F /* RemoteDesktopApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemoteDesktopApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -156,6 +158,7 @@
 				B2000062000000000000000F /* ContentView.swift */,
 				B2000063000000000000000F /* SessionManager.swift */,
 				B2000070000000000000000F /* DeviceTestRunner.swift */,
+				B2000071000000000000000F /* E2ETestThresholds.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -299,6 +302,7 @@
 				B2000062000000000000000A /* ContentView.swift in Sources */,
 				B2000063000000000000000A /* SessionManager.swift in Sources */,
 				B2000070000000000000000A /* DeviceTestRunner.swift in Sources */,
+				B2000071000000000000000A /* E2ETestThresholds.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

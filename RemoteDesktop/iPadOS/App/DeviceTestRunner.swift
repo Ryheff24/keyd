@@ -793,25 +793,38 @@ final class DeviceTestRunner {
             // After display mode match, Mac may encode at a slightly different resolution
             // (closest available display mode). Accept either the initial viewport OR the
             // current session viewport (updated via geometry update after mode match).
-            let viewportMatch = frameW == vpW && frameH == vpH
             let currentVpW = sessionManager?.viewportWidth ?? vpW
             let currentVpH = sessionManager?.viewportHeight ?? vpH
-            let geometryMatch = frameW == currentVpW && frameH == currentVpH
-            let passed = viewportMatch || geometryMatch
+            let geometryWidthScale = vpW > 0 ? Double(currentVpW) / Double(vpW) : 0
+            let geometryHeightScale = vpH > 0 ? Double(currentVpH) / Double(vpH) : 0
+            let frameWidthScale = vpW > 0 ? Double(frameW) / Double(vpW) : 0
+            let frameHeightScale = vpH > 0 ? Double(frameH) / Double(vpH) : 0
+            let geometryWidthOK = geometryWidthScale >= E2ETestThresholds.Resolution.minGeometryWidthScale
+            let geometryHeightOK = geometryHeightScale >= E2ETestThresholds.Resolution.minGeometryHeightScale
+            let frameWidthOK = frameWidthScale >= E2ETestThresholds.Resolution.minFrameWidthScale
+            let frameHeightOK = frameHeightScale >= E2ETestThresholds.Resolution.minFrameHeightScale
+            let resolutionFloorPassed = geometryWidthOK && geometryHeightOK && frameWidthOK && frameHeightOK
 
             if let expected = expectResolution {
                 let expPassed = frameW == expected.width && frameH == expected.height
                 recordResult(name: "resolution", passed: expPassed,
-                            detail: "expected=\(expected.width)x\(expected.height), viewport=\(vpW)x\(vpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH)")
+                            detail: "frame=\(frameW)x\(frameH)==\(expected.width)x\(expected.height), viewport=\(vpW)x\(vpH), geometry=\(currentVpW)x\(currentVpH), mac=\(handshakeW)x\(handshakeH)")
             } else {
-                // Pass if frames match either initial viewport or post-mode-match geometry
-                recordResult(name: "resolution", passed: passed,
-                            detail: "viewport=\(vpW)x\(vpH), geometry=\(currentVpW)x\(currentVpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH), match=\(passed)")
+                var issues: [String] = []
+                if !geometryWidthOK { issues.append("geometry width scale \(String(format: "%.3f", geometryWidthScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryWidthScale))") }
+                if !geometryHeightOK { issues.append("geometry height scale \(String(format: "%.3f", geometryHeightScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryHeightScale))") }
+                if !frameWidthOK { issues.append("frame width scale \(String(format: "%.3f", frameWidthScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameWidthScale))") }
+                if !frameHeightOK { issues.append("frame height scale \(String(format: "%.3f", frameHeightScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameHeightScale))") }
+                var detail = "geometryScale=\(String(format: "%.3f", geometryWidthScale))x\(String(format: "%.3f", geometryHeightScale)) (target >=\(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryWidthScale))x\(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryHeightScale))), frameScale=\(String(format: "%.3f", frameWidthScale))x\(String(format: "%.3f", frameHeightScale)) (target >=\(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameWidthScale))x\(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameHeightScale))), viewport=\(vpW)x\(vpH), geometry=\(currentVpW)x\(currentVpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH)"
+                if !issues.isEmpty {
+                    detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+                }
+                recordResult(name: "resolution", passed: resolutionFloorPassed,
+                            detail: detail)
             }
         } else {
-            // Not enough decoded frames -- report viewport dims, pass informational
-            recordResult(name: "resolution", passed: true,
-                        detail: "viewport=\(vpW)x\(vpH), mac=\(handshakeW)x\(handshakeH) (no frame dims to verify)")
+            recordResult(name: "resolution", passed: false,
+                        detail: "frame=n/a, viewport=\(vpW)x\(vpH), geometry=\((sessionManager?.viewportWidth ?? vpW))x\((sessionManager?.viewportHeight ?? vpH)), mac=\(handshakeW)x\(handshakeH) [ISSUES: no decoded frame dimensions to verify]")
         }
 
         resolutionTestComplete = true
@@ -865,6 +878,7 @@ final class DeviceTestRunner {
             var stutterCount = 0  // gaps > 100ms
             var medianInterval: Double = 0
             var p95Interval: Double = 0
+            var p99Interval: Double = 0
             var maxInterval: Double = 0
             var minInterval: Double = 0
             var jitterStdDev: Double = 0
@@ -875,6 +889,7 @@ final class DeviceTestRunner {
                 maxInterval = sorted.last!
                 medianInterval = sorted[sorted.count / 2]
                 p95Interval = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+                p99Interval = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.99))]
 
                 let mean = intervals.reduce(0, +) / Double(intervals.count)
                 let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
@@ -922,12 +937,13 @@ final class DeviceTestRunner {
             // 4. Worst 1s window must have >= 5 frames
             // 5. Average FPS must meet a 60fps minimum unless an even stricter
             //    --expect-fps target is provided at launch.
-            let hasEnoughFrames = frameCount >= 20
+            let hasEnoughFrames = frameCount >= E2ETestThresholds.FPS.minFrameCount
             let stutterRatio = intervals.isEmpty ? 1.0 : Double(stutterCount) / Double(intervals.count)
-            let isConsistent = stutterRatio < 0.05
-            let noLongFreeze = maxInterval < 200.0
-            let worstWindowOK = worstWindowFPS >= 5.0
-            let minimumRequiredFPS = 60.0
+            let isConsistent = stutterRatio < (E2ETestThresholds.FPS.maxStutterPercent / 100.0)
+            let noLongFreeze = maxInterval < E2ETestThresholds.FPS.maxGapMs
+            let worstWindowOK = worstWindowFPS >= E2ETestThresholds.FPS.minWorstOneSecondFPS
+            let minimumRequiredFPS = E2ETestThresholds.FPS.minAverageFPS
+            let stutterRatioPct = stutterRatio * 100.0
 
             var passed: Bool
             var detail: String
@@ -940,10 +956,15 @@ final class DeviceTestRunner {
 
             let requiredFPS = max(Double(self.expectFPS ?? 0), minimumRequiredFPS)
             let meetsTarget = avgFPS >= requiredFPS
+            let onePercentLowFPS = p99Interval > 0 ? 1000.0 / p99Interval : avgFPS
+            let onePercentLowOK = onePercentLowFPS >= E2ETestThresholds.FPS.minOnePercentLowFPS
+            let jitterOK = jitterStdDev <= E2ETestThresholds.FPS.maxJitterMs
             if !meetsTarget { issues.append("avg \(String(format: "%.1f", avgFPS)) < target \(String(format: "%.0f", requiredFPS))") }
-            passed = meetsTarget && hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK
+            if !onePercentLowOK { issues.append("1% low \(String(format: "%.1f", onePercentLowFPS))fps < \(String(format: "%.1f", E2ETestThresholds.FPS.minOnePercentLowFPS))fps") }
+            if !jitterOK { issues.append("jitter \(String(format: "%.1f", jitterStdDev))ms > \(String(format: "%.1f", E2ETestThresholds.FPS.maxJitterMs))ms") }
+            passed = meetsTarget && hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK && onePercentLowOK && jitterOK
 
-            detail = "\(String(format: "%.1f", avgFPS)) fps, \(frameCount) frames, stutters=\(stutterCount)/\(intervals.count), jitter=\(String(format: "%.1f", jitterStdDev))ms, worst1s=\(String(format: "%.0f", worstWindowFPS))fps, maxGap=\(String(format: "%.0f", maxInterval))ms"
+            detail = "avgFPS=\(String(format: "%.1f", avgFPS)) (target >=\(String(format: "%.0f", requiredFPS))fps), onePctLow=\(String(format: "%.1f", onePercentLowFPS))fps (target >=\(String(format: "%.1f", E2ETestThresholds.FPS.minOnePercentLowFPS))fps), p95Frame=\(String(format: "%.0f", p95Interval))ms, stutterPct=\(String(format: "%.1f", stutterRatioPct)) (target <=\(String(format: "%.1f", E2ETestThresholds.FPS.maxStutterPercent))%), worst1s=\(String(format: "%.0f", worstWindowFPS))fps (target >=\(String(format: "%.0f", E2ETestThresholds.FPS.minWorstOneSecondFPS))fps), maxGap=\(String(format: "%.0f", maxInterval))ms (target <\(String(format: "%.0f", E2ETestThresholds.FPS.maxGapMs))ms), jitter=\(String(format: "%.1f", jitterStdDev))ms (target <=\(String(format: "%.1f", E2ETestThresholds.FPS.maxJitterMs))ms), frames=\(frameCount) (target >=\(E2ETestThresholds.FPS.minFrameCount))"
 
             if !issues.isEmpty {
                 detail += " [ISSUES: \(issues.joined(separator: ", "))]"
@@ -975,8 +996,8 @@ final class DeviceTestRunner {
         let cv = mean > 0 ? stddev / mean : 999.0
 
         // PASS if CV < 0.35 (35% variation)
-        let passed = cv < 0.35
-        let detail = "cv=\(String(format: "%.3f", cv)), stddev=\(String(format: "%.1f", stddev))ms, mean=\(String(format: "%.1f", mean))ms"
+        let passed = cv < E2ETestThresholds.FramePacing.maxCoefficientOfVariation
+        let detail = "cv=\(String(format: "%.3f", cv)) (target <\(String(format: "%.3f", E2ETestThresholds.FramePacing.maxCoefficientOfVariation))), stddev=\(String(format: "%.1f", stddev))ms, mean=\(String(format: "%.1f", mean))ms"
 
         recordResult(name: "frame-pacing", passed: passed, detail: detail)
         runFrameLossTest()
@@ -1013,15 +1034,15 @@ final class DeviceTestRunner {
 
         // Pass criteria: less than 10% frame loss
         // AND rendered frames should be at least 10 (something is showing)
-        let lossOK = lossRatio < 0.10
-        let renderOK = rendered >= 10
+        let lossOK = lossRatio < (E2ETestThresholds.FrameLoss.maxLossPercent / 100.0)
+        let renderOK = rendered >= E2ETestThresholds.FrameLoss.minRenderedFrames
 
         var issues: [String] = []
         if !lossOK { issues.append("\(String(format: "%.1f", lossRatio * 100))% loss") }
         if !renderOK { issues.append("only \(rendered) rendered") }
 
         let passed = lossOK && renderOK
-        var detail = "loss=\(String(format: "%.1f", lossRatio * 100))% (\(totalDropped)/\(totalFrames)), rendered=\(rendered), transport=\(transport)"
+        var detail = "loss=\(String(format: "%.1f", lossRatio * 100))% (target <\(String(format: "%.1f", E2ETestThresholds.FrameLoss.maxLossPercent))%), rendered=\(rendered) (target >=\(E2ETestThresholds.FrameLoss.minRenderedFrames)), transport=\(transport), dropped=\(totalDropped)/\(totalFrames)"
         if !issues.isEmpty {
             detail += " [ISSUES: \(issues.joined(separator: ", "))]"
         }
@@ -1128,11 +1149,11 @@ final class DeviceTestRunner {
         if let target = latencyTargetMs {
             let passed = medianMs <= target
             recordResult(name: "latency-tiered", passed: passed,
-                        detail: "target=\(target)ms, median=\(medianMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount)")
+                        detail: "median=\(medianMs)ms (target <=\(target)ms), p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount)")
         } else {
             // No target -- report stats, always pass
             recordResult(name: "latency-tiered", passed: true,
-                        detail: "min=\(minMs)ms, median=\(medianMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount)")
+                        detail: "min=\(minMs)ms, median=\(medianMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount), threshold=none")
         }
 
         runThroughputTest()
@@ -1170,10 +1191,10 @@ final class DeviceTestRunner {
 
             // Must have sustained frame flow: at least 5 rendered frames per second average
             let avgFPS = elapsed > 0 ? Double(self.throughputFrames) / elapsed : 0
-            let passed = self.throughputFrames >= 10 && avgFPS >= 5.0
+            let passed = self.throughputFrames >= E2ETestThresholds.Throughput.minFrameCount && avgFPS >= E2ETestThresholds.Throughput.minAverageFPS
             print("[TEST] INFO: throughput (app-recv=\(String(format: "%.1f", mbps)) Mbps, \(String(format: "%.1f", avgFPS)) rendered fps over \(String(format: "%.1f", elapsed))s, frames=\(self.throughputFrames), excludes TCP/DTLS/IP overhead)")
             self.recordResult(name: "throughput", passed: passed,
-                            detail: "app-recv=\(String(format: "%.1f", mbps)) Mbps, \(self.throughputFrames) frames (\(String(format: "%.1f", avgFPS)) fps) in \(String(format: "%.1f", elapsed))s")
+                            detail: "avgFPS=\(String(format: "%.1f", avgFPS)) (target >=\(String(format: "%.1f", E2ETestThresholds.Throughput.minAverageFPS))fps), frames=\(self.throughputFrames) (target >=\(E2ETestThresholds.Throughput.minFrameCount)), appRecv=\(String(format: "%.1f", mbps))Mbps, duration=\(String(format: "%.1f", elapsed))s")
 
             self.reportPipelineLatency()
             self.reportGlassToGlassLatency()
@@ -1192,7 +1213,7 @@ final class DeviceTestRunner {
         }
 
         // Minimum sample count: if we have very few samples, the screen is effectively black
-        let minSamples = 50
+        let minSamples = E2ETestThresholds.PipelineLatency.minSamples
         if pipelineLatenciesUs.count < minSamples {
             print("[TEST] INFO: pipeline-latency (only \(pipelineLatenciesUs.count) samples — too few, screen likely not rendering)")
             recordResult(name: "pipeline-latency", passed: false,
@@ -1212,10 +1233,23 @@ final class DeviceTestRunner {
         let calibrated = clockOffsetCalibrated ? "calibrated, offset=\(clockOffsetUs/1000)ms" : "uncalibrated"
         print("[TEST] INFO: pipeline-latency (capture-to-decode, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, clock=\(calibrated))")
 
-        let threshold: Int64 = 20
-        let passed = medianMs < threshold
+        let medianThreshold: Int64 = E2ETestThresholds.PipelineLatency.maxMedianMs
+        let avgThreshold: Int64 = E2ETestThresholds.PipelineLatency.maxAverageMs
+        let p95Threshold: Int64 = E2ETestThresholds.PipelineLatency.maxP95Ms
+        let medianOK = medianMs < medianThreshold
+        let avgOK = avgMs < avgThreshold
+        let p95OK = p95Ms < p95Threshold
+        let passed = medianOK && avgOK && p95OK
+        var issues: [String] = []
+        if !medianOK { issues.append("median \(medianMs)ms >= \(medianThreshold)ms") }
+        if !avgOK { issues.append("avg \(avgMs)ms >= \(avgThreshold)ms") }
+        if !p95OK { issues.append("p95 \(p95Ms)ms >= \(p95Threshold)ms") }
+        var detail = "latency[min/med/avg/p95/max]=\(minMs)/\(medianMs)/\(avgMs)/\(p95Ms)/\(maxMs)ms, targets med<\(medianThreshold) avg<\(avgThreshold) p95<\(p95Threshold), samples=\(count), clock=\(calibrated)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
         recordResult(name: "pipeline-latency", passed: passed,
-                    detail: "capture-to-decode: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
+                    detail: detail)
     }
 
     // MARK: - Glass-to-Glass Latency Report
@@ -1229,7 +1263,7 @@ final class DeviceTestRunner {
         }
 
         // Minimum sample count: if we have very few samples, the screen is effectively black
-        let minSamples = 50
+        let minSamples = E2ETestThresholds.GlassToGlassLatency.minSamples
         if glassToGlassLatenciesUs.count < minSamples {
             print("[TEST] INFO: glass-to-glass-latency (only \(glassToGlassLatenciesUs.count) samples — too few)")
             recordResult(name: "glass-to-glass-latency", passed: false,
@@ -1257,10 +1291,23 @@ final class DeviceTestRunner {
             print("[TEST] INFO: glass-to-glass overhead vs decode: \(overheadMs)ms (present+display-link)")
         }
 
-        let threshold: Int64 = 30
-        let passed = medianMs < threshold
+        let medianThreshold: Int64 = E2ETestThresholds.GlassToGlassLatency.maxMedianMs
+        let avgThreshold: Int64 = E2ETestThresholds.GlassToGlassLatency.maxAverageMs
+        let p95Threshold: Int64 = E2ETestThresholds.GlassToGlassLatency.maxP95Ms
+        let medianOK = medianMs < medianThreshold
+        let avgOK = avgMs < avgThreshold
+        let p95OK = p95Ms < p95Threshold
+        let passed = medianOK && avgOK && p95OK
+        var issues: [String] = []
+        if !medianOK { issues.append("median \(medianMs)ms >= \(medianThreshold)ms") }
+        if !avgOK { issues.append("avg \(avgMs)ms >= \(avgThreshold)ms") }
+        if !p95OK { issues.append("p95 \(p95Ms)ms >= \(p95Threshold)ms") }
+        var detail = "latency[min/med/avg/p95/max]=\(minMs)/\(medianMs)/\(avgMs)/\(p95Ms)/\(maxMs)ms, targets med<\(medianThreshold) avg<\(avgThreshold) p95<\(p95Threshold), samples=\(count), clock=\(calibrated)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
         recordResult(name: "glass-to-glass-latency", passed: passed,
-                    detail: "capture-to-presented: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
+                    detail: detail)
     }
 
     // MARK: - Heavy Load Test
@@ -1295,22 +1342,43 @@ final class DeviceTestRunner {
                 let safeEnd = min(endPipelineCount, self.pipelineLatenciesUs.count)
                 let safeStart = min(startPipelineCount, safeEnd)
                 let hlPipeline = Array(self.pipelineLatenciesUs[safeStart..<safeEnd])
+                var hlMinMs: Int64 = 0
                 var hlMedianMs: Int64 = 0
+                var hlAvgMs: Int64 = 0
                 var hlP95Ms: Int64 = 0
+                var hlMaxMs: Int64 = 0
                 if !hlPipeline.isEmpty {
                     let sorted = hlPipeline.sorted()
+                    hlMinMs = sorted.first! / 1000
                     hlMedianMs = sorted[sorted.count / 2] / 1000
+                    hlAvgMs = sorted.reduce(0, +) / Int64(sorted.count) / 1000
                     let p95Idx = min(Int(Double(sorted.count) * 0.95), sorted.count - 1)
                     hlP95Ms = sorted[p95Idx] / 1000
+                    hlMaxMs = sorted.last! / 1000
                 }
 
                 print("[TEST] INFO: heavy-load (fps=\(String(format: "%.1f", hlFPS)), frames=\(hlFrames), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms, samples=\(hlPipeline.count), duration=\(String(format: "%.1f", elapsed))s)")
 
-                let heavyLoadFPSFloor = 60.0
-                let heavyLoadPipelineP95Threshold: Int64 = 50
-                let passed = hlFPS >= heavyLoadFPSFloor && (hlPipeline.isEmpty || hlP95Ms < heavyLoadPipelineP95Threshold)
+                let heavyLoadFPSFloor = E2ETestThresholds.HeavyLoad.minAverageFPS
+                let heavyLoadPipelineMedianThreshold: Int64 = E2ETestThresholds.HeavyLoad.maxPipelineMedianMs
+                let heavyLoadPipelineAverageThreshold: Int64 = E2ETestThresholds.HeavyLoad.maxPipelineAverageMs
+                let heavyLoadPipelineP95Threshold: Int64 = E2ETestThresholds.HeavyLoad.maxPipelineP95Ms
+                let fpsOK = hlFPS >= heavyLoadFPSFloor
+                let medianOK = hlPipeline.isEmpty || hlMedianMs < heavyLoadPipelineMedianThreshold
+                let avgOK = hlPipeline.isEmpty || hlAvgMs < heavyLoadPipelineAverageThreshold
+                let p95OK = hlPipeline.isEmpty || hlP95Ms < heavyLoadPipelineP95Threshold
+                let passed = fpsOK && medianOK && avgOK && p95OK
+                var issues: [String] = []
+                if !fpsOK { issues.append("fps \(String(format: "%.1f", hlFPS)) < \(String(format: "%.0f", heavyLoadFPSFloor))") }
+                if !medianOK { issues.append("pipeline median \(hlMedianMs)ms >= \(heavyLoadPipelineMedianThreshold)ms") }
+                if !avgOK { issues.append("pipeline avg \(hlAvgMs)ms >= \(heavyLoadPipelineAverageThreshold)ms") }
+                if !p95OK { issues.append("pipeline p95 \(hlP95Ms)ms >= \(heavyLoadPipelineP95Threshold)ms") }
+                var detail = "fps=\(String(format: "%.1f", hlFPS)) (target >=\(String(format: "%.0f", heavyLoadFPSFloor))fps); pipe[min/med/avg/p95/max]=\(hlMinMs)/\(hlMedianMs)/\(hlAvgMs)/\(hlP95Ms)/\(hlMaxMs)ms (targets med<\(heavyLoadPipelineMedianThreshold) avg<\(heavyLoadPipelineAverageThreshold) p95<\(heavyLoadPipelineP95Threshold)); frames=\(hlFrames); samples=\(hlPipeline.count)"
+                if !issues.isEmpty {
+                    detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+                }
                 self.recordResult(name: "heavy-load", passed: passed,
-                            detail: "fps=\(String(format: "%.1f", hlFPS)), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms")
+                            detail: detail)
 
                 self.runPostHeavyLoadTests()
             }
@@ -1360,10 +1428,12 @@ final class DeviceTestRunner {
             }
 
             let maxGap = intervals.max() ?? 0
+            let p95Interval = intervals.isEmpty ? 0 : intervals.sorted()[min(intervals.count - 1, Int(Double(intervals.count) * 0.95))]
+            let p99Interval = intervals.isEmpty ? 0 : intervals.sorted()[min(intervals.count - 1, Int(Double(intervals.count) * 0.99))]
             let mean = intervals.isEmpty ? 0 : intervals.reduce(0, +) / Double(intervals.count)
             let variance = intervals.isEmpty ? 0 : intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
             let stddev = sqrt(variance)
-            let cv = mean > 0 ? stddev / mean : 999
+            let onePercentLowFPS = p99Interval > 0 ? 1000.0 / p99Interval : avgFPS
 
             var worstWindowFPS = avgFPS
             if timestamps.count >= 10 {
@@ -1395,19 +1465,49 @@ final class DeviceTestRunner {
 
             let pipelineMedianMs = percentileMs(pipelineSlice, percentile: 0.5)
             let pipelineP95Ms = percentileMs(pipelineSlice, percentile: 0.95)
+            let pipelineAvgMs = pipelineSlice.isEmpty ? 0 : (pipelineSlice.reduce(0, +) / Int64(pipelineSlice.count)) / 1000
             let glassMedianMs = percentileMs(glassSlice, percentile: 0.5)
             let glassP95Ms = percentileMs(glassSlice, percentile: 0.95)
+            let glassAvgMs = glassSlice.isEmpty ? 0 : (glassSlice.reduce(0, +) / Int64(glassSlice.count)) / 1000
 
-            let noReconnects = self.sustainedStreamReconnects == 0
-            let enoughFrames = frameCount >= Int(max(20, self.sustainedStreamDuration * 10.0))
-            let noLongFreeze = maxGap < 500.0
-            let worstWindowOK = worstWindowFPS >= 10.0
-            let passed = noReconnects && enoughFrames && noLongFreeze && worstWindowOK
+            let noReconnects = self.sustainedStreamReconnects == E2ETestThresholds.SustainedStream.maxReconnects
+            let minimumFrameCount = Int(max(Double(E2ETestThresholds.SustainedStream.minimumFrameCount), self.sustainedStreamDuration * E2ETestThresholds.SustainedStream.minFramesPerSecond))
+            let enoughFrames = frameCount >= minimumFrameCount
+            let averageFPSOK = avgFPS >= E2ETestThresholds.SustainedStream.minAverageFPS
+            let onePercentLowOK = onePercentLowFPS >= E2ETestThresholds.SustainedStream.minOnePercentLowFPS
+            let jitterOK = stddev <= E2ETestThresholds.SustainedStream.maxJitterMs
+            let noLongFreeze = maxGap < E2ETestThresholds.SustainedStream.maxGapMs
+            let worstWindowOK = worstWindowFPS >= E2ETestThresholds.SustainedStream.minWorstOneSecondFPS
+            let pipelineMedianOK = pipelineMedianMs < E2ETestThresholds.SustainedStream.maxPipelineMedianMs
+            let pipelineAverageOK = pipelineAvgMs < E2ETestThresholds.SustainedStream.maxPipelineAverageMs
+            let pipelineP95OK = pipelineP95Ms < E2ETestThresholds.SustainedStream.maxPipelineP95Ms
+            let glassMedianOK = glassMedianMs < E2ETestThresholds.SustainedStream.maxGlassMedianMs
+            let glassAverageOK = glassAvgMs < E2ETestThresholds.SustainedStream.maxGlassAverageMs
+            let glassP95OK = glassP95Ms < E2ETestThresholds.SustainedStream.maxGlassP95Ms
+            let passed = noReconnects && enoughFrames && averageFPSOK && onePercentLowOK && jitterOK && noLongFreeze && worstWindowOK && pipelineMedianOK && pipelineAverageOK && pipelineP95OK && glassMedianOK && glassAverageOK && glassP95OK
+            var issues: [String] = []
+            if !noReconnects { issues.append("reconnects \(self.sustainedStreamReconnects) != \(E2ETestThresholds.SustainedStream.maxReconnects)") }
+            if !enoughFrames { issues.append("frames \(frameCount) < \(minimumFrameCount)") }
+            if !averageFPSOK { issues.append("avg fps \(String(format: "%.1f", avgFPS)) < \(String(format: "%.1f", E2ETestThresholds.SustainedStream.minAverageFPS))") }
+            if !onePercentLowOK { issues.append("1% low \(String(format: "%.1f", onePercentLowFPS))fps < \(String(format: "%.1f", E2ETestThresholds.SustainedStream.minOnePercentLowFPS))fps") }
+            if !jitterOK { issues.append("jitter \(String(format: "%.1f", stddev))ms > \(String(format: "%.1f", E2ETestThresholds.SustainedStream.maxJitterMs))ms") }
+            if !noLongFreeze { issues.append("max gap \(String(format: "%.0f", maxGap))ms >= \(String(format: "%.0f", E2ETestThresholds.SustainedStream.maxGapMs))ms") }
+            if !worstWindowOK { issues.append("worst 1s \(String(format: "%.0f", worstWindowFPS))fps < \(String(format: "%.0f", E2ETestThresholds.SustainedStream.minWorstOneSecondFPS))fps") }
+            if !pipelineMedianOK { issues.append("pipeline median \(pipelineMedianMs)ms >= \(E2ETestThresholds.SustainedStream.maxPipelineMedianMs)ms") }
+            if !pipelineAverageOK { issues.append("pipeline avg \(pipelineAvgMs)ms >= \(E2ETestThresholds.SustainedStream.maxPipelineAverageMs)ms") }
+            if !pipelineP95OK { issues.append("pipeline p95 \(pipelineP95Ms)ms >= \(E2ETestThresholds.SustainedStream.maxPipelineP95Ms)ms") }
+            if !glassMedianOK { issues.append("glass median \(glassMedianMs)ms >= \(E2ETestThresholds.SustainedStream.maxGlassMedianMs)ms") }
+            if !glassAverageOK { issues.append("glass avg \(glassAvgMs)ms >= \(E2ETestThresholds.SustainedStream.maxGlassAverageMs)ms") }
+            if !glassP95OK { issues.append("glass p95 \(glassP95Ms)ms >= \(E2ETestThresholds.SustainedStream.maxGlassP95Ms)ms") }
 
+            var detail = "reconnects=\(self.sustainedStreamReconnects) (target ==\(E2ETestThresholds.SustainedStream.maxReconnects)); frames=\(frameCount) (target >=\(minimumFrameCount)); fps[avg/1%low]=\(String(format: "%.1f", avgFPS))/\(String(format: "%.1f", onePercentLowFPS)) (targets >=\(String(format: "%.1f", E2ETestThresholds.SustainedStream.minAverageFPS))/>=\(String(format: "%.1f", E2ETestThresholds.SustainedStream.minOnePercentLowFPS))); timing[p95/maxGap/jitter/worst1s]=\(String(format: "%.0f", p95Interval))ms/\(String(format: "%.0f", maxGap))ms/\(String(format: "%.1f", stddev))ms/\(String(format: "%.0f", worstWindowFPS))fps (targets info/<\(String(format: "%.0f", E2ETestThresholds.SustainedStream.maxGapMs))ms/<=\(String(format: "%.1f", E2ETestThresholds.SustainedStream.maxJitterMs))ms/>=\(String(format: "%.0f", E2ETestThresholds.SustainedStream.minWorstOneSecondFPS))fps); counts[rendered/observed]=\(renderedDelta)/\(observedDelta); pipe[med/avg/p95]=\(pipelineMedianMs)/\(pipelineAvgMs)/\(pipelineP95Ms)ms (targets <\(E2ETestThresholds.SustainedStream.maxPipelineMedianMs)/<\(E2ETestThresholds.SustainedStream.maxPipelineAverageMs)/<\(E2ETestThresholds.SustainedStream.maxPipelineP95Ms)); glass[med/avg/p95]=\(glassMedianMs)/\(glassAvgMs)/\(glassP95Ms)ms (targets <\(E2ETestThresholds.SustainedStream.maxGlassMedianMs)/<\(E2ETestThresholds.SustainedStream.maxGlassAverageMs)/<\(E2ETestThresholds.SustainedStream.maxGlassP95Ms))"
+            if !issues.isEmpty {
+                detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+            }
             self.recordResult(
                 name: "sustained-stream",
                 passed: passed,
-                detail: "duration=\(String(format: "%.1f", elapsed))s, rendered=\(renderedDelta), observed=\(observedDelta), fps=\(String(format: "%.1f", avgFPS)), cv=\(String(format: "%.3f", cv)), worst1s=\(String(format: "%.0f", worstWindowFPS))fps, maxGap=\(String(format: "%.0f", maxGap))ms, reconnects=\(self.sustainedStreamReconnects), pipeline median/p95=\(pipelineMedianMs)/\(pipelineP95Ms)ms, glass median/p95=\(glassMedianMs)/\(glassP95Ms)ms"
+                detail: detail
             )
 
             if self.skipTransportRotation {
