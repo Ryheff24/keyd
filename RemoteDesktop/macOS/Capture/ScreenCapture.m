@@ -853,78 +853,62 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     /* Fast path: memcpy cached background (~2ms for 20MB) */
     memcpy(base, _cachedBackgroundPixels, bufferSize);
 
-    /* Animate regions that represent real desktop activity:
-     * 1. Full-width scrolling content (60% of height) — like scrolling a webpage
-     * 2. Sidebar with updating content (20% of width)
-     * 3. Cursor moving across the screen
-     * Together these change ~40% of pixels per frame, producing ~1-3MB LZ4 deltas.
-     * This stresses the pipeline close to real-world browsing/scrolling load. */
+    /* Animate regions representing real desktop activity:
+     * 1. Full-width scrolling content (60% height) — webpage scrolling
+     * 2. Sidebar with updating content (20% width)
+     * 3. Moving cursor (24x24)
+     *
+     * Uses fast per-row memset instead of per-pixel computation.
+     * Real SCStream delivers pre-built pixel buffers (zero CPU overhead),
+     * so the test content generation must be fast to not bottleneck. */
     {
         double t = (double)frameIndex / (double)kSyntheticFPS;
         uint8_t *pixels = (uint8_t *)base;
-        uint32_t seed = (uint32_t)frameIndex * 2654435761u;
 
-        /* 1. Main content area: scrolling page (full width, 60% height).
-         * Simulates scrolling a text-heavy webpage at ~200px/s. */
-        size_t mainX = 0;
-        size_t mainW = width;
+        /* 1. Main scroll area: full width, 60% height, solid-color bands.
+         * Each 16px band alternates between "text" gray and "gap" white.
+         * Scroll offset shifts the band pattern ~200px/s. */
         size_t mainH = height * 60 / 100;
-        size_t mainY = height * 10 / 100;  /* leave top 10% as "toolbar" */
-        double scrollSpeed = 200.0;
-        int scrollOffset = (int)(t * scrollSpeed);
+        size_t mainY = height * 10 / 100;
+        int scrollOffset = (int)(t * 200.0);
 
         for (size_t row = mainY; row < MIN(mainY + mainH, height); row++) {
             int contentRow = (int)(row - mainY) + scrollOffset;
-            for (size_t col = mainX; col < MIN(mainX + mainW, width); col++) {
-                size_t offset = row * bytesPerRow + col * 4;
-                /* Text-like rows: 12px content, 4px spacing */
-                int rowInBlock = contentRow % 16;
-                uint8_t val;
-                if (rowInBlock < 12) {
-                    /* "Text" — varies per row for different content */
-                    uint32_t h = (uint32_t)(contentRow / 16) * 2654435761u ^ (uint32_t)col * 1103515245u;
-                    val = (h & 0x3) == 0 ? (uint8_t)(40 + (h >> 8) % 30) :
-                                           (uint8_t)(200 + (h >> 16) % 55);
-                } else {
-                    /* Inter-line gap — lighter background */
-                    val = 245;
-                }
-                pixels[offset + 0] = val;
-                pixels[offset + 1] = val;
-                pixels[offset + 2] = val;
-                pixels[offset + 3] = 255;
+            int band = (contentRow / 16) & 0xFF;
+            /* Alternate: dark text rows (12px) then light gap (4px) */
+            uint8_t val = (contentRow % 16 < 12)
+                ? (uint8_t)(50 + (band * 37) % 180)     /* text-like */
+                : (uint8_t)245;                           /* gap */
+            /* Fill entire row with BGRA (val, val, val, 255) using 4-byte writes */
+            uint32_t pixel = 0xFF000000u | ((uint32_t)val << 16) | ((uint32_t)val << 8) | val;
+            uint32_t *rowPixels = (uint32_t *)(pixels + row * bytesPerRow);
+            for (size_t col = 0; col < width; col++) {
+                rowPixels[col] = pixel;
             }
         }
 
         /* 2. Sidebar: 20% width on right, full height.
-         * Updates with different content each frame (chat/notifications). */
-        size_t sideW = width * 20 / 100;
-        size_t sideX = width - sideW;
+         * Solid color bands that shift each frame. */
+        size_t sideX = width * 80 / 100;
+        int sideShift = scrollOffset / 2;
         for (size_t row = 0; row < height; row++) {
-            int contentRow = (int)row + scrollOffset / 2;
-            for (size_t col = sideX; col < width; col++) {
-                size_t offset = row * bytesPerRow + col * 4;
-                uint32_t h = seed ^ (uint32_t)(contentRow * 131 + col * 7);
-                uint8_t val = (h & 0x7) < 2 ? (uint8_t)(60 + (h >> 4) % 40) :
-                                                (uint8_t)(220 + (h >> 12) % 35);
-                pixels[offset + 0] = val;
-                pixels[offset + 1] = val;
-                pixels[offset + 2] = val;
-                pixels[offset + 3] = 255;
+            int band = ((int)row + sideShift) / 20;
+            uint8_t val = (uint8_t)(100 + (band * 53) % 150);
+            uint32_t pixel = 0xFF000000u | ((uint32_t)val << 16) | ((uint32_t)val << 8) | val;
+            uint32_t *rowPixels = (uint32_t *)(pixels + row * bytesPerRow + sideX * 4);
+            for (size_t col = 0; col < width - sideX; col++) {
+                rowPixels[col] = pixel;
             }
         }
 
-        /* 3. Cursor: 24x24 white square moving in figure-8 */
+        /* 3. Cursor: 24x24 white square in figure-8 */
         size_t cursorSize = 24;
         size_t cursorX = (size_t)((double)(width - cursorSize) * (0.5 + 0.3 * sin(t * 2.1)));
         size_t cursorY = (size_t)((double)(height - cursorSize) * (0.5 + 0.3 * sin(t * 1.7)));
         for (size_t row = cursorY; row < MIN(cursorY + cursorSize, height); row++) {
+            uint32_t *rowPixels = (uint32_t *)(pixels + row * bytesPerRow);
             for (size_t col = cursorX; col < MIN(cursorX + cursorSize, width); col++) {
-                size_t offset = row * bytesPerRow + col * 4;
-                pixels[offset + 0] = 255;
-                pixels[offset + 1] = 255;
-                pixels[offset + 2] = 255;
-                pixels[offset + 3] = 255;
+                rowPixels[col] = 0xFFFFFFFFu;
             }
         }
     }

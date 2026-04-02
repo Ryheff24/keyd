@@ -208,31 +208,13 @@ int compress_frame(FrameCompressorState *state,
             return -1;
         }
 
-        /*
-         * RD-COMP-03: Delta threshold check.
-         * If compressed delta > 60% of last keyframe compressed size,
-         * the scene has changed too much — discard delta, send keyframe.
-         */
-        if (state->last_keyframe_compressed > 0 &&
-            (size_t)compressed > (state->last_keyframe_compressed * 6 / 10)) {
-            /* Fallback to keyframe — reference already updated by fused call */
-            compressed = LZ4_compress_fast(
-                (const char *)base,
-                (char *)out->buf,
-                (int)bytes,
-                (int)out->buf_capacity,
-                8);
-
-            if (compressed <= 0) {
-                IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
-                return -1;
-            }
-
-            flags = KEYDRD_FLAG_KEYFRAME;
-            state->last_keyframe_compressed = (size_t)compressed;
-        } else {
-            flags = KEYDRD_FLAG_DELTA;
-        }
+        /* Delta threshold fallback removed (was RD-COMP-03).
+         * The 60% threshold caused double LZ4 compression on every frame
+         * during active content (scrolling, video), halving throughput.
+         * On reliable TCP, periodic keyframes (every keyframe_interval_frames)
+         * are sufficient for error recovery. Deltas are always valid as long
+         * as the reference stays in sync, which TCP guarantees. */
+        flags = KEYDRD_FLAG_DELTA;
 
         /* Log delta-specific timing for first 10 frames and every 200th */
         {
