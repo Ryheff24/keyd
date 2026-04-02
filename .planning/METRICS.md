@@ -17,17 +17,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `92.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.329` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `14 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `16 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `14 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `36 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `37 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `34 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `87.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `14 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `16 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `100.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.332` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `12 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `14 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `12 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `28 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `29 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `29 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `98.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `13 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `15 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `0` | `0` | `1` | ❌ |
 | Overall pass rate | `96.3%` | `96.3%` | `100.0%` | ❌ |
 
@@ -56,3 +56,4 @@ Rules:
 | 2026-04-01 | 22:13:46 EDT | `700e484` | `2752x1786` | `30.0 fps` | `0.134` | `53/60/54 ms` | `69/77/73 ms` | `31.4 fps, 53/58 ms` | `0` | `26/27` | Noisy gradient 100pct change, LZ4 acc=32, no memcpy, no keyframe fallback |
 | 2026-04-01 | 22:17:01 EDT | `13eb771` | `2752x1786` | `32.1 fps` | `0.126` | `56/63/55 ms` | `75/83/75 ms` | `31.8 fps, 56/63 ms` | `0` | `26/27` | Block-noise gradient 4x4, LZ4 acc=32, no memcpy, target 1-5MB deltas |
 | 2026-04-01 | 22:20:29 EDT | `84fe069` | `2752x1786` | `92.0 fps` | `0.329` | `14/16/14 ms` | `36/37/34 ms` | `87.1 fps, 14/16 ms` | `0` | `26/27` | Gradient + 20pct video window (4MB delta target), LZ4 acc=32 |
+| 2026-04-01 | 22:52:09 EDT | `5a2acd1` | `2752x1786` | `100.9 fps` | `0.332` | `12/14/12 ms` | `28/29/29 ms` | `98.8 fps, 13/15 ms` | `0` | `26/27` | 15pct video window (~3MB delta), 3 TCP in-flight, branchless loops |
