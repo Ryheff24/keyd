@@ -852,46 +852,55 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
 
     /* Skip the cached background memcpy — we overwrite 100% of pixels below.
      *
-     * Two regions:
-     * 1. Scrolling gradient (80% of frame) — structured, 100% pixel change,
-     *    but compressible by LZ4 (~200KB delta). Represents UI/text content.
-     * 2. "Video window" (20% of frame) — per-pixel random content that changes
-     *    every frame. Incompressible delta (~4MB). Represents embedded video,
-     *    photo gallery, or game content.
-     *
-     * Total delta: ~4.2MB per frame — stresses the pipeline realistically.
-     * Adjust VIDEO_FRACTION to control difficulty. */
+     * Two regions, no per-pixel branching (split into row segments):
+     * 1. Scrolling gradient (85%) — structured, compressible LZ4 delta (~200KB)
+     * 2. "Video window" (15%) — per-pixel PRNG, incompressible delta (~3MB)
+     * Total: ~3.2MB per frame. At USB 3 ~400MB/s, 3.2MB × 120fps = 384MB/s. */
     {
         uint32_t fi = (uint32_t)frameIndex;
         uint32_t *pixels32 = (uint32_t *)base;
         size_t pixelsPerRow = bytesPerRow / 4;
 
-        /* Video window: centered, 20% of frame area.
-         * ~45% of width × ~45% of height ≈ 20% of total pixels. */
-        size_t vidW = width * 45 / 100;
-        size_t vidH = height * 45 / 100;
+        /* Video window: centered, ~15% of pixels.
+         * ~39% width × ~39% height ≈ 15%. */
+        size_t vidW = width * 39 / 100;
+        size_t vidH = height * 39 / 100;
         size_t vidX = (width - vidW) / 2;
         size_t vidY = (height - vidH) / 2;
+        size_t vidXEnd = vidX + vidW;
+        size_t vidYEnd = vidY + vidH;
 
         for (size_t row = 0; row < height; row++) {
             uint32_t *rowOut = pixels32 + row * pixelsPerRow;
             uint32_t rowBase = (uint32_t)row + fi * 3;
 
-            int inVideoY = (row >= vidY && row < vidY + vidH);
-
-            for (size_t col = 0; col < width; col++) {
-                if (inVideoY && col >= vidX && col < vidX + vidW) {
-                    /* Video region: PRNG per pixel, changes every frame */
-                    uint32_t noise = ((uint32_t)row * 2654435761u + (uint32_t)col * 1103515245u + fi * 1664525u);
+            if (row >= vidY && row < vidYEnd) {
+                /* Row intersects video window: 3 segments */
+                /* Left gradient */
+                for (size_t col = 0; col < vidX; col++) {
+                    uint32_t v = rowBase + (uint32_t)col;
+                    rowOut[col] = 0xFF000000u | ((uint32_t)(uint8_t)(v*7) << 16) |
+                                  ((uint32_t)(uint8_t)(v*13+fi) << 8) | (uint8_t)(v*19+fi*3);
+                }
+                /* Middle: video PRNG (branchless tight loop) */
+                uint32_t noise = (uint32_t)row * 2654435761u + fi * 1664525u;
+                for (size_t col = vidX; col < vidXEnd; col++) {
+                    noise = noise * 1664525u + (uint32_t)col;
                     noise ^= noise >> 16;
                     rowOut[col] = 0xFF000000u | (noise & 0x00FFFFFFu);
-                } else {
-                    /* Gradient region: structured, 100% change, compressible delta */
+                }
+                /* Right gradient */
+                for (size_t col = vidXEnd; col < width; col++) {
                     uint32_t v = rowBase + (uint32_t)col;
-                    uint8_t r = (uint8_t)(v * 7);
-                    uint8_t g = (uint8_t)(v * 13 + fi);
-                    uint8_t b = (uint8_t)(v * 19 + fi * 3);
-                    rowOut[col] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                    rowOut[col] = 0xFF000000u | ((uint32_t)(uint8_t)(v*7) << 16) |
+                                  ((uint32_t)(uint8_t)(v*13+fi) << 8) | (uint8_t)(v*19+fi*3);
+                }
+            } else {
+                /* Full gradient row (no video intersection) */
+                for (size_t col = 0; col < width; col++) {
+                    uint32_t v = rowBase + (uint32_t)col;
+                    rowOut[col] = 0xFF000000u | ((uint32_t)(uint8_t)(v*7) << 16) |
+                                  ((uint32_t)(uint8_t)(v*13+fi) << 8) | (uint8_t)(v*19+fi*3);
                 }
             }
         }

@@ -63,7 +63,11 @@ static uint64_t keydrd_host_time_us(void) {
  * bounds the kernel TCP send buffer depth. At 2 in-flight, one frame
  * is being transmitted while the next waits — keeps latency bounded
  * without sacrificing throughput on fast links. */
-static const int32_t kMaxMediaSendsInFlightUSB = 2;
+/* Allow 3 concurrent TCP sends to pipeline USB NCM transfers.
+ * At 3-4MB per frame and ~400 MB/s USB 3, each send takes ~10ms.
+ * With 3 in-flight, the pipeline fills while the first is completing,
+ * keeping USB bandwidth saturated for 120fps at larger frame sizes. */
+static const int32_t kMaxMediaSendsInFlightUSB = 3;
 
 @interface SessionManager ()
 
