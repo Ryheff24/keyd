@@ -455,11 +455,76 @@ static const char *kInputPortStr = "14568";
     });
 }
 
+- (void)_sendTCPFramedChunkAtIndex:(NSUInteger)idx
+                        fromChunks:(NSArray<NSData *> *)chunks
+                        connection:(nw_connection_t)conn
+                        completion:(void (^)(BOOL success))completion {
+    if (idx >= chunks.count) {
+        if (completion) completion(YES);
+        return;
+    }
+
+    NSData *chunk = chunks[idx];
+    uint32_t netLen = htonl((uint32_t)chunk.length);
+    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
+                                                   DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t payloadData = dispatch_data_create(chunk.bytes, chunk.length,
+                                                       _transportQueue,
+                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+
+    __weak USBNetworkTransport *weakSelf = self;
+    nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                       true, ^(nw_error_t _Nullable error) {
+        if (error) {
+            os_log_error(transport_log(), "Media TCP chunk %lu/%lu send error: %{public}@",
+                         (unsigned long)idx, (unsigned long)chunks.count, error);
+            if (completion) completion(NO);
+            return;
+        }
+
+        USBNetworkTransport *self2 = weakSelf;
+        if (!self2) {
+            if (completion) completion(NO);
+            return;
+        }
+        [self2 _sendTCPFramedChunkAtIndex:idx + 1
+                               fromChunks:chunks
+                               connection:conn
+                               completion:completion];
+    });
+}
+
 - (void)sendMediaViaTCP:(const void *)data length:(size_t)len completion:(void (^)(BOOL success))completion {
     nw_connection_t conn = _inputConnection;
     if (!conn) {
         if (completion) completion(NO);
         return;
+    }
+
+    if (len >= sizeof(MediaFrameHeader)) {
+        /* USB media still uses reliable TCP, but frame-level writes make the iPad
+         * wait for multi-megabyte blobs before it can parse anything. Reframe them
+         * into chunked MediaFrameHeader packets so the existing reassembler can
+         * consume them incrementally over TCP. */
+        const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
+        const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
+        size_t payloadLen = len - sizeof(MediaFrameHeader);
+        const size_t tcpChunkMTU = 64 * 1024;
+
+        NSMutableArray<NSData *> *chunks = [NSMutableArray array];
+        chunk_frame(payload, payloadLen, originalHeader->seq, tcpChunkMTU,
+                    originalHeader, ^(const void *chunk, size_t chunkLen) {
+            [chunks addObject:[NSData dataWithBytes:chunk length:chunkLen]];
+        });
+
+        if (chunks.count > 0) {
+            [self _sendTCPFramedChunkAtIndex:0
+                                   fromChunks:chunks
+                                   connection:conn
+                                   completion:completion];
+            return;
+        }
     }
 
     /* Copy data — caller may free immediately after return */
@@ -646,8 +711,13 @@ static const char *kInputPortStr = "14568";
                 USBNetworkTransport *self3 = weakSelf;
                 if (self3 && self3.inputConnection == connection) {
                     self3.inputConnection = nil;
-                    if (!self3.mediaConnection) {
-                        self3.isConnected = NO;
+                    self3.isConnected = NO;
+                    if (self3.mediaConnection) {
+                        nw_connection_cancel(self3.mediaConnection);
+                        self3.mediaConnection = nil;
+                    }
+                    if (self3.onInputConnectionLost) {
+                        self3.onInputConnectionLost();
                     }
                 }
             }

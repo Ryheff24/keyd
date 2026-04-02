@@ -220,6 +220,17 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
 
 @synthesize isCapturing = _isCapturing;
 
+- (void)_drainCompressionPipeline {
+    /* stopCapture and synthetic reconfigure can race with in-flight LZ4 work.
+     * Drain both queues before freeing compressor-owned buffers. */
+    if (_compressQueue) {
+        dispatch_sync(_compressQueue, ^{});
+    }
+    if (_compressorInitialized && _compressor.compress_queue) {
+        dispatch_sync(_compressor.compress_queue, ^{});
+    }
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -434,6 +445,8 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         _syntheticTimer = nil;
     }
 
+    [self _drainCompressionPipeline];
+
     /* Destroy compressor */
     if (_compressorInitialized) {
         frame_compressor_destroy(&_compressor);
@@ -503,6 +516,8 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
             _cachedBackgroundBytesPerRow = 0;
         }
 
+        [self _drainCompressionPipeline];
+
         if (_compressorInitialized) {
             frame_compressor_destroy(&_compressor);
             _compressorInitialized = NO;
@@ -541,6 +556,8 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
 }
 
 - (BOOL)_initializeCompressorForWidth:(size_t)pixelWidth height:(size_t)pixelHeight {
+    [self _drainCompressionPipeline];
+
     if (_compressorInitialized) {
         frame_compressor_destroy(&_compressor);
         _compressorInitialized = NO;

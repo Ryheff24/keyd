@@ -675,8 +675,12 @@ final class SessionManager {
         // Check if this is a media frame sent over TCP (fallback for frames too large
         // for UDP chunking, e.g. keyframes at native resolution exceeding 255 chunks)
         if data.count >= MediaFrameHeader.size,
-           let _ = MediaFrameHeader.parse(from: data) {
-            handleReceivedFrame(data)
+           let mediaHeader = MediaFrameHeader.parse(from: data) {
+            if mediaHeader.chunkTotal > 1 {
+                udpReassembler.processChunk(data)
+            } else {
+                handleReceivedFrame(data)
+            }
             return
         }
 

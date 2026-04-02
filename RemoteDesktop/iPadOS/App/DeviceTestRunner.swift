@@ -1274,6 +1274,7 @@ final class DeviceTestRunner {
     /// WiFi baseline measurement state (collected during WiFi rotation phase).
     private var wifiMeasurementActive = false
     private var wifiMeasurementStartTime: CFAbsoluteTime = 0
+    private var wifiMeasurementRenderedStartCount = 0
     private var wifiMeasurementFrameTimestamps: [CFAbsoluteTime] = []
     private var wifiMeasurementFrameCount = 0
     private static let wifiMeasurementDuration: TimeInterval = 10.0
@@ -1328,7 +1329,7 @@ final class DeviceTestRunner {
 
         // Reset per-rotation state
         rotationHandshakeReceived = false
-        rotationFramesRendered = 0
+        rotationFramesRendered = sm.metalRenderer.renderedFrameCount
         rotationTransportType = ""
 
         // Disconnect everything and start only the target transport
@@ -1409,11 +1410,6 @@ final class DeviceTestRunner {
             return
         }
 
-        if connected && rotationFramesRendered == 0 {
-            // Connected but no frames yet — record baseline
-            rotationFramesRendered = rendered
-        }
-
         // Not ready yet, poll again
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.pollTransportConnection(transport: transport, deadline: deadline)
@@ -1437,6 +1433,7 @@ final class DeviceTestRunner {
         // Reset WiFi measurement state
         wifiMeasurementActive = true
         wifiMeasurementStartTime = CFAbsoluteTimeGetCurrent()
+        wifiMeasurementRenderedStartCount = sm.metalRenderer.renderedFrameCount
         wifiMeasurementFrameTimestamps = []
         wifiMeasurementFrameCount = 0
 
@@ -1453,7 +1450,9 @@ final class DeviceTestRunner {
 
             let elapsed = CFAbsoluteTimeGetCurrent() - self.wifiMeasurementStartTime
             let timestamps = self.wifiMeasurementFrameTimestamps
-            let frameCount = timestamps.count
+            let renderedEndCount = self.sessionManager?.metalRenderer.renderedFrameCount ?? self.wifiMeasurementRenderedStartCount
+            let renderedDelta = max(0, renderedEndCount - self.wifiMeasurementRenderedStartCount)
+            let frameCount = max(timestamps.count, renderedDelta)
 
             // 1. WiFi FPS
             let avgFPS: Double = elapsed > 0 ? Double(frameCount) / elapsed : 0

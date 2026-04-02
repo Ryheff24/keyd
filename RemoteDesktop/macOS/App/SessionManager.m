@@ -435,8 +435,18 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _usbTransport.onInputConnectionReady = ^{
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return;
-        os_log(sLog, "USB NCM TCP input ready — sending handshake");
-        [strongSelf onTransportConnected];
+        if (strongSelf->_transportState != TRANSPORT_USB_NCM) {
+            [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
+        } else {
+            os_log(sLog, "USB NCM TCP input ready — sending handshake");
+            [strongSelf onTransportConnected];
+        }
+    };
+
+    _usbTransport.onInputConnectionLost = ^{
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        [strongSelf handleTransportEvent:TRANSPORT_EVT_DISCONNECTED];
     };
 
     /* USB NCM interface monitoring */
