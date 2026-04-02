@@ -17,17 +17,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `63.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.338` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `46 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `91 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `51 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `57 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `106 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `61 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `75.9 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `41 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `88 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `76.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.249` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `18 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `81 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `29 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `34 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `84 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `41 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `115.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `18 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `21 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `85.2%` | `96.3%` | `100.0%` | ❌ |
 
@@ -61,3 +61,4 @@ Rules:
 | 2026-04-01 | 23:43:24 EDT | `ca59267` | `2752x1786` | `10.8 fps` | `0.031` | `207/219/208 ms` | `222/238/224 ms` | `10.7 fps, 211/224 ms` | `1` | `24/27` | raw client identity payload (cert+key), no pkcs12 |
 | 2026-04-02 | 00:06:13 EDT | `3268e60` | `2752x1786` | `111.7 fps` | `0.652` | `16/80/27 ms` | `37/78/42 ms` | `105.2 fps, 16/77 ms` | `1` | `23/27` | usb tcp chunked media + reconnect crash fix |
 | 2026-04-02 | 00:09:14 EDT | `7e1135e` | `2752x1786` | `63.4 fps` | `1.338` | `46/91/51 ms` | `57/106/61 ms` | `75.9 fps, 41/88 ms` | `1` | `23/27` | rotation uses onFrameRendered counter; usb tcp chunked media |
+| 2026-04-02 | 00:14:54 EDT | `4ce8c1a` | `2752x1786` | `76.7 fps` | `1.249` | `18/81/29 ms` | `34/84/41 ms` | `115.4 fps, 18/21 ms` | `1` | `23/27` | rotation uses decoded-or-rendered frames; usb tcp chunked media |
