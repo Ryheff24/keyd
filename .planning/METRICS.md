@@ -17,17 +17,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `30.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.449` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `19 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `52 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `25 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `39 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `66 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `44 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `30.9 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `29 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `74 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `31.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.360` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `15 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `40 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `21 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `34 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `58 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `41 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `31.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `23 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `53 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `96.0%` | `100.0%` | `100.0%` | ❌ |
 
@@ -67,3 +67,4 @@ Rules:
 | 2026-04-02 | 09:51:34 EDT | `6121952` | `2752x1786` | `119.1 fps` | `0.084` | `13/14/13 ms` | `32/33/32 ms` | `118.9 fps, 14/15 ms` | `1` | `26/26` | wifi-only stress-capture after udp startup + 1920 cap |
 | 2026-04-02 | 11:37:09 EDT | `9ab2fae` | `2752x1786` | `38.0 fps` | `0.531` | `15/44/23 ms` | `37/62/41 ms` | `40.9 fps, 14/57 ms` | `1` | `25/26` | wifi full torture clip after queue-overflow tcp fallback |
 | 2026-04-02 | 11:49:18 EDT | `c9608c7` | `2752x1786` | `30.4 fps` | `0.449` | `19/52/25 ms` | `39/66/44 ms` | `30.9 fps, 29/74 ms` | `1` | `24/25` | wifi sustained full torture clip after sustained-run mode + 40fps pacing alignment |
+| 2026-04-02 | 12:00:41 EDT | `7e243d9` | `2752x1786` | `31.9 fps` | `0.360` | `15/40/21 ms` | `34/58/41 ms` | `31.2 fps, 23/53 ms` | `1` | `24/25` | wifi sustained full torture clip after adaptive udp pacing |
