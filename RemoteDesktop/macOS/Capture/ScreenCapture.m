@@ -854,11 +854,10 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
      * This saves ~2ms per frame (20MB memcpy). In real SCStream capture,
      * the compositor delivers a fully rendered IOSurface with zero CPU cost.
      *
-     * Content: noisy gradient covering 100% of pixels. Each pixel includes
-     * a base gradient (structured, ~30% of LZ4 pattern matching) plus
-     * per-pixel noise (breaks LZ4 runs, producing 1-5MB deltas). This
-     * simulates photo-heavy webpages, video thumbnails, or game UIs —
-     * content that partially compresses but isn't trivial for LZ4. */
+     * Content: structured gradient + block-level noise. Noise is applied per
+     * 4x4 pixel block (not per pixel) so LZ4 can still match 4-byte runs
+     * within each block. This produces 1-5MB deltas — representative of
+     * photo-heavy webpages, video thumbnails, or complex UIs. */
     {
         uint32_t fi = (uint32_t)frameIndex;
         uint32_t *pixels32 = (uint32_t *)base;
@@ -867,20 +866,24 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         for (size_t row = 0; row < height; row++) {
             uint32_t *rowOut = pixels32 + row * pixelsPerRow;
             uint32_t rowBase = (uint32_t)row + fi * 3;
-            /* Per-row noise seed — xorshift-style, cheap and fast */
-            uint32_t noise = (uint32_t)row * 2654435761u + fi * 1103515245u;
+            /* Block-level noise: same noise for each 4x4 block.
+             * Changes per frame to ensure delta is non-trivial. */
+            uint32_t blockRow = (uint32_t)(row >> 2);
+            uint32_t blockNoiseSeed = blockRow * 2654435761u + fi * 1103515245u;
+
             for (size_t col = 0; col < width; col++) {
                 uint32_t v = rowBase + (uint32_t)col;
-                /* Advance noise PRNG — single multiply + shift, no branch */
-                noise = noise * 1664525u + 1013904223u;
-                /* Base gradient + ±64 noise per channel.
-                 * Noise breaks LZ4 run-length patterns while gradient
-                 * preserves enough structure to not be pure random. */
-                uint8_t n0 = (uint8_t)((noise >> 0)  & 0x7F);  /* 0-127 */
-                uint8_t n1 = (uint8_t)((noise >> 8)  & 0x7F);
-                uint8_t n2 = (uint8_t)((noise >> 16) & 0x7F);
-                uint8_t r = (uint8_t)((v * 7)      + n0);
-                uint8_t g = (uint8_t)((v * 13 + fi) + n1);
+                /* Compute block noise — same for all pixels in a 4x4 block */
+                uint32_t blockCol = (uint32_t)(col >> 2);
+                uint32_t blockNoise = blockNoiseSeed + blockCol * 1664525u;
+                blockNoise = blockNoise * 2654435761u;
+                /* ±32 noise per channel — enough to break patterns but
+                 * not so much that LZ4 gets zero compression. */
+                uint8_t n0 = (uint8_t)((blockNoise >> 0)  & 0x3F);
+                uint8_t n1 = (uint8_t)((blockNoise >> 8)  & 0x3F);
+                uint8_t n2 = (uint8_t)((blockNoise >> 16) & 0x3F);
+                uint8_t r = (uint8_t)((v * 7)           + n0);
+                uint8_t g = (uint8_t)((v * 13 + fi)     + n1);
                 uint8_t b = (uint8_t)((v * 19 + fi * 3) + n2);
                 rowOut[col] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
             }
