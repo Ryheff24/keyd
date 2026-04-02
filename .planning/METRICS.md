@@ -16,17 +16,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `12.5 fps` | `70.2 fps` | `60.0 fps` | ❌ |
-| Frame pacing CV | `8.103` | `0.210` | `0.350` | ❌ |
-| Pipeline latency median | `87 ms` | `11 ms` | `20 ms` | ❌ |
-| Pipeline latency p95 | `186 ms` | `24 ms` | `50 ms` | ❌ |
-| Pipeline latency avg | `97 ms` | `14 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency median | `106 ms` | `32 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `207 ms` | `43 ms` | `40 ms` | ❌ |
-| Glass-to-glass latency avg | `116 ms` | `33 ms` | `25 ms` | ❌ |
-| Heavy-load FPS | `10.3 fps` | `76.9 fps` | `30.0 fps` | ❌ |
-| Heavy-load pipeline median | `82 ms` | `10 ms` | `100 ms` | ✅ |
-| Heavy-load pipeline p95 | `193 ms` | `13 ms` | `150 ms` | ❌ |
+| FPS | `4.1 fps` | `70.2 fps` | `60.0 fps` | ❌ |
+| Frame pacing CV | `5.137` | `0.210` | `0.350` | ❌ |
+| Pipeline latency median | `84 ms` | `11 ms` | `20 ms` | ❌ |
+| Pipeline latency p95 | `192 ms` | `24 ms` | `50 ms` | ❌ |
+| Pipeline latency avg | `102 ms` | `14 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency median | `99 ms` | `32 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `215 ms` | `43 ms` | `40 ms` | ❌ |
+| Glass-to-glass latency avg | `121 ms` | `33 ms` | `25 ms` | ❌ |
+| Heavy-load FPS | `14.4 fps` | `76.9 fps` | `30.0 fps` | ❌ |
+| Heavy-load pipeline median | `73 ms` | `10 ms` | `100 ms` | ✅ |
+| Heavy-load pipeline p95 | `177 ms` | `13 ms` | `150 ms` | ❌ |
 | Security rejection | `0` | `0` | `1` | ❌ |
 | Overall pass rate | `88.0%` | `96.0%` | `100.0%` | ❌ |
 
@@ -46,3 +46,4 @@ Rules:
 | 2026-04-01 | 20:17:28 EDT | `da74d72` | `2752x1786` | `45.5 fps` | `0.452` | `11/80/19 ms` | `32/98/39 ms` | `76.9 fps, 11/84 ms` | `0` | `23/25` | TCP backpressure + mTLS graceful degradation + shorter timeouts |
 | 2026-04-01 | 20:30:28 EDT | `c4b452f` | `2752x1786` | `36.5 fps` | `0.210` | `12/24/14 ms` | `33/43/33 ms` | `70.5 fps, 10/13 ms` | `0` | `24/25` | Frame size cap 2MB + TCP backpressure |
 | 2026-04-01 | 20:38:39 EDT | `a1298a7` | `2752x1786` | `12.5 fps` | `8.103` | `87/186/97 ms` | `106/207/116 ms` | `10.3 fps, 82/193 ms` | `0` | `22/25` | WiFi pacing queue backpressure + size cap |
+| 2026-04-01 | 20:41:30 EDT | `0c35037` | `2752x1786` | `4.1 fps` | `5.137` | `84/192/102 ms` | `99/215/121 ms` | `14.4 fps, 73/177 ms` | `0` | `22/25` | WiFi backpressure limit=5, USB limit=2 |
