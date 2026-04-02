@@ -63,7 +63,8 @@ static uint64_t keydrd_host_time_us(void) {
  * bounds the kernel TCP send buffer depth. At 2 in-flight, one frame
  * is being transmitted while the next waits — keeps latency bounded
  * without sacrificing throughput on fast links. */
-static const int32_t kMaxTcpMediaSendsInFlight = 2;
+static const int32_t kMaxMediaSendsInFlightUSB = 2;
+static const int32_t kMaxMediaSendsInFlightWiFi = 5;
 
 /* Maximum LZ4 frame size before dropping. Incompressible keyframes at
  * 2752x1786 can be 19.7MB — transmitting one blocks the TCP pipe for
@@ -964,7 +965,7 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
          * fresher content anyway. This prevents multi-second queue buildup
          * that causes stale-timestamp latency inflation. */
         int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
-        if (inFlight > kMaxTcpMediaSendsInFlight) {
+        if (inFlight > (_usbTransport.isConnected ? kMaxMediaSendsInFlightUSB : kMaxMediaSendsInFlightWiFi)) {
             OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
             static int dropCount = 0;
             dropCount++;
@@ -987,7 +988,7 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
          * Reuse _tcpMediaSendsInFlight (only one transport active at a time).
          * Decrement AFTER all chunks pass through the pacing queue. */
         int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
-        if (inFlight > kMaxTcpMediaSendsInFlight) {
+        if (inFlight > (_usbTransport.isConnected ? kMaxMediaSendsInFlightUSB : kMaxMediaSendsInFlightWiFi)) {
             OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
             return;
         }
