@@ -1,13 +1,14 @@
 # Metrics
 
-This file is machine-managed.
-Do not edit it by hand.
+This file is machine-managed except for the Goal column in the Summary table.
+You may edit Goal values there, but do not edit computed cells or changelog rows by hand.
 Use `scripts/update_metrics.py` to add a new metrics entry.
 
 Rules:
 - A new metrics entry requires a unique commit ID.
 - The commit ID must already exist in git before the entry is added.
 - The changelog is append-only.
+- Goal values are read from the Summary table and preserved on rewrite.
 - Notes must stay single-line and short enough to keep table rows readable.
 
 ## Summary
@@ -16,19 +17,19 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `52.2 fps` | `70.2 fps` | `60.0 fps` | ❌ |
-| Frame pacing CV | `1.844` | `0.210` | `0.350` | ❌ |
-| Pipeline latency median | `394 ms` | `11 ms` | `20 ms` | ❌ |
-| Pipeline latency p95 | `1567 ms` | `24 ms` | `50 ms` | ❌ |
-| Pipeline latency avg | `554 ms` | `14 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency median | `426 ms` | `32 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `1592 ms` | `43 ms` | `40 ms` | ❌ |
-| Glass-to-glass latency avg | `587 ms` | `33 ms` | `25 ms` | ❌ |
-| Heavy-load FPS | `15.1 fps` | `76.9 fps` | `30.0 fps` | ❌ |
-| Heavy-load pipeline median | `1589 ms` | `10 ms` | `100 ms` | ❌ |
-| Heavy-load pipeline p95 | `3992 ms` | `13 ms` | `150 ms` | ❌ |
+| FPS | `35.1 fps` | `70.2 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.242` | `0.210` | `0.350` | ✅ |
+| Pipeline latency median | `11 ms` | `11 ms` | `20 ms` | ✅ |
+| Pipeline latency p95 | `25 ms` | `24 ms` | `50 ms` | ✅ |
+| Pipeline latency avg | `14 ms` | `14 ms` | `25 ms` | ✅ |
+| Glass-to-glass latency median | `27 ms` | `27 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `44 ms` | `43 ms` | `40 ms` | ❌ |
+| Glass-to-glass latency avg | `32 ms` | `32 ms` | `25 ms` | ❌ |
+| Heavy-load FPS | `68.5 fps` | `76.9 fps` | `60.0 fps` | ✅ |
+| Heavy-load pipeline median | `10 ms` | `10 ms` | `100 ms` | ✅ |
+| Heavy-load pipeline p95 | `13 ms` | `13 ms` | `150 ms` | ✅ |
 | Security rejection | `0` | `0` | `1` | ❌ |
-| Overall pass rate | `76.0%` | `96.0%` | `100.0%` | ❌ |
+| Overall pass rate | `96.2%` | `96.2%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -48,3 +49,4 @@ Rules:
 | 2026-04-01 | 20:38:39 EDT | `a1298a7` | `2752x1786` | `12.5 fps` | `8.103` | `87/186/97 ms` | `106/207/116 ms` | `10.3 fps, 82/193 ms` | `0` | `22/25` | WiFi pacing queue backpressure + size cap |
 | 2026-04-01 | 20:41:30 EDT | `0c35037` | `2752x1786` | `4.1 fps` | `5.137` | `84/192/102 ms` | `99/215/121 ms` | `14.4 fps, 73/177 ms` | `0` | `22/25` | WiFi backpressure limit=5, USB limit=2 |
 | 2026-04-01 | 20:44:48 EDT | `c621ba1` | `2752x1786` | `52.2 fps` | `1.844` | `394/1567/554 ms` | `426/1592/587 ms` | `15.1 fps, 1589/3992 ms` | `0` | `19/25` | WiFi no frame-level backpressure, rely on encoder+pacing |
+| 2026-04-01 | 20:52:12 EDT | `1108a67` | `2752x1786` | `35.1 fps` | `0.242` | `11/25/14 ms` | `27/44/32 ms` | `68.5 fps, 10/13 ms` | `0` | `25/26` | Final: USB backpressure+size cap, WiFi natural pacing |
