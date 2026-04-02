@@ -54,13 +54,13 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
-static const int kWirelessHEVCFPS = 30;
+static const int kWirelessHEVCFPS = 40;
 static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps */
 static const uint32_t kWirelessMaxEncodeWidth = 1920;
 static const uint32_t kWirelessMaxEncodeHeight = 1200;
 static const NSUInteger kWirelessLargeFrameChunkThreshold = 192;
 static const NSUInteger kWirelessMaxQueuedChunks = 192;
-static const uint64_t kWirelessMinFrameIntervalUs = 16667;      /* 60 fps */
+static const uint64_t kWirelessMinFrameIntervalUs = 25000;       /* 40 fps nominal */
 static const uint64_t kWirelessCongestedFrameIntervalUs = 33333; /* 30 fps under backlog */
 
 static uint64_t keydrd_host_time_us(void) {

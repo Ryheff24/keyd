@@ -58,7 +58,8 @@ final class DeviceTestRunner {
 
     // Overall timeout
     private var overallTimer: Timer?
-    private static let overallTimeout: TimeInterval = 180 // 5s stabilize + 10s fps + 10s throughput + 12s heavy-load + 5s latency + 3x(5s teardown + 8s connection) + 10s wifi baselines + buffer
+    private static let baseOverallTimeout: TimeInterval = 180
+    private let overallTimeoutSeconds: TimeInterval
 
     // --- New test state ---
 
@@ -124,6 +125,17 @@ final class DeviceTestRunner {
     private var lastTelemetryDecodeFailureCount = 0
     private var lastTelemetryPipelineCount = 0
     private var lastTelemetryGlassCount = 0
+
+    // Sustained stream validation for full-clip WiFi runs
+    private let sustainedStreamDuration: TimeInterval
+    private let skipTransportRotation: Bool
+    private var sustainedStreamActive = false
+    private var sustainedStreamRenderedStartCount = 0
+    private var sustainedStreamObservedStartCount = 0
+    private var sustainedStreamPipelineStartCount = 0
+    private var sustainedStreamGlassStartCount = 0
+    private var sustainedStreamFrameTimestamps: [CFAbsoluteTime] = []
+    private var sustainedStreamReconnects = 0
 
     // Transport type assertion
     private var transportAssertionComplete = false
@@ -191,7 +203,15 @@ final class DeviceTestRunner {
             self.selectedTransports = Self.availableTransports
         }
 
-        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport)), transports=\(self.selectedTransports.joined(separator: ","))")
+        if let idx = args.firstIndex(of: "--sustained-stream-seconds"), idx + 1 < args.count {
+            self.sustainedStreamDuration = max(0, Double(args[idx + 1]) ?? 0)
+        } else {
+            self.sustainedStreamDuration = 0
+        }
+        self.skipTransportRotation = args.contains("--skip-transport-rotation")
+        self.overallTimeoutSeconds = Self.baseOverallTimeout + self.sustainedStreamDuration
+
+        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport)), transports=\(self.selectedTransports.joined(separator: ",")), sustainedStreamSeconds=\(Int(self.sustainedStreamDuration)), skipTransportRotation=\(self.skipTransportRotation), overallTimeout=\(Int(self.overallTimeoutSeconds))")
 
         // Wire renderer callback — this is the source of truth for "frame shown on screen"
         sessionManager.metalRenderer.onFrameRendered = { [weak self] in
@@ -233,6 +253,10 @@ final class DeviceTestRunner {
             wifiMeasurementFrameCount += 1
             wifiMeasurementFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
         }
+
+        if sustainedStreamActive {
+            sustainedStreamFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+        }
     }
 
     // MARK: - Public API
@@ -246,7 +270,7 @@ final class DeviceTestRunner {
         startStreamTelemetry()
 
         // Set overall timeout
-        overallTimer = Timer.scheduledTimer(withTimeInterval: Self.overallTimeout, repeats: false) { [weak self] _ in
+        overallTimer = Timer.scheduledTimer(withTimeInterval: overallTimeoutSeconds, repeats: false) { [weak self] _ in
             self?.onTimeout()
         }
 
@@ -267,6 +291,13 @@ final class DeviceTestRunner {
         hevcDecodeFailures += 1
         if hevcDecodeFailures <= 10 || hevcDecodeFailures % 25 == 0 {
             print("[CONSOLE] STREAM-TELEMETRY decode-failure seq=\(seq) total=\(hevcDecodeFailures)")
+        }
+    }
+
+    func noteSessionStateChanged(old: SessionManager.State, new: SessionManager.State) {
+        if sustainedStreamActive && old == .streaming && new != .streaming {
+            sustainedStreamReconnects += 1
+            print("[CONSOLE] STREAM-TELEMETRY sustained-state-drop old=\(old.rawValue) new=\(new.rawValue) reconnects=\(sustainedStreamReconnects)")
         }
     }
 
@@ -1287,6 +1318,107 @@ final class DeviceTestRunner {
                 self.recordResult(name: "heavy-load", passed: passed,
                             detail: "fps=\(String(format: "%.1f", hlFPS)), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms")
 
+                self.runPostHeavyLoadTests()
+            }
+        }
+    }
+
+    private func runPostHeavyLoadTests() {
+        if sustainedStreamDuration > 0 {
+            runSustainedStreamTest()
+            return
+        }
+        if skipTransportRotation {
+            runSecurityTests()
+            return
+        }
+        runTransportRotationTests()
+    }
+
+    private func runSustainedStreamTest() {
+        print("[TEST] INFO: === Sustained Stream Test (\(Int(sustainedStreamDuration))s continuous collection) ===")
+
+        sustainedStreamActive = true
+        sustainedStreamRenderedStartCount = totalRenderedFrames
+        sustainedStreamObservedStartCount = observedFrameCount
+        sustainedStreamPipelineStartCount = pipelineLatenciesUs.count
+        sustainedStreamGlassStartCount = glassToGlassLatenciesUs.count
+        sustainedStreamFrameTimestamps = []
+        sustainedStreamReconnects = 0
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + sustainedStreamDuration) { [weak self] in
+            guard let self = self else { return }
+            self.sustainedStreamActive = false
+
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            let renderedDelta = max(0, self.totalRenderedFrames - self.sustainedStreamRenderedStartCount)
+            let observedDelta = max(0, self.observedFrameCount - self.sustainedStreamObservedStartCount)
+            let timestamps = self.sustainedStreamFrameTimestamps
+            let frameCount = max(renderedDelta, timestamps.count)
+            let avgFPS = elapsed > 0 ? Double(frameCount) / elapsed : 0
+
+            var intervals: [Double] = []
+            if timestamps.count >= 2 {
+                for i in 1..<timestamps.count {
+                    intervals.append((timestamps[i] - timestamps[i - 1]) * 1000.0)
+                }
+            }
+
+            let maxGap = intervals.max() ?? 0
+            let mean = intervals.isEmpty ? 0 : intervals.reduce(0, +) / Double(intervals.count)
+            let variance = intervals.isEmpty ? 0 : intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+            let stddev = sqrt(variance)
+            let cv = mean > 0 ? stddev / mean : 999
+
+            var worstWindowFPS = avgFPS
+            if timestamps.count >= 10 {
+                let lastTimestamp = timestamps.last!
+                var minFramesInWindow = Int.max
+                for startIdx in 0..<timestamps.count {
+                    if timestamps[startIdx] > lastTimestamp - 1.0 { break }
+                    let windowEnd = timestamps[startIdx] + 1.0
+                    var endIdx = startIdx
+                    while endIdx < timestamps.count && timestamps[endIdx] < windowEnd {
+                        endIdx += 1
+                    }
+                    minFramesInWindow = min(minFramesInWindow, endIdx - startIdx)
+                }
+                if minFramesInWindow < Int.max {
+                    worstWindowFPS = Double(minFramesInWindow)
+                }
+            }
+
+            let pipelineSlice = Array(self.pipelineLatenciesUs.suffix(from: min(self.sustainedStreamPipelineStartCount, self.pipelineLatenciesUs.count)))
+            let glassSlice = Array(self.glassToGlassLatenciesUs.suffix(from: min(self.sustainedStreamGlassStartCount, self.glassToGlassLatenciesUs.count)))
+
+            func percentileMs(_ values: [Int64], percentile: Double) -> Int64 {
+                guard !values.isEmpty else { return 0 }
+                let sorted = values.sorted()
+                let idx = min(Int(Double(sorted.count) * percentile), sorted.count - 1)
+                return sorted[idx] / 1000
+            }
+
+            let pipelineMedianMs = percentileMs(pipelineSlice, percentile: 0.5)
+            let pipelineP95Ms = percentileMs(pipelineSlice, percentile: 0.95)
+            let glassMedianMs = percentileMs(glassSlice, percentile: 0.5)
+            let glassP95Ms = percentileMs(glassSlice, percentile: 0.95)
+
+            let noReconnects = self.sustainedStreamReconnects == 0
+            let enoughFrames = frameCount >= Int(max(20, self.sustainedStreamDuration * 10.0))
+            let noLongFreeze = maxGap < 500.0
+            let worstWindowOK = worstWindowFPS >= 10.0
+            let passed = noReconnects && enoughFrames && noLongFreeze && worstWindowOK
+
+            self.recordResult(
+                name: "sustained-stream",
+                passed: passed,
+                detail: "duration=\(String(format: "%.1f", elapsed))s, rendered=\(renderedDelta), observed=\(observedDelta), fps=\(String(format: "%.1f", avgFPS)), cv=\(String(format: "%.3f", cv)), worst1s=\(String(format: "%.0f", worstWindowFPS))fps, maxGap=\(String(format: "%.0f", maxGap))ms, reconnects=\(self.sustainedStreamReconnects), pipeline median/p95=\(pipelineMedianMs)/\(pipelineP95Ms)ms, glass median/p95=\(glassMedianMs)/\(glassP95Ms)ms"
+            )
+
+            if self.skipTransportRotation {
+                self.runSecurityTests()
+            } else {
                 self.runTransportRotationTests()
             }
         }
@@ -1965,7 +2097,7 @@ final class DeviceTestRunner {
     }
 
     private func onTimeout() {
-        print("[TEST] TIMEOUT: overall test timeout reached (\(Self.overallTimeout)s)")
+        print("[TEST] TIMEOUT: overall test timeout reached (\(Int(overallTimeoutSeconds))s)")
 
         // Report remaining tests as failed
         let completedTests = Set(testResults.map { $0.name })
@@ -1978,6 +2110,9 @@ final class DeviceTestRunner {
                        "heavy-load",
                        "sec-cleartext-tcp", "sec-cleartext-udp", "sec-untrusted-cert",
                        "sec-pairing-port-closed"]
+        if sustainedStreamDuration > 0 {
+            allTests.append("sustained-stream")
+        }
         allTests.append(contentsOf: selectedTransports.map { "transport-\($0)" })
         allTests.append("multi-transport")
         if expectTransport != nil {

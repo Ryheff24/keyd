@@ -26,6 +26,7 @@ final class SessionManager {
         didSet {
             print("[CONSOLE] SessionManager state: \(oldValue.rawValue) -> \(state.rawValue)")
             Self.log.info("[SessionManager] state changed: \(oldValue.rawValue) -> \(self.state.rawValue)")
+            testRunner?.noteSessionStateChanged(old: oldValue, new: state)
         }
     }
 

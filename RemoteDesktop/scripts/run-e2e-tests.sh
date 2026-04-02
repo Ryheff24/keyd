@@ -17,6 +17,9 @@
 #                                  If omitted, auto-uses /tmp/keydrd-capture-mimic.mov when present
 #   --stress-capture              Force procedural full-frame stress source on Mac
 #   --real-capture                Use live ScreenCaptureKit desktop capture instead
+#   --sustained-stream-seconds N  Keep streaming for N seconds after heavy-load
+#                                  before security/rotation checks
+#   --skip-transport-rotation     Skip reconnect/rotation checks after main stream tests
 #   --wired-only                  Shorthand for --transports usb
 #   --full-suite                  Run all test combinations sequentially
 #
@@ -50,6 +53,8 @@ EXPECT_FPS=""
 CAPTURE_FILE=""
 STRESS_CAPTURE=false
 REAL_CAPTURE=false
+SUSTAINED_STREAM_SECONDS=""
+SKIP_TRANSPORT_ROTATION=false
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
@@ -80,6 +85,10 @@ while [[ $# -gt 0 ]]; do
       STRESS_CAPTURE=true; shift ;;
     --real-capture)
       REAL_CAPTURE=true; shift ;;
+    --sustained-stream-seconds)
+      SUSTAINED_STREAM_SECONDS="$2"; shift 2 ;;
+    --skip-transport-rotation)
+      SKIP_TRANSPORT_ROTATION=true; shift ;;
     --full-suite)
       FULL_SUITE=true; shift ;;
     --wired-only)
@@ -689,6 +698,12 @@ if [ -n "$EXPECT_RESOLUTION" ]; then
 fi
 if [ -n "$EXPECT_FPS" ]; then
   IPAD_LAUNCH_ARGS+=(--expect-fps "$EXPECT_FPS")
+fi
+if [ -n "$SUSTAINED_STREAM_SECONDS" ]; then
+  IPAD_LAUNCH_ARGS+=(--sustained-stream-seconds "$SUSTAINED_STREAM_SECONDS")
+fi
+if [ "$SKIP_TRANSPORT_ROTATION" = true ]; then
+  IPAD_LAUNCH_ARGS+=(--skip-transport-rotation)
 fi
 if [ "$WIRED_ONLY" = true ]; then
   IPAD_LAUNCH_ARGS+=(--wired-only)
