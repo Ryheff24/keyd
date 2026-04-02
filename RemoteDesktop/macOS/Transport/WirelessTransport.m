@@ -152,6 +152,7 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
+            sec_protocol_options_set_peer_authentication_required(sec, true);
 
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
@@ -188,6 +189,7 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
+            sec_protocol_options_set_peer_authentication_required(sec, true);
 
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,

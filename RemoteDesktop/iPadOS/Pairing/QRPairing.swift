@@ -51,6 +51,37 @@ struct QRPayload {
     }
 }
 
+struct PairingResponsePayload {
+    let publicKey: Data
+    let clientIdentityPKCS12: Data?
+    let clientCertFingerprint: Data?
+
+    static func parse(from data: Data) -> PairingResponsePayload? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let publicKeyBase64 = json["publicKey"] as? String,
+              let publicKey = Data(base64Encoded: publicKeyBase64) else {
+            return nil
+        }
+
+        var clientIdentityPKCS12: Data?
+        var clientCertFingerprint: Data?
+        if let clientIdentityBase64 = json["clientIdentityPKCS12"] as? String,
+           let clientFingerprintHex = json["clientCertFingerprint"] as? String,
+           let pkcs12 = Data(base64Encoded: clientIdentityBase64),
+           let fingerprint = Data(hexString: clientFingerprintHex),
+           fingerprint.count == 32 {
+            clientIdentityPKCS12 = pkcs12
+            clientCertFingerprint = fingerprint
+        }
+
+        return PairingResponsePayload(
+            publicKey: publicKey,
+            clientIdentityPKCS12: clientIdentityPKCS12,
+            clientCertFingerprint: clientCertFingerprint
+        )
+    }
+}
+
 /// Extension for parsing hex strings into Data.
 private extension Data {
     init?(hexString: String) {
@@ -114,6 +145,8 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
 
     private var captureSession: AVCaptureSession?
     private let keychainService = "com.ryheff.keyd.remote.app"
+    private let clientIdentityPKCS12Account = "client-identity-p12"
+    private let provisionedClientIdentityPassphrase = "keydrd-client"
 
     /// Guard against re-entrant metadataOutput calls while pairing is in progress.
     private var isPairingInProgress = false
@@ -172,6 +205,101 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         notificationObservers.append(wildcardDidStart)
 
         log.info("[QRPairing] registered 5 notification observers for session \(String(describing: session))")
+    }
+
+    private func receiveExact(connection: NWConnection,
+                              length: Int,
+                              accumulated: Data = Data(),
+                              completion: @escaping (Data?, NWError?) -> Void) {
+        if accumulated.count >= length {
+            completion(Data(accumulated.prefix(length)), nil)
+            return
+        }
+
+        connection.receive(minimumIncompleteLength: 1, maximumLength: length - accumulated.count) {
+            [weak self] content, _, _, error in
+            guard self != nil else { return }
+
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+
+            guard let content, !content.isEmpty else {
+                completion(nil, nil)
+                return
+            }
+
+            var nextData = accumulated
+            nextData.append(content)
+            self?.receiveExact(connection: connection, length: length, accumulated: nextData, completion: completion)
+        }
+    }
+
+    private func receivePairingResponse(connection: NWConnection,
+                                        completion: @escaping (PairingResponsePayload?, String?) -> Void) {
+        receiveExact(connection: connection, length: 4) { [weak self] headerData, headerError in
+            guard let self else { return }
+
+            if let headerError {
+                completion(nil, "recv failed: \(headerError)")
+                return
+            }
+
+            guard let headerData, headerData.count == 4 else {
+                completion(nil, "missing pairing response header")
+                return
+            }
+
+            var rawLength: UInt32 = 0
+            _ = withUnsafeMutableBytes(of: &rawLength) { rawBuffer in
+                headerData.copyBytes(to: rawBuffer)
+            }
+            let payloadLength = UInt32(bigEndian: rawLength)
+            if payloadLength == 0 || payloadLength > 65536 {
+                completion(nil, "invalid pairing response length: \(payloadLength)")
+                return
+            }
+
+            self.receiveExact(connection: connection, length: Int(payloadLength)) { payloadData, payloadError in
+                if let payloadError {
+                    completion(nil, "recv failed: \(payloadError)")
+                    return
+                }
+
+                guard let payloadData,
+                      let response = PairingResponsePayload.parse(from: payloadData) else {
+                    completion(nil, "invalid pairing response payload")
+                    return
+                }
+
+                completion(response, nil)
+            }
+        }
+    }
+
+    private func importProvisionedClientIdentity(from pkcs12Data: Data) -> SecIdentity? {
+        let options: [CFString: Any] = [
+            kSecImportExportPassphrase: provisionedClientIdentityPassphrase,
+        ]
+        var items: CFArray?
+        let status = SecPKCS12Import(pkcs12Data as CFData, options as CFDictionary, &items)
+        guard status == errSecSuccess,
+              let importedItems = items as? [[String: Any]],
+              let firstItem = importedItems.first,
+              let identityRef = firstItem[kSecImportItemIdentity as String] else {
+            return nil
+        }
+
+        return (identityRef as! SecIdentity)
+    }
+
+    private func validateAndStoreProvisionedClientIdentity(_ pkcs12Data: Data) -> Bool {
+        guard importProvisionedClientIdentity(from: pkcs12Data) != nil else {
+            return false
+        }
+        saveToKeychain(data: pkcs12Data, account: clientIdentityPKCS12Account)
+        return true
     }
 
     // MARK: - Test Mode Auto-Pairing
@@ -286,21 +414,21 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         connection.start(queue: pairingQueue)
 
         // Timeout
-        DispatchQueue.global().asyncAfter(deadline: .now() + 30) { [weak self] in
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) { [weak self] in
             guard let self = self, self.isPairingInProgress else { return }
-            print("[CONSOLE] test pairing TIMEOUT after 30s")
+            print("[CONSOLE] test pairing TIMEOUT after 10s")
             connection.cancel()
             self.isPairingInProgress = false
-            testRunner?.reportTLSConnection(success: false, detail: "timeout after 30s")
+            testRunner?.reportTLSConnection(success: false, detail: "timeout after 10s")
         }
     }
 
     /// Perform ECDH exchange in test mode and report results to test runner.
     private func performECDHExchangeTestMode(connection: NWConnection,
-                                              macPublicKey: Data,
-                                              macCertFingerprint: Data,
-                                              testRunner: DeviceTestRunner?,
-                                              completion: @escaping () -> Void) {
+                                             macPublicKey _: Data,
+                                             macCertFingerprint: Data,
+                                             testRunner: DeviceTestRunner?,
+                                             completion: @escaping () -> Void) {
         // Generate iPad's P-256 ECDH key pair
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
@@ -336,19 +464,19 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             }
 
             // Receive Mac's ECDH public key
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 256) {
-                [weak self] content, _, _, recvError in
+            self.receivePairingResponse(connection: connection) { [weak self] response, recvDetail in
                 guard let self = self else { return }
 
-                if let recvError = recvError {
-                    testRunner?.reportECDHExchange(success: false, detail: "recv failed: \(recvError)")
+                if let recvDetail {
+                    testRunner?.reportECDHExchange(success: false, detail: recvDetail)
                     return
                 }
 
-                guard let macECDHPubKeyData = content, !macECDHPubKeyData.isEmpty else {
+                guard let response else {
                     testRunner?.reportECDHExchange(success: false, detail: "empty Mac key")
                     return
                 }
+                let macECDHPubKeyData = response.publicKey
 
                 // Perform ECDH key agreement
                 let pubKeyAttrs: [CFString: Any] = [
@@ -391,6 +519,13 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 // Store in Keychain
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
+                if let clientPKCS12 = response.clientIdentityPKCS12 {
+                    if !self.validateAndStoreProvisionedClientIdentity(clientPKCS12) {
+                        print("[CONSOLE] QRPairing: client identity validation failed — continuing without mTLS")
+                    }
+                } else {
+                    print("[CONSOLE] QRPairing: no client identity in pairing response — mTLS not available")
+                }
 
                 let secretPrefix = derivedKey.prefix(4).map { String(format: "%02x", $0) }.joined()
                 testRunner?.reportECDHExchange(success: true, detail: "secret: \(secretPrefix)")
@@ -681,8 +816,8 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     // MARK: - ECDH Key Exchange
 
     private func performECDHExchange(connection: NWConnection,
-                                      macPublicKey: Data,
-                                      macCertFingerprint: Data) {
+                                     macPublicKey _: Data,
+                                     macCertFingerprint: Data) {
         /* Generate iPad's P-256 ECDH key pair */
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
@@ -723,21 +858,21 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             print("[CONSOLE] ECDH: sent iPad public key, now receiving Mac key...")
 
             /* Step 2: Receive Mac's ECDH public key */
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 256) {
-                [weak self] content, _, _, recvError in
+            self.receivePairingResponse(connection: connection) { [weak self] response, recvDetail in
                 guard let self = self else { return }
 
-                if let recvError = recvError {
-                    print("[CONSOLE] ECDH: receive FAILED: \(recvError)")
+                if let recvDetail {
+                    print("[CONSOLE] ECDH: receive FAILED: \(recvDetail)")
                     self.onPairingFailed?("Failed to receive Mac's key")
                     return
                 }
 
-                guard let macECDHPubKeyData = content, !macECDHPubKeyData.isEmpty else {
+                guard let response else {
                     print("[CONSOLE] ECDH: empty Mac public key received")
                     self.onPairingFailed?("Empty response from Mac")
                     return
                 }
+                let macECDHPubKeyData = response.publicKey
 
                 print("[CONSOLE] ECDH: received Mac public key (\(macECDHPubKeyData.count) bytes)")
 
@@ -784,6 +919,11 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 /* Step 5: Store shared secret + Mac cert fingerprint in Keychain */
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
+                if let clientPKCS12 = response.clientIdentityPKCS12 {
+                    if !self.validateAndStoreProvisionedClientIdentity(clientPKCS12) {
+                        self.log.warning("Client identity validation failed — continuing without mTLS")
+                    }
+                }
 
                 print("[CONSOLE] PAIRING COMPLETE -- shared secret stored in Keychain")
                 self.log.info("Pairing complete -- shared secret and Mac cert fingerprint stored")
@@ -812,6 +952,7 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     func resetPairing() {
         deleteFromKeychain(account: "pairing")
         deleteFromKeychain(account: "peer-cert-fingerprint")
+        deleteFromKeychain(account: clientIdentityPKCS12Account)
         log.info("Pairing state cleared from Keychain")
     }
 

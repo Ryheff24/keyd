@@ -25,6 +25,18 @@ approval_mode = "approve"
 command = "uvx"
 args = ["swiftlens"]
 
+[mcp_servers.swiftlens.tools.get_tool_help]
+approval_mode = "approve"
+
+[mcp_servers.swiftlens.tools.swift_lsp_diagnostics]
+approval_mode = "approve"
+
+[mcp_servers.swiftlens.tools.swift_build_index]
+approval_mode = "approve"
+
+[mcp_servers.swiftlens.tools.swift_validate_file]
+approval_mode = "approve"
+
 [mcp_servers.git]
 command = "uvx"
 args = ["mcp-server-git"]

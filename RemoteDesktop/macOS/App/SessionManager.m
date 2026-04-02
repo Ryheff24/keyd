@@ -58,6 +58,13 @@ static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
 }
 
+/* Maximum number of TCP media sends in-flight before dropping frames.
+ * NWConnection.send completion fires when kernel accepts data, so this
+ * bounds the kernel TCP send buffer depth. At 2 in-flight, one frame
+ * is being transmitted while the next waits — keeps latency bounded
+ * without sacrificing throughput on fast links. */
+static const int32_t kMaxTcpMediaSendsInFlight = 2;
+
 @interface SessionManager ()
 
 @property (nonatomic, assign, readwrite) SessionState sessionState;
@@ -103,6 +110,10 @@ static uint64_t keydrd_host_time_us(void) {
 
 /* Latency probe */
 @property (nonatomic, strong, nullable) NSTimer *latencyProbeTimer;
+
+/* Send backpressure: track in-flight TCP media sends.
+ * When > kMaxTcpSendsInFlight, drop new frames to prevent queue buildup. */
+@property (nonatomic, assign) volatile int32_t tcpMediaSendsInFlight;
 
 /* QR code display window */
 @property (nonatomic, strong, nullable) NSWindow *qrWindow;
@@ -650,6 +661,7 @@ static uint64_t keydrd_host_time_us(void) {
 
 - (void)onTransportConnected {
     os_log(sLog, "Transport connected -- sending handshake");
+    _tcpMediaSendsInFlight = 0;
     [self transitionTo:SESSION_STREAMING];
 
     /* Send session handshake (also sets _captureWidth/_captureHeight) */
@@ -916,9 +928,6 @@ static uint64_t keydrd_host_time_us(void) {
 #pragma mark - Transport Send Helpers
 
 - (void)sendMediaFrameToiPad:(const void *)data length:(size_t)len {
-    /* Both USB NCM and WiFi use HEVC + UDP chunking.
-     * HEVC frames are 10-200KB, chunked into 1400-byte DTLS datagrams.
-     * iPad reassembles via UDPReassembler. */
     if (len < sizeof(MediaFrameHeader)) return;
 
     const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
@@ -926,13 +935,32 @@ static uint64_t keydrd_host_time_us(void) {
     size_t payloadLen = len - sizeof(MediaFrameHeader);
 
     if (_usbTransport.isConnected) {
-        /* USB NCM: HEVC frames via TCP with length-prefix framing.
-         * UDP/DTLS over USB NCM is confirmed broken for media delivery:
-         *   - Batch sends (nw_connection_batch): ~29/30 frames dropped
-         *   - Completion-paced sequential sends: still black screen
-         *   - Root cause: USB NCM DTLS path drops data regardless of pacing
-         * TCP with TCP_NODELAY gives 0% loss at 1ms transport RTT. */
-        [_usbTransport sendInputEvent:data length:len];
+        /* USB NCM: media frames via TCP with length-prefix framing + backpressure.
+         * TCP with TCP_NODELAY gives 0% loss at 1ms transport RTT.
+         *
+         * Backpressure: track in-flight TCP sends. If too many are queued
+         * in the kernel buffer, drop this frame — the next frame will carry
+         * fresher content anyway. This prevents multi-second queue buildup
+         * that causes stale-timestamp latency inflation. */
+        int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
+        if (inFlight > kMaxTcpMediaSendsInFlight) {
+            OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
+            static int dropCount = 0;
+            dropCount++;
+            if (dropCount <= 10 || dropCount % 500 == 0) {
+                os_log(sLog, "TCP backpressure: dropped frame seq=%u (%d in-flight, total dropped=%d)",
+                       originalHeader->seq, inFlight - 1, dropCount);
+            }
+            return;
+        }
+
+        __weak SessionManager *weakSelf = self;
+        [_usbTransport sendMediaViaTCP:data length:len completion:^(BOOL success) {
+            SessionManager *strongSelf = weakSelf;
+            if (strongSelf) {
+                OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
+            }
+        }];
     } else if (_wirelessTransport.isConnected) {
         WirelessTransport *transport = _wirelessTransport;
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,

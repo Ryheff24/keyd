@@ -86,6 +86,13 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)sendInputEvent:(const void *)data length:(size_t)len;
 
+/**
+ * Send a media frame over TCP with length-prefix framing and completion callback.
+ * Used for media frames where the caller needs to track send depth for backpressure.
+ * The completion block fires when the kernel has accepted the data for transmission.
+ */
+- (void)sendMediaViaTCP:(const void *)data length:(size_t)len completion:(void (^)(BOOL success))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

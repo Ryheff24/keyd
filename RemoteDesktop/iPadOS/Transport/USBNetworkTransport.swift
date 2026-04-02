@@ -48,6 +48,8 @@ final class USBNetworkTransport {
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
     private let keychainService = "com.ryheff.keyd.remote.app"
+    private let clientIdentityPKCS12Account = "client-identity-p12"
+    private let provisionedClientIdentityPassphrase = "keydrd-client"
 
     // MARK: - Certificate Pinning
 
@@ -95,6 +97,38 @@ final class USBNetworkTransport {
         return result as? Data
     }
 
+    private func loadProvisionedClientIdentity() -> SecIdentity? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: clientIdentityPKCS12Account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let pkcs12Data = result as? Data else {
+            log.error("Missing provisioned client identity")
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kSecImportExportPassphrase: provisionedClientIdentityPassphrase,
+        ]
+        var items: CFArray?
+        let status = SecPKCS12Import(pkcs12Data as CFData, options as CFDictionary, &items)
+        guard status == errSecSuccess,
+              let importedItems = items as? [[String: Any]],
+              let firstItem = importedItems.first,
+              let identityRef = firstItem[kSecImportItemIdentity as String] else {
+            log.error("Failed to import provisioned client identity: \(status)")
+            return nil
+        }
+
+        // swiftlint:disable:next force_cast
+        return (identityRef as! SecIdentity)
+    }
+
     // MARK: - TLS/DTLS Parameter Configuration
 
     /// Create TLS 1.3 parameters for TCP connections with certificate pinning.
@@ -103,6 +137,13 @@ final class USBNetworkTransport {
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(
             tlsOptions.securityProtocolOptions, .TLSv13)
+        if let identity = loadProvisionedClientIdentity(),
+           let secIdentity = sec_identity_create(identity) {
+            sec_protocol_options_set_local_identity(
+                tlsOptions.securityProtocolOptions,
+                secIdentity
+            )
+        }
 
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
             { [weak self] metadata, trust, complete in
@@ -127,6 +168,13 @@ final class USBNetworkTransport {
         let dtlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(
             dtlsOptions.securityProtocolOptions, .TLSv13)
+        if let identity = loadProvisionedClientIdentity(),
+           let secIdentity = sec_identity_create(identity) {
+            sec_protocol_options_set_local_identity(
+                dtlsOptions.securityProtocolOptions,
+                secIdentity
+            )
+        }
 
         sec_protocol_options_set_verify_block(dtlsOptions.securityProtocolOptions,
             { [weak self] metadata, trust, complete in
@@ -434,6 +482,13 @@ final class USBNetworkTransport {
         let dtlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(
             dtlsOptions.securityProtocolOptions, .TLSv13)
+        if let identity = loadProvisionedClientIdentity(),
+           let secIdentity = sec_identity_create(identity) {
+            sec_protocol_options_set_local_identity(
+                dtlsOptions.securityProtocolOptions,
+                secIdentity
+            )
+        }
         sec_protocol_options_set_verify_block(dtlsOptions.securityProtocolOptions,
             { [weak self] _, trust, complete in
                 complete(self?.verifyPeerCertificate(trust) ?? false)
@@ -447,7 +502,7 @@ final class USBNetworkTransport {
         let mediaConn = NWConnection(to: mediaEndpoint, using: udpParams)
         mediaConnection = mediaConn
 
-        mediaConn.stateUpdateHandler = { [weak self] state in
+        mediaConn.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
             guard let self = self else { return }
             switch state {
             case .ready:
@@ -468,6 +523,13 @@ final class USBNetworkTransport {
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(
             tlsOptions.securityProtocolOptions, .TLSv13)
+        if let identity = loadProvisionedClientIdentity(),
+           let secIdentity2 = sec_identity_create(identity) {
+            sec_protocol_options_set_local_identity(
+                tlsOptions.securityProtocolOptions,
+                secIdentity2
+            )
+        }
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
             { [weak self] _, trust, complete in
                 complete(self?.verifyPeerCertificate(trust) ?? false)
@@ -483,7 +545,7 @@ final class USBNetworkTransport {
         let inputConn = NWConnection(to: inputEndpoint, using: tcpParams)
         inputConnection = inputConn
 
-        inputConn.stateUpdateHandler = { [weak self] state in
+        inputConn.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
             guard let self = self else { return }
             switch state {
             case .ready:
@@ -523,6 +585,13 @@ final class USBNetworkTransport {
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(
             tlsOptions.securityProtocolOptions, .TLSv13)
+        if let identity = loadProvisionedClientIdentity(),
+           let secIdentity = sec_identity_create(identity) {
+            sec_protocol_options_set_local_identity(
+                tlsOptions.securityProtocolOptions,
+                secIdentity
+            )
+        }
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions,
             { [weak self] _, trust, complete in
                 complete(self?.verifyPeerCertificate(trust) ?? false)
@@ -537,7 +606,7 @@ final class USBNetworkTransport {
         let inputConn = NWConnection(to: NWEndpoint.hostPort(host: host, port: inputPort), using: tcpParams)
         inputConnection = inputConn
 
-        inputConn.stateUpdateHandler = { [weak self] state in
+        inputConn.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
             guard let self = self else { return }
             switch state {
             case .ready:

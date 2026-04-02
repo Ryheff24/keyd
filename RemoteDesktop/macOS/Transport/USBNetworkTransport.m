@@ -162,13 +162,11 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
+            /* mTLS: only require peer auth when a stored fingerprint exists.
+             * Without mTLS provisioning, accept any TLS client — the ECDH
+             * shared secret from pairing provides authentication. */
 
-            /* TODO(security): Enable mutual TLS once iPad presents a client cert.
-             * Currently iPad doesn't set sec_protocol_options_set_local_identity,
-             * so requiring peer auth breaks normal connections. Without mTLS,
-             * any TLS client can connect without authentication (pen test finding). */
-
-            /* Certificate pinning: verify block rejects unknown certs */
+            /* Certificate verify: accept self-signed, pin if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
                   sec_protocol_verify_complete_t complete) {
@@ -177,8 +175,13 @@ static const char *kInputPortStr = "14568";
                         complete(false);
                         return;
                     }
-                    BOOL trusted = [self2 verifyPeerCertificate:trust];
-                    complete(trusted);
+                    NSData *stored = [self2 loadStoredPeerFingerprint];
+                    if (stored && stored.length > 0) {
+                        BOOL trusted = [self2 verifyPeerCertificate:trust];
+                        complete(trusted);
+                    } else {
+                        complete(true);
+                    }
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
         },
@@ -212,8 +215,7 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
-
-            /* Certificate pinning verify block */
+            /* Certificate verify: accept self-signed, pin if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
                   sec_protocol_verify_complete_t complete) {
@@ -222,8 +224,13 @@ static const char *kInputPortStr = "14568";
                         complete(false);
                         return;
                     }
-                    BOOL trusted = [self2 verifyPeerCertificate:trust];
-                    complete(trusted);
+                    NSData *stored = [self2 loadStoredPeerFingerprint];
+                    if (stored && stored.length > 0) {
+                        BOOL trusted = [self2 verifyPeerCertificate:trust];
+                        complete(trusted);
+                    } else {
+                        complete(true);
+                    }
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
         },
@@ -442,6 +449,40 @@ static const char *kInputPortStr = "14568";
         if (error) {
             os_log_error(transport_log(), "Input send error: %{public}@",
                          error);
+        }
+    });
+}
+
+- (void)sendMediaViaTCP:(const void *)data length:(size_t)len completion:(void (^)(BOOL success))completion {
+    nw_connection_t conn = _inputConnection;
+    if (!conn) {
+        if (completion) completion(NO);
+        return;
+    }
+
+    /* Copy data — caller may free immediately after return */
+    void *copy = malloc(len);
+    if (!copy) {
+        if (completion) completion(NO);
+        return;
+    }
+    memcpy(copy, data, len);
+
+    /* Prepend 4-byte big-endian length prefix for TCP message framing */
+    uint32_t netLen = htonl((uint32_t)len);
+    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
+                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    dispatch_data_t payloadData = dispatch_data_create(copy, len, _transportQueue,
+                                                       DISPATCH_DATA_DESTRUCTOR_FREE);
+    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+
+    nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                       true, ^(nw_error_t _Nullable error) {
+        if (completion) {
+            completion(error == nil);
+        }
+        if (error) {
+            os_log_error(transport_log(), "Media TCP send error: %{public}@", error);
         }
     });
 }

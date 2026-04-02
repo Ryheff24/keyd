@@ -58,7 +58,7 @@ final class DeviceTestRunner {
 
     // Overall timeout
     private var overallTimer: Timer?
-    private static let overallTimeout: TimeInterval = 225 // 5s stabilize + 10s fps + 10s throughput + 12s heavy-load + 5s latency + 3x(5s teardown + 15s connection) + 10s wifi baselines + buffer
+    private static let overallTimeout: TimeInterval = 180 // 5s stabilize + 10s fps + 10s throughput + 12s heavy-load + 5s latency + 3x(5s teardown + 8s connection) + 10s wifi baselines + buffer
 
     // --- New test state ---
 
@@ -263,16 +263,15 @@ final class DeviceTestRunner {
         bonjourBrowser = browser
 
         // Mac delays WiFi advertising by 3s after pairing (USB gets priority).
-        // Bonjour propagation adds a few more seconds. Use 15s timeout to
-        // accommodate: 3s Mac delay + Bonjour DNS-SD propagation + margin.
+        // Bonjour propagation adds a few more seconds. Use 8s timeout.
         let discoveryTimeout = DispatchWorkItem { [weak self] in
             guard let self = self, !self.bonjourDiscoveryComplete else { return }
             self.bonjourDiscoveryComplete = true
-            self.recordResult(name: "bonjour-discovery", passed: false, detail: "timeout after 15s")
+            self.recordResult(name: "bonjour-discovery", passed: false, detail: "timeout after 8s")
             self.bonjourBrowser?.cancel()
             self.bonjourBrowser = nil
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: discoveryTimeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: discoveryTimeout)
 
         browser.browseResultsChangedHandler = { [weak self] results, changes in
             guard let self = self, !self.bonjourDiscoveryComplete else { return }
@@ -1355,7 +1354,7 @@ final class DeviceTestRunner {
             }
 
             // Wait for connection + handshake + frames with timeout
-            self.waitForTransportConnection(transport: transport, timeout: 15.0)
+            self.waitForTransportConnection(transport: transport, timeout: 8.0)
         }
     }
 
