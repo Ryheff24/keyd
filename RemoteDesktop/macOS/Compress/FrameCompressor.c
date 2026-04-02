@@ -195,13 +195,17 @@ int compress_frame(FrameCompressorState *state,
 
         double t_delta = CACurrentMediaTime();
 
-        /* Compress the delta */
+        /* Compress the delta.
+         * Acceleration 32: ~2x faster than acc=8 at cost of ~20% worse ratio.
+         * For 2752x1786 delta frames, this keeps compress under 2ms even for
+         * noisy content with 1-5MB deltas. The ratio tradeoff is acceptable
+         * because USB NCM has ample bandwidth (300Mbps). */
         compressed = LZ4_compress_fast(
             (const char *)state->delta_scratch,
             (char *)out->buf,
             (int)bytes,
             (int)out->buf_capacity,
-            8);
+            32);
 
         if (compressed <= 0) {
             IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);

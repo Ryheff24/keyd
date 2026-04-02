@@ -850,30 +850,38 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
                width, height, bufferSize);
     }
 
-    /* Fast path: memcpy cached background (~2ms for 20MB) */
-    memcpy(base, _cachedBackgroundPixels, bufferSize);
-
-    /* Animate ~95% of pixels per frame with structured gradients.
-     * Simulates active desktop: scrolling content, color-varying regions.
-     * Uses fast per-row computation to avoid bottlenecking the capture timer.
-     * Gradient content is compressible by LZ4 (unlike random noise) but
-     * changes every pixel — producing ~1-3MB deltas at 120fps. */
+    /* Skip the cached background memcpy — we overwrite 100% of pixels below.
+     * This saves ~2ms per frame (20MB memcpy). In real SCStream capture,
+     * the compositor delivers a fully rendered IOSurface with zero CPU cost.
+     *
+     * Content: noisy gradient covering 100% of pixels. Each pixel includes
+     * a base gradient (structured, ~30% of LZ4 pattern matching) plus
+     * per-pixel noise (breaks LZ4 runs, producing 1-5MB deltas). This
+     * simulates photo-heavy webpages, video thumbnails, or game UIs —
+     * content that partially compresses but isn't trivial for LZ4. */
     {
         uint32_t fi = (uint32_t)frameIndex;
         uint32_t *pixels32 = (uint32_t *)base;
         size_t pixelsPerRow = bytesPerRow / 4;
 
-        /* Scrolling diagonal gradient covering the full frame.
-         * Each pixel varies by row + col + frameIndex → 95%+ change per frame.
-         * The gradient is structured (not random) so LZ4 finds patterns. */
         for (size_t row = 0; row < height; row++) {
             uint32_t *rowOut = pixels32 + row * pixelsPerRow;
             uint32_t rowBase = (uint32_t)row + fi * 3;
+            /* Per-row noise seed — xorshift-style, cheap and fast */
+            uint32_t noise = (uint32_t)row * 2654435761u + fi * 1103515245u;
             for (size_t col = 0; col < width; col++) {
                 uint32_t v = rowBase + (uint32_t)col;
-                uint8_t r = (uint8_t)(v * 7);
-                uint8_t g = (uint8_t)(v * 13 + fi);
-                uint8_t b = (uint8_t)(v * 19 + fi * 3);
+                /* Advance noise PRNG — single multiply + shift, no branch */
+                noise = noise * 1664525u + 1013904223u;
+                /* Base gradient + ±64 noise per channel.
+                 * Noise breaks LZ4 run-length patterns while gradient
+                 * preserves enough structure to not be pure random. */
+                uint8_t n0 = (uint8_t)((noise >> 0)  & 0x7F);  /* 0-127 */
+                uint8_t n1 = (uint8_t)((noise >> 8)  & 0x7F);
+                uint8_t n2 = (uint8_t)((noise >> 16) & 0x7F);
+                uint8_t r = (uint8_t)((v * 7)      + n0);
+                uint8_t g = (uint8_t)((v * 13 + fi) + n1);
+                uint8_t b = (uint8_t)((v * 19 + fi * 3) + n2);
                 rowOut[col] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
             }
         }
