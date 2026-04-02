@@ -65,6 +65,14 @@ static uint64_t keydrd_host_time_us(void) {
  * without sacrificing throughput on fast links. */
 static const int32_t kMaxTcpMediaSendsInFlight = 2;
 
+/* Maximum LZ4 frame size before dropping. Incompressible keyframes at
+ * 2752x1786 can be 19.7MB — transmitting one blocks the TCP pipe for
+ * ~460ms at USB NCM speeds, destroying frame pacing. Frames above this
+ * cap are dropped; the next delta frame will be small and deliver fresh
+ * content. 2MB allows keyframes up to ~16:1 of raw (19.6MB → 2MB).
+ * Most delta frames are 100-300KB, well under this limit. */
+static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
+
 @interface SessionManager ()
 
 @property (nonatomic, assign, readwrite) SessionState sessionState;
@@ -935,6 +943,19 @@ static const int32_t kMaxTcpMediaSendsInFlight = 2;
     size_t payloadLen = len - sizeof(MediaFrameHeader);
 
     if (_usbTransport.isConnected) {
+        /* Drop oversized LZ4 frames that would stall the TCP pipe.
+         * Incompressible keyframes at native resolution can be 19MB+ —
+         * transmitting one blocks the pipe for ~460ms, ruining pacing. */
+        if (payloadLen > kMaxLZ4FrameBytes) {
+            static int oversizeCount = 0;
+            oversizeCount++;
+            if (oversizeCount <= 10 || oversizeCount % 100 == 0) {
+                os_log(sLog, "Frame size cap: dropped %zu byte frame seq=%u (limit=%zu, total=%d)",
+                       payloadLen, originalHeader->seq, kMaxLZ4FrameBytes, oversizeCount);
+            }
+            return;
+        }
+
         /* USB NCM: media frames via TCP with length-prefix framing + backpressure.
          * TCP with TCP_NODELAY gives 0% loss at 1ms transport RTT.
          *

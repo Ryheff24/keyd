@@ -152,8 +152,7 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
-            sec_protocol_options_set_peer_authentication_required(sec, true);
-
+            /* Accept self-signed certs; pin only if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
                   sec_protocol_verify_complete_t complete) {
@@ -162,8 +161,13 @@ static const char *kInputPortStr = "14568";
                         complete(false);
                         return;
                     }
-                    BOOL trusted = [self2 verifyPeerCertificate:trust];
-                    complete(trusted);
+                    NSData *stored = [self2 loadStoredPeerFingerprint];
+                    if (stored && stored.length > 0) {
+                        BOOL trusted = [self2 verifyPeerCertificate:trust];
+                        complete(trusted);
+                    } else {
+                        complete(true);
+                    }
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
         },
@@ -189,8 +193,8 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
-            sec_protocol_options_set_peer_authentication_required(sec, true);
 
+            /* Accept self-signed certs; pin only if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
                   sec_protocol_verify_complete_t complete) {
@@ -199,8 +203,13 @@ static const char *kInputPortStr = "14568";
                         complete(false);
                         return;
                     }
-                    BOOL trusted = [self2 verifyPeerCertificate:trust];
-                    complete(trusted);
+                    NSData *stored = [self2 loadStoredPeerFingerprint];
+                    if (stored && stored.length > 0) {
+                        BOOL trusted = [self2 verifyPeerCertificate:trust];
+                        complete(trusted);
+                    } else {
+                        complete(true);
+                    }
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
         },
