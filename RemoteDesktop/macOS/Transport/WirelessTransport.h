@@ -69,6 +69,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)sendMediaFrame:(const void *)data length:(size_t)len;
 
 /**
+ * Execute a block after all pending paced sends have completed.
+ * Used for backpressure: the caller increments an in-flight counter
+ * before sending chunks, then calls this to decrement after the
+ * last chunk passes through the pacing queue.
+ */
+- (void)afterPendingSends:(void (^)(void))completion;
+
+/**
  * Send an input event response over TCP to the connected iPad.
  * No-op if no connection is established.
  */

@@ -346,6 +346,12 @@ static const char *kInputPortStr = "14568";
     });
 }
 
+- (void)afterPendingSends:(void (^)(void))completion {
+    dispatch_async(_sendPacingQueue, ^{
+        if (completion) completion();
+    });
+}
+
 - (void)resetSendPacing {
     _nextSendTime = 0;
 }

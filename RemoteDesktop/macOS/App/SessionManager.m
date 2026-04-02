@@ -983,11 +983,29 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
             }
         }];
     } else if (_wirelessTransport.isConnected) {
+        /* WiFi: backpressure via pacing queue fence.
+         * Reuse _tcpMediaSendsInFlight (only one transport active at a time).
+         * Decrement AFTER all chunks pass through the pacing queue. */
+        int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
+        if (inFlight > kMaxTcpMediaSendsInFlight) {
+            OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
+            return;
+        }
+
         WirelessTransport *transport = _wirelessTransport;
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
             [transport sendMediaFrame:chunk length:chunkLen];
         });
+
+        /* Fence: decrement after all chunks are actually sent */
+        __weak SessionManager *weakSelf = self;
+        [transport afterPendingSends:^{
+            SessionManager *strongSelf = weakSelf;
+            if (strongSelf) {
+                OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
+            }
+        }];
     }
 }
 
