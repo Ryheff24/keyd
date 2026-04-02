@@ -66,6 +66,7 @@ final class DeviceTestRunner {
     private var resolutionTestComplete = false
     private var decodedFrameWidths: [Int] = []
     private var decodedFrameHeights: [Int] = []
+    private var totalRenderedFrames = 0
 
     // FPS + consistency test
     private var fpsTestActive = false
@@ -199,6 +200,8 @@ final class DeviceTestRunner {
 
     /// Called by MetalRenderer each time a frame is actually presented to the display.
     private func onRenderedFrame() {
+        totalRenderedFrames += 1
+
         // Feed FPS test with RENDERED frame timestamps
         if fpsTestActive && !fpsTestComplete {
             fpsTestFrameCount += 1
@@ -1329,7 +1332,7 @@ final class DeviceTestRunner {
 
         // Reset per-rotation state
         rotationHandshakeReceived = false
-        rotationFramesRendered = sm.metalRenderer.renderedFrameCount
+        rotationFramesRendered = totalRenderedFrames
         rotationTransportType = ""
 
         // Disconnect everything and start only the target transport
@@ -1396,7 +1399,7 @@ final class DeviceTestRunner {
         }
 
         // Check if we got frames (rendered > previous count means new frames arrived)
-        let rendered = sm.metalRenderer.renderedFrameCount
+        let rendered = totalRenderedFrames
 
         if connected && rendered > rotationFramesRendered + 3 {
             // Got connection + at least 3 new rendered frames
@@ -1433,7 +1436,7 @@ final class DeviceTestRunner {
         // Reset WiFi measurement state
         wifiMeasurementActive = true
         wifiMeasurementStartTime = CFAbsoluteTimeGetCurrent()
-        wifiMeasurementRenderedStartCount = sm.metalRenderer.renderedFrameCount
+        wifiMeasurementRenderedStartCount = totalRenderedFrames
         wifiMeasurementFrameTimestamps = []
         wifiMeasurementFrameCount = 0
 
@@ -1450,7 +1453,7 @@ final class DeviceTestRunner {
 
             let elapsed = CFAbsoluteTimeGetCurrent() - self.wifiMeasurementStartTime
             let timestamps = self.wifiMeasurementFrameTimestamps
-            let renderedEndCount = self.sessionManager?.metalRenderer.renderedFrameCount ?? self.wifiMeasurementRenderedStartCount
+            let renderedEndCount = self.totalRenderedFrames
             let renderedDelta = max(0, renderedEndCount - self.wifiMeasurementRenderedStartCount)
             let frameCount = max(timestamps.count, renderedDelta)
 
