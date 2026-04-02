@@ -853,62 +853,28 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     /* Fast path: memcpy cached background (~2ms for 20MB) */
     memcpy(base, _cachedBackgroundPixels, bufferSize);
 
-    /* Animate regions representing real desktop activity:
-     * 1. Full-width scrolling content (60% height) — webpage scrolling
-     * 2. Sidebar with updating content (20% width)
-     * 3. Moving cursor (24x24)
-     *
-     * Uses fast per-row memset instead of per-pixel computation.
-     * Real SCStream delivers pre-built pixel buffers (zero CPU overhead),
-     * so the test content generation must be fast to not bottleneck. */
+    /* Animate ~95% of pixels per frame with structured gradients.
+     * Simulates active desktop: scrolling content, color-varying regions.
+     * Uses fast per-row computation to avoid bottlenecking the capture timer.
+     * Gradient content is compressible by LZ4 (unlike random noise) but
+     * changes every pixel — producing ~1-3MB deltas at 120fps. */
     {
-        double t = (double)frameIndex / (double)kSyntheticFPS;
-        uint8_t *pixels = (uint8_t *)base;
+        uint32_t fi = (uint32_t)frameIndex;
+        uint32_t *pixels32 = (uint32_t *)base;
+        size_t pixelsPerRow = bytesPerRow / 4;
 
-        /* 1. Main scroll area: full width, 60% height, solid-color bands.
-         * Each 16px band alternates between "text" gray and "gap" white.
-         * Scroll offset shifts the band pattern ~200px/s. */
-        size_t mainH = height * 60 / 100;
-        size_t mainY = height * 10 / 100;
-        int scrollOffset = (int)(t * 200.0);
-
-        for (size_t row = mainY; row < MIN(mainY + mainH, height); row++) {
-            int contentRow = (int)(row - mainY) + scrollOffset;
-            int band = (contentRow / 16) & 0xFF;
-            /* Alternate: dark text rows (12px) then light gap (4px) */
-            uint8_t val = (contentRow % 16 < 12)
-                ? (uint8_t)(50 + (band * 37) % 180)     /* text-like */
-                : (uint8_t)245;                           /* gap */
-            /* Fill entire row with BGRA (val, val, val, 255) using 4-byte writes */
-            uint32_t pixel = 0xFF000000u | ((uint32_t)val << 16) | ((uint32_t)val << 8) | val;
-            uint32_t *rowPixels = (uint32_t *)(pixels + row * bytesPerRow);
-            for (size_t col = 0; col < width; col++) {
-                rowPixels[col] = pixel;
-            }
-        }
-
-        /* 2. Sidebar: 20% width on right, full height.
-         * Solid color bands that shift each frame. */
-        size_t sideX = width * 80 / 100;
-        int sideShift = scrollOffset / 2;
+        /* Scrolling diagonal gradient covering the full frame.
+         * Each pixel varies by row + col + frameIndex → 95%+ change per frame.
+         * The gradient is structured (not random) so LZ4 finds patterns. */
         for (size_t row = 0; row < height; row++) {
-            int band = ((int)row + sideShift) / 20;
-            uint8_t val = (uint8_t)(100 + (band * 53) % 150);
-            uint32_t pixel = 0xFF000000u | ((uint32_t)val << 16) | ((uint32_t)val << 8) | val;
-            uint32_t *rowPixels = (uint32_t *)(pixels + row * bytesPerRow + sideX * 4);
-            for (size_t col = 0; col < width - sideX; col++) {
-                rowPixels[col] = pixel;
-            }
-        }
-
-        /* 3. Cursor: 24x24 white square in figure-8 */
-        size_t cursorSize = 24;
-        size_t cursorX = (size_t)((double)(width - cursorSize) * (0.5 + 0.3 * sin(t * 2.1)));
-        size_t cursorY = (size_t)((double)(height - cursorSize) * (0.5 + 0.3 * sin(t * 1.7)));
-        for (size_t row = cursorY; row < MIN(cursorY + cursorSize, height); row++) {
-            uint32_t *rowPixels = (uint32_t *)(pixels + row * bytesPerRow);
-            for (size_t col = cursorX; col < MIN(cursorX + cursorSize, width); col++) {
-                rowPixels[col] = 0xFFFFFFFFu;
+            uint32_t *rowOut = pixels32 + row * pixelsPerRow;
+            uint32_t rowBase = (uint32_t)row + fi * 3;
+            for (size_t col = 0; col < width; col++) {
+                uint32_t v = rowBase + (uint32_t)col;
+                uint8_t r = (uint8_t)(v * 7);
+                uint8_t g = (uint8_t)(v * 13 + fi);
+                uint8_t b = (uint8_t)(v * 19 + fi * 3);
+                rowOut[col] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
             }
         }
     }
