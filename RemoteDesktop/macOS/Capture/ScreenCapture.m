@@ -853,29 +853,42 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     /* Fast path: memcpy cached background (~2ms for 20MB) */
     memcpy(base, _cachedBackgroundPixels, bufferSize);
 
-    /* Animate a scrolling text-like block (~500x200 px) and a cursor (24x24 px)
-     * that move across the screen. This produces ~50-200KB LZ4 deltas per frame,
-     * representing typical desktop activity (scrolling, typing, cursor movement). */
+    /* Animate regions that represent real desktop activity:
+     * 1. Full-width scrolling content (60% of height) — like scrolling a webpage
+     * 2. Sidebar with updating content (20% of width)
+     * 3. Cursor moving across the screen
+     * Together these change ~40% of pixels per frame, producing ~1-3MB LZ4 deltas.
+     * This stresses the pipeline close to real-world browsing/scrolling load. */
     {
         double t = (double)frameIndex / (double)kSyntheticFPS;
         uint8_t *pixels = (uint8_t *)base;
-
-        /* Scrolling text block: ~18% of frame width, ~11% of height.
-         * Moves vertically like scrolling a document. */
-        size_t blockW = width * 18 / 100;
-        size_t blockH = height * 11 / 100;
-        size_t blockX = width / 4;
-        double scrollSpeed = 120.0; /* pixels per second */
-        size_t blockY = ((size_t)(t * scrollSpeed)) % (height > blockH ? height - blockH : 1);
-
         uint32_t seed = (uint32_t)frameIndex * 2654435761u;
-        for (size_t row = blockY; row < MIN(blockY + blockH, height); row++) {
-            for (size_t col = blockX; col < MIN(blockX + blockW, width); col++) {
+
+        /* 1. Main content area: scrolling page (full width, 60% height).
+         * Simulates scrolling a text-heavy webpage at ~200px/s. */
+        size_t mainX = 0;
+        size_t mainW = width;
+        size_t mainH = height * 60 / 100;
+        size_t mainY = height * 10 / 100;  /* leave top 10% as "toolbar" */
+        double scrollSpeed = 200.0;
+        int scrollOffset = (int)(t * scrollSpeed);
+
+        for (size_t row = mainY; row < MIN(mainY + mainH, height); row++) {
+            int contentRow = (int)(row - mainY) + scrollOffset;
+            for (size_t col = mainX; col < MIN(mainX + mainW, width); col++) {
                 size_t offset = row * bytesPerRow + col * 4;
-                /* Simulate text-like content: alternating light/dark bands */
-                uint8_t val = ((row - blockY) % 14 < 10) ?
-                    (uint8_t)(180 + (seed ^ (uint32_t)(col * 7 + row * 13)) % 60) :
-                    (uint8_t)(30 + (seed ^ (uint32_t)(col * 3)) % 20);
+                /* Text-like rows: 12px content, 4px spacing */
+                int rowInBlock = contentRow % 16;
+                uint8_t val;
+                if (rowInBlock < 12) {
+                    /* "Text" — varies per row for different content */
+                    uint32_t h = (uint32_t)(contentRow / 16) * 2654435761u ^ (uint32_t)col * 1103515245u;
+                    val = (h & 0x3) == 0 ? (uint8_t)(40 + (h >> 8) % 30) :
+                                           (uint8_t)(200 + (h >> 16) % 55);
+                } else {
+                    /* Inter-line gap — lighter background */
+                    val = 245;
+                }
                 pixels[offset + 0] = val;
                 pixels[offset + 1] = val;
                 pixels[offset + 2] = val;
@@ -883,7 +896,25 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
             }
         }
 
-        /* Cursor: 24x24 white square moving in figure-8 */
+        /* 2. Sidebar: 20% width on right, full height.
+         * Updates with different content each frame (chat/notifications). */
+        size_t sideW = width * 20 / 100;
+        size_t sideX = width - sideW;
+        for (size_t row = 0; row < height; row++) {
+            int contentRow = (int)row + scrollOffset / 2;
+            for (size_t col = sideX; col < width; col++) {
+                size_t offset = row * bytesPerRow + col * 4;
+                uint32_t h = seed ^ (uint32_t)(contentRow * 131 + col * 7);
+                uint8_t val = (h & 0x7) < 2 ? (uint8_t)(60 + (h >> 4) % 40) :
+                                                (uint8_t)(220 + (h >> 12) % 35);
+                pixels[offset + 0] = val;
+                pixels[offset + 1] = val;
+                pixels[offset + 2] = val;
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        /* 3. Cursor: 24x24 white square moving in figure-8 */
         size_t cursorSize = 24;
         size_t cursorX = (size_t)((double)(width - cursorSize) * (0.5 + 0.3 * sin(t * 2.1)));
         size_t cursorY = (size_t)((double)(height - cursorSize) * (0.5 + 0.3 * sin(t * 1.7)));
