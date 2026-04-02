@@ -17,19 +17,19 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `19.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.370` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `66 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `219 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `102 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `86 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `236 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `122 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `29.9 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `66 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `204 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `119.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.084` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `13 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `14 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `13 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `32 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `33 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `32 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `118.9 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `14 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `15 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `88.5%` | `96.3%` | `100.0%` | ❌ |
+| Overall pass rate | `100.0%` | `100.0%` | `100.0%` | ✅ |
 
 ## Changelog
 
@@ -64,3 +64,4 @@ Rules:
 | 2026-04-02 | 00:14:54 EDT | `4ce8c1a` | `2752x1786` | `76.7 fps` | `1.249` | `18/81/29 ms` | `34/84/41 ms` | `115.4 fps, 18/21 ms` | `1` | `23/27` | rotation uses decoded-or-rendered frames; usb tcp chunked media |
 | 2026-04-02 | 01:26:54 EDT | `0d10900` | `2752x1786` | `3.8 fps` | `2.206` | `5548/7731/5527 ms` | `5565/7748/5548 ms` | `5.4 fps, 9475/9940 ms` | `1` | `19/26` | wifi-only baseline after usb tcp chunking |
 | 2026-04-02 | 01:34:26 EDT | `ce911a4` | `2752x1786` | `19.8 fps` | `1.370` | `66/219/102 ms` | `86/236/122 ms` | `29.9 fps, 66/204 ms` | `1` | `23/26` | wifi-only after duplicate-connect fix |
+| 2026-04-02 | 09:51:34 EDT | `6121952` | `2752x1786` | `119.1 fps` | `0.084` | `13/14/13 ms` | `32/33/32 ms` | `118.9 fps, 14/15 ms` | `1` | `26/26` | wifi-only stress-capture after udp startup + 1920 cap |
