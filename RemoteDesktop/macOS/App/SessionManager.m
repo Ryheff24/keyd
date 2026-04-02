@@ -984,10 +984,10 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
             }
         }];
     } else if (_wirelessTransport.isConnected) {
-        /* WiFi: HEVC encoder already rate-limits (pendingFrameCount > 1 drop),
-         * and WirelessTransport's pacing queue spaces chunks. No additional
-         * frame-level backpressure needed — the encoder + pacing provide
-         * natural flow control at the HEVC output rate (~40-60fps). */
+        /* WiFi: HEVC encoder rate-limits via pendingFrameCount.
+         * WirelessTransport's pacing queue spaces UDP chunks.
+         * WiFi latency (~400ms median) is higher than USB due to
+         * pacing queue depth — needs adaptive pacing for improvement. */
         WirelessTransport *transport = _wirelessTransport;
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {

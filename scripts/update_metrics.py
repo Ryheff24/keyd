@@ -48,9 +48,10 @@ class Entry:
 class MetricDef:
     name: str
     accessor: Callable[[Entry], float]
-    goal: float
+    default_goal: float
     formatter: Callable[[float], str]
     comparator: str  # eq, min, max
+    goal_parser: Callable[[str], float]
 
 
 def fail(message: str) -> None:
@@ -220,29 +221,73 @@ def format_pct(value: float) -> str:
     return f"`{value:.1f}%`"
 
 
+def parse_goal_px(cell: str) -> float:
+    match = re.fullmatch(r"`?(\d+) px`?", cell.strip())
+    if not match:
+        fail(f"goal cell must be '`N px`', got {cell!r}")
+    return float(match.group(1))
+
+
+def parse_goal_fps(cell: str) -> float:
+    match = re.fullmatch(r"`?([0-9]+(?:\.[0-9]+)?) fps`?", cell.strip())
+    if not match:
+        fail(f"goal cell must be '`N.N fps`', got {cell!r}")
+    return float(match.group(1))
+
+
+def parse_goal_plain(cell: str) -> float:
+    match = re.fullmatch(r"`?([0-9]+(?:\.[0-9]+)?)`?", cell.strip())
+    if not match:
+        fail(f"goal cell must be '`N.NNN`', got {cell!r}")
+    return float(match.group(1))
+
+
+def parse_goal_ms(cell: str) -> float:
+    match = re.fullmatch(r"`?([0-9]+(?:\.[0-9]+)?) ms`?", cell.strip())
+    if not match:
+        fail(f"goal cell must be '`N ms`', got {cell!r}")
+    return float(match.group(1))
+
+
+def parse_goal_int(cell: str) -> float:
+    match = re.fullmatch(r"`?(\d+)`?", cell.strip())
+    if not match:
+        fail(f"goal cell must be '`N`', got {cell!r}")
+    return float(match.group(1))
+
+
+def parse_goal_pct(cell: str) -> float:
+    match = re.fullmatch(r"`?([0-9]+(?:\.[0-9]+)?)%`?", cell.strip())
+    if not match:
+        fail(f"goal cell must be '`N.N%`', got {cell!r}")
+    return float(match.group(1))
+
+
 METRICS: list[MetricDef] = [
-    MetricDef("USB resolution width", lambda e: e.usb_width, 2752, format_px, "eq"),
-    MetricDef("USB resolution height", lambda e: e.usb_height, 1786, format_px, "eq"),
-    MetricDef("FPS", lambda e: e.fps, 60.0, format_fps, "max"),
+    MetricDef("USB resolution width", lambda e: e.usb_width, 2752, format_px, "eq", parse_goal_px),
+    MetricDef("USB resolution height", lambda e: e.usb_height, 1786, format_px, "eq", parse_goal_px),
+    MetricDef("FPS", lambda e: e.fps, 60.0, format_fps, "max", parse_goal_fps),
     MetricDef(
         "Frame pacing CV",
         lambda e: e.frame_pacing_cv if e.frame_pacing_cv is not None else float("inf"),
         0.350,
         format_plain,
         "min",
+        parse_goal_plain,
     ),
-    MetricDef("Pipeline latency median", lambda e: e.pipeline_median_ms, 20, format_ms, "min"),
-    MetricDef("Pipeline latency p95", lambda e: e.pipeline_p95_ms, 50, format_ms, "min"),
-    MetricDef("Pipeline latency avg", lambda e: e.pipeline_avg_ms, 25, format_ms, "min"),
-    MetricDef("Glass-to-glass latency median", lambda e: e.g2g_median_ms, 20, format_ms, "min"),
-    MetricDef("Glass-to-glass latency p95", lambda e: e.g2g_p95_ms, 40, format_ms, "min"),
-    MetricDef("Glass-to-glass latency avg", lambda e: e.g2g_avg_ms, 25, format_ms, "min"),
+    MetricDef("Pipeline latency median", lambda e: e.pipeline_median_ms, 20, format_ms, "min", parse_goal_ms),
+    MetricDef("Pipeline latency p95", lambda e: e.pipeline_p95_ms, 50, format_ms, "min", parse_goal_ms),
+    MetricDef("Pipeline latency avg", lambda e: e.pipeline_avg_ms, 25, format_ms, "min", parse_goal_ms),
+    MetricDef("Glass-to-glass latency median", lambda e: e.g2g_median_ms, 20, format_ms, "min", parse_goal_ms),
+    MetricDef("Glass-to-glass latency p95", lambda e: e.g2g_p95_ms, 40, format_ms, "min", parse_goal_ms),
+    MetricDef("Glass-to-glass latency avg", lambda e: e.g2g_avg_ms, 25, format_ms, "min", parse_goal_ms),
     MetricDef(
         "Heavy-load FPS",
         lambda e: e.heavy_load_fps if e.heavy_load_fps is not None else float("-inf"),
         30.0,
         format_fps,
         "max",
+        parse_goal_fps,
     ),
     MetricDef(
         "Heavy-load pipeline median",
@@ -252,6 +297,7 @@ METRICS: list[MetricDef] = [
         100,
         format_ms,
         "min",
+        parse_goal_ms,
     ),
     MetricDef(
         "Heavy-load pipeline p95",
@@ -261,32 +307,67 @@ METRICS: list[MetricDef] = [
         150,
         format_ms,
         "min",
+        parse_goal_ms,
     ),
-    MetricDef("Security rejection", lambda e: float(e.security_rejection), 1, format_int, "eq"),
+    MetricDef("Security rejection", lambda e: float(e.security_rejection), 1, format_int, "eq", parse_goal_int),
     MetricDef(
         "Overall pass rate",
         lambda e: 100.0 * e.overall_passed / e.overall_total,
         100.0,
         format_pct,
         "eq",
+        parse_goal_pct,
     ),
 ]
 
 
-def metric_status(metric: MetricDef, current_value: float) -> str:
+def parse_summary_goals(text: str) -> dict[str, float]:
+    if "## Summary" not in text:
+        fail("METRICS.md is missing the summary section")
+
+    metric_by_name = {metric.name: metric for metric in METRICS}
+    goals: dict[str, float] = {}
+    in_summary = False
+    for line in text.splitlines():
+        if line.strip() == "## Summary":
+            in_summary = True
+            continue
+        if in_summary and line.startswith("## "):
+            break
+        if not in_summary or not line.startswith("|"):
+            continue
+        if line.startswith("| Metric ") or line.startswith("|--------"):
+            continue
+
+        cells = [cell.strip() for cell in line.strip().split("|")[1:-1]]
+        if len(cells) != 5:
+            fail(f"expected 5 summary columns, found {len(cells)} in line: {line}")
+        metric_name = cells[0]
+        metric = metric_by_name.get(metric_name)
+        if metric is None:
+            fail(f"unknown metric in summary table: {metric_name!r}")
+        goals[metric_name] = metric.goal_parser(cells[3])
+
+    missing = [metric.name for metric in METRICS if metric.name not in goals]
+    if missing:
+        fail(f"summary table is missing goal rows for: {', '.join(missing)}")
+    return goals
+
+
+def metric_status(metric: MetricDef, current_value: float, goal: float) -> str:
     if metric.comparator == "eq":
-        return "✅" if current_value == metric.goal else "❌"
+        return "✅" if current_value == goal else "❌"
     if metric.comparator == "min":
-        return "✅" if current_value <= metric.goal else "❌"
+        return "✅" if current_value <= goal else "❌"
     if metric.comparator == "max":
-        return "✅" if current_value >= metric.goal else "❌"
+        return "✅" if current_value >= goal else "❌"
     raise ValueError(f"unknown comparator {metric.comparator}")
 
 
-def best_value(metric: MetricDef, entries: list[Entry]) -> float:
+def best_value(metric: MetricDef, entries: list[Entry], goal: float) -> float:
     values = [metric.accessor(entry) for entry in entries]
     if metric.comparator == "eq":
-        return min(values, key=lambda value: abs(value - metric.goal))
+        return min(values, key=lambda value: abs(value - goal))
     if metric.comparator == "min":
         return min(values)
     if metric.comparator == "max":
@@ -294,7 +375,7 @@ def best_value(metric: MetricDef, entries: list[Entry]) -> float:
     raise ValueError(f"unknown comparator {metric.comparator}")
 
 
-def render_summary(entries: list[Entry]) -> list[str]:
+def render_summary(entries: list[Entry], goals: dict[str, float]) -> list[str]:
     current = entries[-1]
     lines = [
         "## Summary",
@@ -303,15 +384,16 @@ def render_summary(entries: list[Entry]) -> list[str]:
         "|--------|---------|------|------|--------|",
     ]
     for metric in METRICS:
+        goal = goals[metric.name]
         current_value = metric.accessor(current)
-        best = best_value(metric, entries)
-        status = metric_status(metric, current_value)
+        best = best_value(metric, entries, goal)
+        status = metric_status(metric, current_value, goal)
         lines.append(
             "| {name} | {current} | {best} | {goal} | {status} |".format(
                 name=metric.name,
                 current=metric.formatter(current_value),
                 best=metric.formatter(best),
-                goal=metric.formatter(metric.goal),
+                goal=metric.formatter(goal),
                 status=status,
             )
         )
@@ -360,22 +442,23 @@ def render_changelog(entries: list[Entry]) -> list[str]:
     return lines
 
 
-def render_file(entries: list[Entry]) -> str:
+def render_file(entries: list[Entry], goals: dict[str, float]) -> str:
     lines = [
         "# Metrics",
         "",
-        "This file is machine-managed.",
-        "Do not edit it by hand.",
+        "This file is machine-managed except for the Goal column in the Summary table.",
+        "You may edit Goal values there, but do not edit computed cells or changelog rows by hand.",
         "Use `scripts/update_metrics.py` to add a new metrics entry.",
         "",
         "Rules:",
         "- A new metrics entry requires a unique commit ID.",
         "- The commit ID must already exist in git before the entry is added.",
         "- The changelog is append-only.",
+        "- Goal values are read from the Summary table and preserved on rewrite.",
         "- Notes must stay single-line and short enough to keep table rows readable.",
         "",
     ]
-    lines.extend(render_summary(entries))
+    lines.extend(render_summary(entries, goals))
     lines.append("")
     lines.extend(render_changelog(entries))
     lines.append("")
@@ -471,12 +554,14 @@ def main() -> None:
     args = parser.parse_args()
 
     metrics_path = Path(args.metrics_path).resolve()
-    existing_entries = parse_changelog_entries(metrics_path.read_text())
+    existing_text = metrics_path.read_text()
+    goals = parse_summary_goals(existing_text)
+    existing_entries = parse_changelog_entries(existing_text)
     if not existing_entries:
         fail("METRICS.md must contain at least one changelog row before using this script")
 
     if args.rewrite_only:
-        metrics_path.write_text(render_file(existing_entries))
+        metrics_path.write_text(render_file(existing_entries, goals))
         return
 
     require_fields(args)
@@ -486,7 +571,7 @@ def main() -> None:
         fail(f"commit ID {new_entry.commit_id} already exists in the changelog")
 
     updated_entries = [*existing_entries, new_entry]
-    metrics_path.write_text(render_file(updated_entries))
+    metrics_path.write_text(render_file(updated_entries, goals))
 
 
 if __name__ == "__main__":
