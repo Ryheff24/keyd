@@ -202,6 +202,13 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     BOOL _syntheticIsVideo;
     CIContext *_syntheticCIContext;
 
+    /* Cached background for static-image mode.
+     * CGContextDrawImage is CPU-only and takes ~24ms at 2752x1786.
+     * We render once, then memcpy (~2ms) for each subsequent frame. */
+    uint8_t *_cachedBackgroundPixels;
+    size_t _cachedBackgroundSize;
+    size_t _cachedBackgroundBytesPerRow;
+
     /* Capture state */
     BOOL _isCapturing;
 
@@ -444,6 +451,12 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         CGImageRelease(_syntheticImage);
         _syntheticImage = NULL;
     }
+    if (_cachedBackgroundPixels) {
+        free(_cachedBackgroundPixels);
+        _cachedBackgroundPixels = NULL;
+        _cachedBackgroundSize = 0;
+        _cachedBackgroundBytesPerRow = 0;
+    }
     if (_syntheticLastVideoFrame) {
         CVPixelBufferRelease(_syntheticLastVideoFrame);
         _syntheticLastVideoFrame = NULL;
@@ -480,6 +493,14 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
             _syntheticBufferPool = nil;
             _syntheticPoolWidth = 0;
             _syntheticPoolHeight = 0;
+        }
+
+        /* Invalidate cached background so it re-renders at new resolution */
+        if (_cachedBackgroundPixels) {
+            free(_cachedBackgroundPixels);
+            _cachedBackgroundPixels = NULL;
+            _cachedBackgroundSize = 0;
+            _cachedBackgroundBytesPerRow = 0;
         }
 
         if (_compressorInitialized) {
@@ -780,18 +801,29 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     void *base = CVPixelBufferGetBaseAddress(pixelBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
 
-    /* Desktop-realistic mode: draw the static image once, then only
-     * animate a small cursor region. This produces tiny LZ4 deltas
-     * (~1-50KB) that represent real desktop usage (idle, text editing,
-     * cursor movement). The stress overlay and Ken Burns pan/zoom were
-     * causing 100% pixel change per frame, making LZ4 useless. */
+    /* Desktop-realistic mode: render the background once via CGContextDrawImage
+     * (~24ms), cache it, then memcpy (~2ms) for each subsequent frame.
+     * Only the cursor region changes per frame, producing ~5-50KB LZ4 deltas. */
 
-    if (frameIndex == 0) {
-        /* First frame: draw the static background (cleared + image).
-         * Subsequent frames reuse the previous buffer content via the
-         * pixel buffer pool and only redraw the cursor region. */
-        CGContextRef ctx = KeydCreateStressBitmapContext(base, width, height, bytesPerRow);
+    size_t bufferSize = bytesPerRow * height;
+    if (!_cachedBackgroundPixels || _cachedBackgroundSize != bufferSize ||
+        _cachedBackgroundBytesPerRow != bytesPerRow) {
+        /* Render background once and cache */
+        free(_cachedBackgroundPixels);
+        _cachedBackgroundPixels = (uint8_t *)malloc(bufferSize);
+        _cachedBackgroundSize = bufferSize;
+        _cachedBackgroundBytesPerRow = bytesPerRow;
+
+        if (!_cachedBackgroundPixels) {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+            CVPixelBufferRelease(pixelBuffer);
+            return NULL;
+        }
+
+        CGContextRef ctx = KeydCreateStressBitmapContext(_cachedBackgroundPixels, width, height, bytesPerRow);
         if (!ctx) {
+            free(_cachedBackgroundPixels);
+            _cachedBackgroundPixels = NULL;
             CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
             CVPixelBufferRelease(pixelBuffer);
             os_log_error(sc_log(), "Failed to create synthetic bitmap context");
@@ -802,64 +834,66 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         CGContextSetRGBFillColor(ctx, 0.12, 0.12, 0.14, 1.0);
         CGContextFillRect(ctx, CGRectMake(0, 0, width, height));
 
-        /* Draw the source image scaled to fit (no pan/zoom animation) */
-        CGContextTranslateCTM(ctx, 0, height);
-        CGContextScaleCTM(ctx, 1.0, -1.0);
+        /* Draw the source image scaled to cover (no pan/zoom animation) */
         CGFloat imageW = (CGFloat)CGImageGetWidth(_syntheticImage);
         CGFloat imageH = (CGFloat)CGImageGetHeight(_syntheticImage);
-        CGFloat scale = MIN((CGFloat)width / MAX(imageW, 1.0),
-                            (CGFloat)height / MAX(imageH, 1.0));
-        CGFloat drawW = imageW * scale;
-        CGFloat drawH = imageH * scale;
+        CGFloat coverScale = MAX((CGFloat)width / MAX(imageW, 1.0),
+                                 (CGFloat)height / MAX(imageH, 1.0));
+        CGFloat drawW = imageW * coverScale;
+        CGFloat drawH = imageH * coverScale;
         CGFloat drawX = ((CGFloat)width - drawW) * 0.5;
         CGFloat drawY = ((CGFloat)height - drawH) * 0.5;
         CGContextDrawImage(ctx, CGRectMake(drawX, drawY, drawW, drawH), _syntheticImage);
 
         CGContextRelease(ctx);
-    } else {
-        /* Subsequent frames: copy previous frame's pixels exactly.
-         * The pool may recycle buffers, so we need a persistent
-         * reference. For simplicity, re-render the same static image. */
-        CGContextRef ctx = KeydCreateStressBitmapContext(base, width, height, bytesPerRow);
-        if (!ctx) {
-            CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
-            CVPixelBufferRelease(pixelBuffer);
-            return NULL;
-        }
-
-        CGContextSetRGBFillColor(ctx, 0.12, 0.12, 0.14, 1.0);
-        CGContextFillRect(ctx, CGRectMake(0, 0, width, height));
-
-        CGContextTranslateCTM(ctx, 0, height);
-        CGContextScaleCTM(ctx, 1.0, -1.0);
-        CGFloat imageW = (CGFloat)CGImageGetWidth(_syntheticImage);
-        CGFloat imageH = (CGFloat)CGImageGetHeight(_syntheticImage);
-        CGFloat scale = MIN((CGFloat)width / MAX(imageW, 1.0),
-                            (CGFloat)height / MAX(imageH, 1.0));
-        CGFloat drawW = imageW * scale;
-        CGFloat drawH = imageH * scale;
-        CGFloat drawX = ((CGFloat)width - drawW) * 0.5;
-        CGFloat drawY = ((CGFloat)height - drawH) * 0.5;
-        CGContextDrawImage(ctx, CGRectMake(drawX, drawY, drawW, drawH), _syntheticImage);
-
-        CGContextRelease(ctx);
+        os_log(sc_log(), "Cached synthetic background: %zux%zu (%zu bytes)",
+               width, height, bufferSize);
     }
 
-    /* Animate a small cursor region (24x24 px) that moves in a figure-8.
-     * This produces a realistic ~1-5KB LZ4 delta per frame. */
+    /* Fast path: memcpy cached background (~2ms for 20MB) */
+    memcpy(base, _cachedBackgroundPixels, bufferSize);
+
+    /* Animate a scrolling text-like block (~500x200 px) and a cursor (24x24 px)
+     * that move across the screen. This produces ~50-200KB LZ4 deltas per frame,
+     * representing typical desktop activity (scrolling, typing, cursor movement). */
     {
         double t = (double)frameIndex / (double)kSyntheticFPS;
+        uint8_t *pixels = (uint8_t *)base;
+
+        /* Scrolling text block: ~18% of frame width, ~11% of height.
+         * Moves vertically like scrolling a document. */
+        size_t blockW = width * 18 / 100;
+        size_t blockH = height * 11 / 100;
+        size_t blockX = width / 4;
+        double scrollSpeed = 120.0; /* pixels per second */
+        size_t blockY = ((size_t)(t * scrollSpeed)) % (height > blockH ? height - blockH : 1);
+
+        uint32_t seed = (uint32_t)frameIndex * 2654435761u;
+        for (size_t row = blockY; row < MIN(blockY + blockH, height); row++) {
+            for (size_t col = blockX; col < MIN(blockX + blockW, width); col++) {
+                size_t offset = row * bytesPerRow + col * 4;
+                /* Simulate text-like content: alternating light/dark bands */
+                uint8_t val = ((row - blockY) % 14 < 10) ?
+                    (uint8_t)(180 + (seed ^ (uint32_t)(col * 7 + row * 13)) % 60) :
+                    (uint8_t)(30 + (seed ^ (uint32_t)(col * 3)) % 20);
+                pixels[offset + 0] = val;
+                pixels[offset + 1] = val;
+                pixels[offset + 2] = val;
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        /* Cursor: 24x24 white square moving in figure-8 */
         size_t cursorSize = 24;
         size_t cursorX = (size_t)((double)(width - cursorSize) * (0.5 + 0.3 * sin(t * 2.1)));
         size_t cursorY = (size_t)((double)(height - cursorSize) * (0.5 + 0.3 * sin(t * 1.7)));
-        uint8_t *pixels = (uint8_t *)base;
         for (size_t row = cursorY; row < MIN(cursorY + cursorSize, height); row++) {
             for (size_t col = cursorX; col < MIN(cursorX + cursorSize, width); col++) {
                 size_t offset = row * bytesPerRow + col * 4;
-                pixels[offset + 0] = 255; /* B */
-                pixels[offset + 1] = 255; /* G */
-                pixels[offset + 2] = 255; /* R */
-                pixels[offset + 3] = 255; /* A */
+                pixels[offset + 0] = 255;
+                pixels[offset + 1] = 255;
+                pixels[offset + 2] = 255;
+                pixels[offset + 3] = 255;
             }
         }
     }
