@@ -16,19 +16,19 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `45.5 fps` | `70.2 fps` | `60.0 fps` | ❌ |
-| Frame pacing CV | `0.452` | `0.452` | `0.350` | ❌ |
-| Pipeline latency median | `11 ms` | `11 ms` | `20 ms` | ✅ |
-| Pipeline latency p95 | `80 ms` | `32 ms` | `50 ms` | ❌ |
-| Pipeline latency avg | `19 ms` | `19 ms` | `25 ms` | ✅ |
-| Glass-to-glass latency median | `32 ms` | `32 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `98 ms` | `54 ms` | `40 ms` | ❌ |
-| Glass-to-glass latency avg | `39 ms` | `39 ms` | `25 ms` | ❌ |
-| Heavy-load FPS | `76.9 fps` | `76.9 fps` | `30.0 fps` | ✅ |
-| Heavy-load pipeline median | `11 ms` | `11 ms` | `100 ms` | ✅ |
-| Heavy-load pipeline p95 | `84 ms` | `84 ms` | `150 ms` | ✅ |
+| FPS | `36.5 fps` | `70.2 fps` | `60.0 fps` | ❌ |
+| Frame pacing CV | `0.210` | `0.210` | `0.350` | ✅ |
+| Pipeline latency median | `12 ms` | `11 ms` | `20 ms` | ✅ |
+| Pipeline latency p95 | `24 ms` | `24 ms` | `50 ms` | ✅ |
+| Pipeline latency avg | `14 ms` | `14 ms` | `25 ms` | ✅ |
+| Glass-to-glass latency median | `33 ms` | `32 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `43 ms` | `43 ms` | `40 ms` | ❌ |
+| Glass-to-glass latency avg | `33 ms` | `33 ms` | `25 ms` | ❌ |
+| Heavy-load FPS | `70.5 fps` | `76.9 fps` | `30.0 fps` | ✅ |
+| Heavy-load pipeline median | `10 ms` | `10 ms` | `100 ms` | ✅ |
+| Heavy-load pipeline p95 | `13 ms` | `13 ms` | `150 ms` | ✅ |
 | Security rejection | `0` | `0` | `1` | ❌ |
-| Overall pass rate | `92.0%` | `92.0%` | `100.0%` | ❌ |
+| Overall pass rate | `96.0%` | `96.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -44,3 +44,4 @@ Rules:
 | 2026-04-01 | 19:10:47 EDT | `3e2ad07` | `2752x1786` | `52.0 fps` | `1.834` | `388/1653/529 ms` | `417/1675/557 ms` | `15.1 fps, 1479/3078 ms` | `0` | `20/26` | Validate wifi-only transport subset |
 | 2026-04-01 | 19:13:38 EDT | `f2f6bb3` | `2752x1786` | `53.1 fps` | `0.550` | `3611/9262/3879 ms` | `1687/9012/2830 ms` | `57.3 fps, 5140/8573 ms` | `0` | `21/26` | Validate usb-plus-wifi transport subset |
 | 2026-04-01 | 20:17:28 EDT | `da74d72` | `2752x1786` | `45.5 fps` | `0.452` | `11/80/19 ms` | `32/98/39 ms` | `76.9 fps, 11/84 ms` | `0` | `23/25` | TCP backpressure + mTLS graceful degradation + shorter timeouts |
+| 2026-04-01 | 20:30:28 EDT | `c4b452f` | `2752x1786` | `36.5 fps` | `0.210` | `12/24/14 ms` | `33/43/33 ms` | `70.5 fps, 10/13 ms` | `0` | `24/25` | Frame size cap 2MB + TCP backpressure |
