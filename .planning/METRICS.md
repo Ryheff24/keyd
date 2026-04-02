@@ -17,19 +17,19 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `10.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.031` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `207 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `219 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `208 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `222 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `238 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `224 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `10.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `211 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `224 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `111.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.652` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `16 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `80 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `27 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `37 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `78 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `42 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `105.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `16 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `77 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `88.9%` | `96.3%` | `100.0%` | ❌ |
+| Overall pass rate | `85.2%` | `96.3%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -59,3 +59,4 @@ Rules:
 | 2026-04-01 | 22:52:09 EDT | `5a2acd1` | `2752x1786` | `100.9 fps` | `0.332` | `12/14/12 ms` | `28/29/29 ms` | `98.8 fps, 13/15 ms` | `0` | `26/27` | 15pct video window (~3MB delta), 3 TCP in-flight, branchless loops |
 | 2026-04-01 | 22:54:31 EDT | `dc72aa7` | `2752x1786` | `114.5 fps` | `0.187` | `13/15/13 ms` | `34/35/34 ms` | `97.4 fps, 13/15 ms` | `0` | `26/27` | 15pct video window (~3MB delta), 3 TCP in-flight, rerun |
 | 2026-04-01 | 23:43:24 EDT | `ca59267` | `2752x1786` | `10.8 fps` | `0.031` | `207/219/208 ms` | `222/238/224 ms` | `10.7 fps, 211/224 ms` | `1` | `24/27` | raw client identity payload (cert+key), no pkcs12 |
+| 2026-04-02 | 00:06:13 EDT | `3268e60` | `2752x1786` | `111.7 fps` | `0.652` | `16/80/27 ms` | `37/78/42 ms` | `105.2 fps, 16/77 ms` | `1` | `23/27` | usb tcp chunked media + reconnect crash fix |
