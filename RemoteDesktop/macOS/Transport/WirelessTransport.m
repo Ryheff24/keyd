@@ -22,7 +22,9 @@ static const char *kInputPortStr = "14568";
 
 @interface WirelessTransport () {
     dispatch_queue_t _sendPacingQueue;     // serial queue for paced UDP sends
-    uint64_t _pacingIntervalTicks;         // mach absolute time ticks between chunk sends
+    uint64_t _pacingFastIntervalTicks;     // low-backlog chunk spacing
+    uint64_t _pacingDefaultIntervalTicks;  // nominal chunk spacing
+    uint64_t _pacingCongestedIntervalTicks;// high-backlog chunk spacing
     uint64_t _nextSendTime;               // next allowed send time (mach absolute time)
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
@@ -46,11 +48,15 @@ static const char *kInputPortStr = "14568";
         _sendPacingQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.wireless.pacing",
                                                  DISPATCH_QUEUE_SERIAL);
 
-        /* Convert 560ns pacing interval (0.56ms = 1400 bytes * 8 / 20 Mbps)
-         * from nanoseconds to mach absolute time ticks. */
+        /* Convert chunk pacing intervals from nanoseconds to mach ticks.
+         * Low backlog can safely drain faster to reduce visible frame-time
+         * variance on bursty desktop content; high backlog falls back to the
+         * conservative 20 Mbps-equivalent pacing used previously. */
         mach_timebase_info_data_t timebase;
         mach_timebase_info(&timebase);
-        _pacingIntervalTicks = (uint64_t)(560000ULL * timebase.denom / timebase.numer);
+        _pacingFastIntervalTicks = (uint64_t)(360000ULL * timebase.denom / timebase.numer);
+        _pacingDefaultIntervalTicks = (uint64_t)(440000ULL * timebase.denom / timebase.numer);
+        _pacingCongestedIntervalTicks = (uint64_t)(560000ULL * timebase.denom / timebase.numer);
         _nextSendTime = 0;
         atomic_init(&_queuedMediaChunks, 0);
         atomic_init(&_sendGeneration, 1);
@@ -350,8 +356,16 @@ static const char *kInputPortStr = "14568";
         }
 
         /* Schedule next send relative to NOW (not _nextSendTime) to avoid
-         * accumulating delay if we fell behind. */
-        self->_nextSendTime = mach_absolute_time() + self->_pacingIntervalTicks;
+         * accumulating delay if we fell behind. Use a faster pace while the
+         * queue is shallow so large UI bursts do not monopolize the sender. */
+        uint32_t queued = atomic_load_explicit(&self->_queuedMediaChunks, memory_order_relaxed);
+        uint64_t pacingTicks = self->_pacingDefaultIntervalTicks;
+        if (queued <= 32) {
+            pacingTicks = self->_pacingFastIntervalTicks;
+        } else if (queued >= 96) {
+            pacingTicks = self->_pacingCongestedIntervalTicks;
+        }
+        self->_nextSendTime = mach_absolute_time() + pacingTicks;
 
         dispatch_data_t ddata = dispatch_data_create(copy, copyLen, self->_transportQueue,
                                                      DISPATCH_DATA_DESTRUCTOR_FREE);

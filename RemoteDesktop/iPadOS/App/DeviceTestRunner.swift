@@ -915,17 +915,19 @@ final class DeviceTestRunner {
                 }
             }
 
-            // Pass criteria — strict:
-            // 1. Must have meaningful frames (>= 20 unique frames in 10s = at least 2fps)
-            // 2. Stutter ratio < 5% (was 20% — too lenient)
-            // 3. Max gap < 200ms (no single gap should freeze the display for 200ms+)
-            // 4. Worst 1s window must have >= 5 frames (never drop below 5fps)
-            // 5. If --expect-fps specified, avg must meet it
+            // Pass criteria — hard quality gate:
+            // 1. Must have meaningful frames (>= 20 unique frames in 10s)
+            // 2. Stutter ratio < 5%
+            // 3. Max gap < 200ms
+            // 4. Worst 1s window must have >= 5 frames
+            // 5. Average FPS must meet a 60fps minimum unless an even stricter
+            //    --expect-fps target is provided at launch.
             let hasEnoughFrames = frameCount >= 20
             let stutterRatio = intervals.isEmpty ? 1.0 : Double(stutterCount) / Double(intervals.count)
             let isConsistent = stutterRatio < 0.05
             let noLongFreeze = maxInterval < 200.0
             let worstWindowOK = worstWindowFPS >= 5.0
+            let minimumRequiredFPS = 60.0
 
             var passed: Bool
             var detail: String
@@ -936,13 +938,10 @@ final class DeviceTestRunner {
             if !noLongFreeze { issues.append("max gap \(String(format: "%.0f", maxInterval))ms") }
             if !worstWindowOK { issues.append("worst 1s window: \(String(format: "%.0f", worstWindowFPS))fps") }
 
-            if let expected = self.expectFPS {
-                let meetsTarget = avgFPS >= Double(expected)
-                if !meetsTarget { issues.append("avg \(String(format: "%.1f", avgFPS)) < target \(expected)") }
-                passed = meetsTarget && hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK
-            } else {
-                passed = hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK
-            }
+            let requiredFPS = max(Double(self.expectFPS ?? 0), minimumRequiredFPS)
+            let meetsTarget = avgFPS >= requiredFPS
+            if !meetsTarget { issues.append("avg \(String(format: "%.1f", avgFPS)) < target \(String(format: "%.0f", requiredFPS))") }
+            passed = meetsTarget && hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK
 
             detail = "\(String(format: "%.1f", avgFPS)) fps, \(frameCount) frames, stutters=\(stutterCount)/\(intervals.count), jitter=\(String(format: "%.1f", jitterStdDev))ms, worst1s=\(String(format: "%.0f", worstWindowFPS))fps, maxGap=\(String(format: "%.0f", maxInterval))ms"
 
@@ -1213,10 +1212,7 @@ final class DeviceTestRunner {
         let calibrated = clockOffsetCalibrated ? "calibrated, offset=\(clockOffsetUs/1000)ms" : "uncalibrated"
         print("[TEST] INFO: pipeline-latency (capture-to-decode, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, clock=\(calibrated))")
 
-        // With clock offset calibrated, pipeline median is ~120ms over USB at native
-        // resolution (dominated by VTCompressionSession frame buffering at 3600x2338).
-        // Threshold catches regressions while reflecting current encoder configuration.
-        let threshold: Int64 = clockOffsetCalibrated ? 150 : 200
+        let threshold: Int64 = 20
         let passed = medianMs < threshold
         recordResult(name: "pipeline-latency", passed: passed,
                     detail: "capture-to-decode: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
@@ -1261,10 +1257,7 @@ final class DeviceTestRunner {
             print("[TEST] INFO: glass-to-glass overhead vs decode: \(overheadMs)ms (present+display-link)")
         }
 
-        // With clock offset calibrated, glass-to-glass median is ~140ms over USB
-        // (pipeline ~120ms + render/display-link ~20ms).
-        // Threshold catches regressions while reflecting current encoder configuration.
-        let threshold: Int64 = clockOffsetCalibrated ? 180 : 200
+        let threshold: Int64 = 30
         let passed = medianMs < threshold
         recordResult(name: "glass-to-glass-latency", passed: passed,
                     detail: "capture-to-presented: median=\(medianMs)ms, p95=\(p95Ms)ms, avg=\(avgMs)ms (\(count) frames, \(calibrated))")
@@ -1313,8 +1306,9 @@ final class DeviceTestRunner {
 
                 print("[TEST] INFO: heavy-load (fps=\(String(format: "%.1f", hlFPS)), frames=\(hlFrames), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms, samples=\(hlPipeline.count), duration=\(String(format: "%.1f", elapsed))s)")
 
-                // Heavy load targets: fps >= 10, pipeline p95 < 200ms
-                let passed = hlFPS >= 10.0 && (hlPipeline.isEmpty || hlP95Ms < 200)
+                let heavyLoadFPSFloor = 60.0
+                let heavyLoadPipelineP95Threshold: Int64 = 50
+                let passed = hlFPS >= heavyLoadFPSFloor && (hlPipeline.isEmpty || hlP95Ms < heavyLoadPipelineP95Threshold)
                 self.recordResult(name: "heavy-load", passed: passed,
                             detail: "fps=\(String(format: "%.1f", hlFPS)), pipeline: median=\(hlMedianMs)ms p95=\(hlP95Ms)ms")
 
