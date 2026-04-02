@@ -54,12 +54,37 @@ static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
 static const int kWirelessHEVCFPS = 30;
-static const int kWirelessHEVCBitrate = 12000000; /* 12 Mbps */
+static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps */
+static const uint32_t kWirelessMaxEncodeWidth = 1920;
+static const uint32_t kWirelessMaxEncodeHeight = 1200;
 static const NSUInteger kWirelessLargeFrameChunkThreshold = 96;
 static const NSUInteger kWirelessMaxQueuedChunks = 192;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
+}
+
+static void keydrd_limit_size(uint32_t sourceWidth, uint32_t sourceHeight,
+                              uint32_t maxWidth, uint32_t maxHeight,
+                              uint32_t *outWidth, uint32_t *outHeight) {
+    if (sourceWidth == 0 || sourceHeight == 0 || maxWidth == 0 || maxHeight == 0) {
+        if (outWidth) *outWidth = sourceWidth;
+        if (outHeight) *outHeight = sourceHeight;
+        return;
+    }
+
+    double widthScale = (double)maxWidth / (double)sourceWidth;
+    double heightScale = (double)maxHeight / (double)sourceHeight;
+    double scale = MIN(1.0, MIN(widthScale, heightScale));
+
+    uint32_t limitedWidth = (uint32_t)llround((double)sourceWidth * scale);
+    uint32_t limitedHeight = (uint32_t)llround((double)sourceHeight * scale);
+
+    if (limitedWidth > 1 && (limitedWidth & 1u) != 0) limitedWidth--;
+    if (limitedHeight > 1 && (limitedHeight & 1u) != 0) limitedHeight--;
+
+    if (outWidth) *outWidth = MAX(limitedWidth, 2u);
+    if (outHeight) *outHeight = MAX(limitedHeight, 2u);
 }
 
 /* Maximum number of TCP media sends in-flight before dropping frames.
@@ -986,10 +1011,10 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             }
         }];
     } else if (_wirelessTransport.isConnected) {
-        /* WiFi: avoid building multi-second DTLS pacing debt.
-         * Oversized HEVC frames can expand into hundreds of 1400-byte chunks.
-         * Send those frames over TCP, and drop smaller frames if the paced UDP
-         * queue is already too deep to preserve smoothness. */
+        /* WiFi: keep the whole stream on UDP when possible.
+         * Mixing startup/keyframes across TCP and UDP created visible stalls.
+         * The WiFi encode profile now caps resolution so most keyframes stay
+         * under the UDP chunk threshold; only truly oversized frames use TCP. */
         WirelessTransport *transport = _wirelessTransport;
         size_t maxChunkPayload = KEYDRD_MTU_WIFI - sizeof(MediaFrameHeader);
         NSUInteger chunkCount = (payloadLen + maxChunkPayload - 1) / maxChunkPayload;
@@ -1366,6 +1391,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         bitrate = kWirelessHEVCBitrate;
         quality = 0.0f;     /* bitrate-based */
         fps = kWirelessHEVCFPS;
+        keydrd_limit_size(_viewportWidth, _viewportHeight,
+                          kWirelessMaxEncodeWidth, kWirelessMaxEncodeHeight,
+                          &encodeWidth, &encodeHeight);
+        if (encodeWidth != _viewportWidth || encodeHeight != _viewportHeight) {
+            os_log(sLog, "WiFi encode cap: viewport %ux%u -> %ux%u to keep keyframes on UDP",
+                   _viewportWidth, _viewportHeight, encodeWidth, encodeHeight);
+        }
     }
 
     os_log(sLog, "Starting HEVC encoder: %ux%u @%dfps bitrate=%dMbps (capture: %ux%u, viewport: %ux%u)",
