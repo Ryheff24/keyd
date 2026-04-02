@@ -17,17 +17,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `41.5 fps` | `70.2 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.216` | `0.210` | `0.350` | ✅ |
-| Pipeline latency median | `29 ms` | `11 ms` | `9 ms` | ❌ |
-| Pipeline latency p95 | `34 ms` | `24 ms` | `29 ms` | ❌ |
-| Pipeline latency avg | `29 ms` | `14 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency median | `51 ms` | `27 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `52 ms` | `43 ms` | `35 ms` | ❌ |
-| Glass-to-glass latency avg | `48 ms` | `32 ms` | `25 ms` | ❌ |
-| Heavy-load FPS | `41.3 fps` | `76.9 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `29 ms` | `10 ms` | `100 ms` | ✅ |
-| Heavy-load pipeline p95 | `33 ms` | `13 ms` | `150 ms` | ✅ |
+| FPS | `119.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.043` | `0.043` | `0.350` | ✅ |
+| Pipeline latency median | `7 ms` | `7 ms` | `9 ms` | ✅ |
+| Pipeline latency p95 | `8 ms` | `8 ms` | `29 ms` | ✅ |
+| Pipeline latency avg | `7 ms` | `7 ms` | `25 ms` | ✅ |
+| Glass-to-glass latency median | `29 ms` | `27 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `29 ms` | `29 ms` | `35 ms` | ✅ |
+| Glass-to-glass latency avg | `29 ms` | `29 ms` | `25 ms` | ❌ |
+| Heavy-load FPS | `119.2 fps` | `119.2 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `8 ms` | `8 ms` | `100 ms` | ✅ |
+| Heavy-load pipeline p95 | `8 ms` | `8 ms` | `150 ms` | ✅ |
 | Security rejection | `0` | `0` | `1` | ❌ |
 | Overall pass rate | `96.3%` | `96.3%` | `100.0%` | ❌ |
 
@@ -51,3 +51,4 @@ Rules:
 | 2026-04-01 | 20:44:48 EDT | `c621ba1` | `2752x1786` | `52.2 fps` | `1.844` | `394/1567/554 ms` | `426/1592/587 ms` | `15.1 fps, 1589/3992 ms` | `0` | `19/25` | WiFi no frame-level backpressure, rely on encoder+pacing |
 | 2026-04-01 | 20:52:12 EDT | `1108a67` | `2752x1786` | `35.1 fps` | `0.242` | `11/25/14 ms` | `27/44/32 ms` | `68.5 fps, 10/13 ms` | `0` | `25/26` | Final: USB backpressure+size cap, WiFi natural pacing |
 | 2026-04-01 | 21:53:47 EDT | `172c708` | `2752x1786` | `41.5 fps` | `0.216` | `29/34/29 ms` | `51/52/48 ms` | `41.3 fps, 29/33 ms` | `0` | `26/27` | 70pct pixel change: scrolling content + sidebar + cursor |
+| 2026-04-01 | 22:01:00 EDT | `e9afaf1` | `2752x1786` | `119.8 fps` | `0.043` | `7/8/7 ms` | `29/29/29 ms` | `119.2 fps, 8/8 ms` | `0` | `26/27` | No delta-keyframe fallback + fast per-row animation |
