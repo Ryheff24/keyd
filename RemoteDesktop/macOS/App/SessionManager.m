@@ -72,7 +72,7 @@ static const int32_t kMaxMediaSendsInFlightWiFi = 5;
  * cap are dropped; the next delta frame will be small and deliver fresh
  * content. 2MB allows keyframes up to ~16:1 of raw (19.6MB → 2MB).
  * Most delta frames are 100-300KB, well under this limit. */
-static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
+static const size_t kMaxLZ4DeltaBytes = 5 * 1024 * 1024;
 
 @interface SessionManager ()
 
@@ -949,13 +949,15 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
          * transmitting one blocks the pipe for ~460ms, ruining pacing.
          * KEYFRAMES are never dropped — they're essential for decoder init
          * and error recovery. Real desktop first keyframes are 2-3MB. */
-        BOOL isKeyframe = (originalHeader->flags & KEYDRD_FLAG_KEYFRAME) != 0;
-        if (!isKeyframe && payloadLen > kMaxLZ4FrameBytes) {
+        /* Drop oversized frames that would stall the TCP pipe.
+         * 5MB cap blocks 19MB+ incompressible stress frames but allows
+         * real desktop keyframes (1.5-2.5MB) and all normal deltas (50-200KB). */
+        if (payloadLen > kMaxLZ4DeltaBytes) {
             static int oversizeCount = 0;
             oversizeCount++;
             if (oversizeCount <= 10 || oversizeCount % 100 == 0) {
-                os_log(sLog, "Frame size cap: dropped %zu byte delta seq=%u (limit=%zu, total=%d)",
-                       payloadLen, originalHeader->seq, kMaxLZ4FrameBytes, oversizeCount);
+                os_log(sLog, "Frame size cap: dropped %zu byte frame seq=%u (limit=%zu, total=%d)",
+                       payloadLen, originalHeader->seq, kMaxLZ4DeltaBytes, oversizeCount);
             }
             return;
         }
