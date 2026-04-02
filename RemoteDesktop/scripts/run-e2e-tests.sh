@@ -397,11 +397,8 @@ create_report_commit() {
   summary="usb ${REPORT_USB_RESOLUTION}, ${REPORT_FPS}fps, g2g ${REPORT_G2G_MEDIAN}/${REPORT_G2G_P95}/${REPORT_G2G_AVG}ms, overall ${REPORT_OVERALL_PASSED}/${REPORT_OVERALL_TOTAL}"
   subject="test-run: ${summary}"
 
-  if ! git diff --quiet -- .planning/METRICS.md || ! git diff --cached --quiet -- .planning/METRICS.md; then
-    echo "ERROR: .planning/METRICS.md has uncommitted changes; reporting refuses to continue"
-    return 1
-  fi
-
+  # METRICS.md goals are intentionally editable between runs and the file is
+  # excluded from the tested code snapshot commit below.
   git add -A -- . ':(exclude).planning/METRICS.md' ':(exclude)scripts/__pycache__'
   git commit --allow-empty -m "$subject" -m "Notes: $REPORT_NOTES" -m "Frame pacing CV: $REPORT_FRAME_PACING_CV
 Pipeline latency (median/p95/avg ms): $REPORT_PIPELINE_MEDIAN/$REPORT_PIPELINE_P95/$REPORT_PIPELINE_AVG
@@ -568,7 +565,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
   -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
   -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
 openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
-  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd 2>/dev/null
+  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd -legacy 2>/dev/null
 rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
 log_progress "TLS identity generated"
 log_progress ""

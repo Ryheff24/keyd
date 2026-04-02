@@ -197,7 +197,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
   -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
   -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
 openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
-  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd 2>/dev/null
+  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd -legacy 2>/dev/null
 rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
 echo "TLS identity generated"
 echo ""

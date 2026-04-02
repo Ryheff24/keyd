@@ -97,11 +97,21 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecImportExportPassphrase: @"keydrd",
     };
     CFArrayRef items = NULL;
-    OSStatus status = SecPKCS12Import((__bridge CFDataRef)p12Data,
-                                      (__bridge CFDictionaryRef)importOptions,
-                                      &items);
+    OSStatus status = errSecInternalError;
+    @try {
+        status = SecPKCS12Import((__bridge CFDataRef)p12Data,
+                                  (__bridge CFDictionaryRef)importOptions,
+                                  &items);
+    } @catch (NSException *exception) {
+        os_log_error(pairing_log(), "SecPKCS12Import threw exception loading server identity: %{public}@ — %{public}@. "
+                     "Ensure identity.p12 was generated with 'openssl pkcs12 -export -legacy'.",
+                     exception.name, exception.reason);
+        return;
+    }
     if (status != errSecSuccess || !items || CFArrayGetCount(items) == 0) {
-        os_log_error(pairing_log(), "SecPKCS12Import failed: %d", (int)status);
+        os_log_error(pairing_log(), "SecPKCS12Import failed: %d. "
+                     "Ensure identity.p12 was generated with 'openssl pkcs12 -export -legacy'.",
+                     (int)status);
         if (items) CFRelease(items);
         return;
     }
@@ -452,12 +462,17 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                            ]
                               error:&taskError];
     if (!generated) {
+        /* -legacy not supported (e.g. LibreSSL on macOS).
+         * Use explicit old algorithms that SecPKCS12Import can handle. */
         NSMutableArray<NSString *> *retryArguments = [@[
             @"pkcs12", @"-export",
             @"-out", p12Path,
             @"-inkey", keyPath,
             @"-in", certPath,
-            @"-passout", [NSString stringWithFormat:@"pass:%@", kProvisionedClientPKCS12Passphrase]
+            @"-passout", [NSString stringWithFormat:@"pass:%@", kProvisionedClientPKCS12Passphrase],
+            @"-certpbe", @"PBE-SHA1-3DES",
+            @"-keypbe", @"PBE-SHA1-3DES",
+            @"-macalg", @"sha1"
         ] mutableCopy];
         generated = [self runTaskAtPath:@"/usr/bin/openssl" arguments:retryArguments error:&taskError];
         if (!generated) {
