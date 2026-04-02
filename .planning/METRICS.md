@@ -17,17 +17,17 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `30.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.134` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `53 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `60 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `54 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `69 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `77 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `73 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `31.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `53 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `58 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `32.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.126` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `56 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `63 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `55 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `75 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `83 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `75 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `31.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `56 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `63 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `0` | `0` | `1` | ❌ |
 | Overall pass rate | `96.3%` | `96.3%` | `100.0%` | ❌ |
 
@@ -54,3 +54,4 @@ Rules:
 | 2026-04-01 | 22:01:00 EDT | `e9afaf1` | `2752x1786` | `119.8 fps` | `0.043` | `7/8/7 ms` | `29/29/29 ms` | `119.2 fps, 8/8 ms` | `0` | `26/27` | No delta-keyframe fallback + fast per-row animation |
 | 2026-04-01 | 22:03:59 EDT | `bdea6cd` | `2752x1786` | `120.0 fps` | `0.011` | `9/10/8 ms` | `26/27/26 ms` | `119.8 fps, 9/11 ms` | `0` | `26/27` | 95pct pixel change: scrolling diagonal gradient, no keyframe fallback |
 | 2026-04-01 | 22:13:46 EDT | `700e484` | `2752x1786` | `30.0 fps` | `0.134` | `53/60/54 ms` | `69/77/73 ms` | `31.4 fps, 53/58 ms` | `0` | `26/27` | Noisy gradient 100pct change, LZ4 acc=32, no memcpy, no keyframe fallback |
+| 2026-04-01 | 22:17:01 EDT | `13eb771` | `2752x1786` | `32.1 fps` | `0.126` | `56/63/55 ms` | `75/83/75 ms` | `31.8 fps, 56/63 ms` | `0` | `26/27` | Block-noise gradient 4x4, LZ4 acc=32, no memcpy, target 1-5MB deltas |
