@@ -396,7 +396,8 @@ collect_report_metrics() {
   REPORT_SECURITY_LINE=$(grep -E '\[TEST\] (PASS|FAIL): sec-untrusted-cert \(' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
   REPORT_COMPLETE_LINE=$(grep -E '\[TEST\] COMPLETE:' "$IPAD_LOG_FILE" 2>/dev/null | tail -1 || true)
 
-  REPORT_USB_RESOLUTION=$(extract_metric_value "USB resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*viewport=([0-9]+x[0-9]+).*/\1/p')")
+  REPORT_VIEWPORT_RESOLUTION=$(extract_metric_value "viewport resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*viewport=([0-9]+x[0-9]+).*/\1/p')")
+  REPORT_FRAME_RESOLUTION=$(extract_metric_value "frame resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*frame=([0-9]+x[0-9]+).*/\1/p')")
   REPORT_FPS=$(extract_metric_value "FPS" "$(echo "$REPORT_FPS_LINE" | sed -nE 's/.*\(([0-9]+(\.[0-9]+)?) fps.*/\1/p')")
   REPORT_FRAME_PACING_CV=$(extract_metric_value "frame pacing CV" "$(echo "$REPORT_FRAME_PACING_LINE" | sed -nE 's/.*cv=([0-9]+(\.[0-9]+)?).*/\1/p')")
 
@@ -417,7 +418,7 @@ collect_report_metrics() {
 
 create_report_commit() {
   local summary subject
-  summary="usb ${REPORT_USB_RESOLUTION}, ${REPORT_FPS}fps, g2g ${REPORT_G2G_MEDIAN}/${REPORT_G2G_P95}/${REPORT_G2G_AVG}ms, overall ${REPORT_OVERALL_PASSED}/${REPORT_OVERALL_TOTAL}"
+  summary="vp ${REPORT_VIEWPORT_RESOLUTION}, frame ${REPORT_FRAME_RESOLUTION}, ${REPORT_FPS}fps, g2g ${REPORT_G2G_MEDIAN}/${REPORT_G2G_P95}/${REPORT_G2G_AVG}ms, overall ${REPORT_OVERALL_PASSED}/${REPORT_OVERALL_TOTAL}"
   subject="test-run: ${summary}"
 
   # METRICS.md goals are intentionally editable between runs and the file is
@@ -478,7 +479,8 @@ run_reporting() {
   log_progress "=== Reporting: updating METRICS.md ==="
   python3 scripts/update_metrics.py \
     --commit-id "$REPORT_COMMIT_ID" \
-    --usb-resolution "$REPORT_USB_RESOLUTION" \
+    --viewport-resolution "$REPORT_VIEWPORT_RESOLUTION" \
+    --frame-resolution "$REPORT_FRAME_RESOLUTION" \
     --fps "$REPORT_FPS" \
     --frame-pacing-cv "$REPORT_FRAME_PACING_CV" \
     --pipeline-median-ms "$REPORT_PIPELINE_MEDIAN" \

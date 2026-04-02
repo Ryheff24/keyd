@@ -25,8 +25,10 @@ class Entry:
     date: str
     time: str
     commit_id: str
-    usb_width: int
-    usb_height: int
+    viewport_width: int
+    viewport_height: int
+    frame_width: int
+    frame_height: int
     fps: float
     frame_pacing_cv: float | None
     pipeline_median_ms: float
@@ -73,7 +75,7 @@ def run_git(*args: str) -> str:
 def parse_resolution(value: str) -> tuple[int, int]:
     match = re.fullmatch(r"(\d+)x(\d+)", value.strip())
     if not match:
-        fail(f"USB resolution must be WIDTHxHEIGHT, got {value!r}")
+        fail(f"resolution must be WIDTHxHEIGHT, got {value!r}")
     return int(match.group(1)), int(match.group(2))
 
 
@@ -155,28 +157,44 @@ def parse_changelog_entries(text: str) -> list[Entry]:
         if line.startswith("| Date ") or line.startswith("|------"):
             continue
         cells = [cell.strip() for cell in line.strip().split("|")[1:-1]]
-        if len(cells) != 12:
-            fail(f"expected 12 changelog columns, found {len(cells)} in line: {line}")
-
-        usb_width, usb_height = parse_resolution(cells[3].strip("`"))
-        fps = float(cells[4].strip("`").removesuffix(" fps"))
-        frame_pacing_cv = parse_optional_float(cells[5].strip("`"))
-        pipeline_median_ms, pipeline_p95_ms, pipeline_avg_ms = parse_compound_latency(
-            cells[6].strip("`")
-        )
-        g2g_median_ms, g2g_p95_ms, g2g_avg_ms = parse_compound_latency(cells[7].strip("`"))
-        heavy_fps, heavy_median_ms, heavy_p95_ms = parse_heavy_load(cells[8].strip("`"))
-        security_rejection = int(cells[9].strip("`"))
-        overall_passed, overall_total = parse_overall(cells[10].strip("`"))
-        notes = cells[11]
+        if len(cells) == 12:
+            viewport_width, viewport_height = parse_resolution(cells[3].strip("`"))
+            frame_width, frame_height = viewport_width, viewport_height
+            fps = float(cells[4].strip("`").removesuffix(" fps"))
+            frame_pacing_cv = parse_optional_float(cells[5].strip("`"))
+            pipeline_median_ms, pipeline_p95_ms, pipeline_avg_ms = parse_compound_latency(
+                cells[6].strip("`")
+            )
+            g2g_median_ms, g2g_p95_ms, g2g_avg_ms = parse_compound_latency(cells[7].strip("`"))
+            heavy_fps, heavy_median_ms, heavy_p95_ms = parse_heavy_load(cells[8].strip("`"))
+            security_rejection = int(cells[9].strip("`"))
+            overall_passed, overall_total = parse_overall(cells[10].strip("`"))
+            notes = cells[11]
+        elif len(cells) == 13:
+            viewport_width, viewport_height = parse_resolution(cells[3].strip("`"))
+            frame_width, frame_height = parse_resolution(cells[4].strip("`"))
+            fps = float(cells[5].strip("`").removesuffix(" fps"))
+            frame_pacing_cv = parse_optional_float(cells[6].strip("`"))
+            pipeline_median_ms, pipeline_p95_ms, pipeline_avg_ms = parse_compound_latency(
+                cells[7].strip("`")
+            )
+            g2g_median_ms, g2g_p95_ms, g2g_avg_ms = parse_compound_latency(cells[8].strip("`"))
+            heavy_fps, heavy_median_ms, heavy_p95_ms = parse_heavy_load(cells[9].strip("`"))
+            security_rejection = int(cells[10].strip("`"))
+            overall_passed, overall_total = parse_overall(cells[11].strip("`"))
+            notes = cells[12]
+        else:
+            fail(f"expected 12 or 13 changelog columns, found {len(cells)} in line: {line}")
 
         entries.append(
             Entry(
                 date=cells[0],
                 time=cells[1],
                 commit_id=cells[2].strip("`"),
-                usb_width=usb_width,
-                usb_height=usb_height,
+                viewport_width=viewport_width,
+                viewport_height=viewport_height,
+                frame_width=frame_width,
+                frame_height=frame_height,
                 fps=fps,
                 frame_pacing_cv=frame_pacing_cv,
                 pipeline_median_ms=pipeline_median_ms,
@@ -264,8 +282,10 @@ def parse_goal_pct(cell: str) -> float:
 
 
 METRICS: list[MetricDef] = [
-    MetricDef("USB resolution width", lambda e: e.usb_width, 2752, format_px, "eq", parse_goal_px),
-    MetricDef("USB resolution height", lambda e: e.usb_height, 1786, format_px, "eq", parse_goal_px),
+    MetricDef("Viewport width", lambda e: e.viewport_width, 2752, format_px, "eq", parse_goal_px),
+    MetricDef("Viewport height", lambda e: e.viewport_height, 1786, format_px, "eq", parse_goal_px),
+    MetricDef("Delivered frame width", lambda e: e.frame_width, 2752, format_px, "eq", parse_goal_px),
+    MetricDef("Delivered frame height", lambda e: e.frame_height, 1786, format_px, "eq", parse_goal_px),
     MetricDef("FPS", lambda e: e.fps, 60.0, format_fps, "max", parse_goal_fps),
     MetricDef(
         "Frame pacing CV",
@@ -401,7 +421,8 @@ def render_summary(entries: list[Entry], goals: dict[str, float]) -> list[str]:
 
 
 def render_entry(entry: Entry) -> str:
-    resolution = f"`{entry.usb_width}x{entry.usb_height}`"
+    viewport = f"`{entry.viewport_width}x{entry.viewport_height}`"
+    frame = f"`{entry.frame_width}x{entry.frame_height}`"
     fps = f"`{entry.fps:.1f} fps`"
     frame_pacing = "`—`" if entry.frame_pacing_cv is None else f"`{entry.frame_pacing_cv:.3f}`"
     pipeline = (
@@ -426,7 +447,7 @@ def render_entry(entry: Entry) -> str:
     overall = f"`{entry.overall_passed}/{entry.overall_total}`"
     note_cell = entry.notes
     return (
-        f"| {entry.date} | {entry.time} | `{entry.commit_id}` | {resolution} | {fps} | "
+        f"| {entry.date} | {entry.time} | `{entry.commit_id}` | {viewport} | {frame} | {fps} | "
         f"{frame_pacing} | {pipeline} | {g2g} | {heavy} | {security} | {overall} | {note_cell} |"
     )
 
@@ -435,8 +456,8 @@ def render_changelog(entries: list[Entry]) -> list[str]:
     lines = [
         "## Changelog",
         "",
-        "| Date | Time | Commit ID | USB resolution | FPS | Frame pacing | Pipeline latency | Glass-to-glass latency | Heavy load | Security | Overall | Notes |",
-        "|------|------|-----------|----------------|-----|--------------|------------------|------------------------|------------|----------|---------|-------|",
+        "| Date | Time | Commit ID | Viewport | Delivered frame | FPS | Frame pacing | Pipeline latency | Glass-to-glass latency | Heavy load | Security | Overall | Notes |",
+        "|------|------|-----------|----------|-----------------|-----|--------------|------------------|------------------------|------------|----------|---------|-------|",
     ]
     lines.extend(render_entry(entry) for entry in entries)
     return lines
@@ -467,7 +488,8 @@ def render_file(entries: list[Entry], goals: dict[str, float]) -> str:
 
 def build_entry_from_args(args: argparse.Namespace) -> Entry:
     commit_id = canonical_commit_id(args.commit_id)
-    usb_width, usb_height = parse_resolution(args.usb_resolution)
+    viewport_width, viewport_height = parse_resolution(args.viewport_resolution)
+    frame_width, frame_height = parse_resolution(args.frame_resolution)
     overall_passed, overall_total = parse_overall(args.overall)
     now = datetime.now().astimezone()
     date = args.date or now.strftime("%Y-%m-%d")
@@ -477,8 +499,10 @@ def build_entry_from_args(args: argparse.Namespace) -> Entry:
         date=date,
         time=time,
         commit_id=commit_id,
-        usb_width=usb_width,
-        usb_height=usb_height,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+        frame_width=frame_width,
+        frame_height=frame_height,
         fps=args.fps,
         frame_pacing_cv=args.frame_pacing_cv,
         pipeline_median_ms=args.pipeline_median_ms,
@@ -508,7 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date", help="row date in YYYY-MM-DD")
     parser.add_argument("--time", help="row time string, for example '15:46:35 EDT'")
     parser.add_argument("--commit-id", help="git commit ID for this metrics row")
-    parser.add_argument("--usb-resolution", help="USB resolution as WIDTHxHEIGHT")
+    parser.add_argument("--viewport-resolution", help="requested viewport resolution as WIDTHxHEIGHT")
+    parser.add_argument("--frame-resolution", help="delivered frame resolution as WIDTHxHEIGHT")
     parser.add_argument("--fps", type=float, help="FPS value")
     parser.add_argument("--frame-pacing-cv", type=float, help="frame pacing coefficient of variation")
     parser.add_argument("--pipeline-median-ms", type=float, help="pipeline latency median in ms")
@@ -529,7 +554,8 @@ def build_parser() -> argparse.ArgumentParser:
 def require_fields(args: argparse.Namespace) -> None:
     required = [
         "commit_id",
-        "usb_resolution",
+        "viewport_resolution",
+        "frame_resolution",
         "fps",
         "frame_pacing_cv",
         "pipeline_median_ms",
