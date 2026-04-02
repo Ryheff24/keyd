@@ -53,6 +53,10 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
+static const int kWirelessHEVCFPS = 30;
+static const int kWirelessHEVCBitrate = 12000000; /* 12 Mbps */
+static const NSUInteger kWirelessLargeFrameChunkThreshold = 96;
+static const NSUInteger kWirelessMaxQueuedChunks = 192;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -982,11 +986,38 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             }
         }];
     } else if (_wirelessTransport.isConnected) {
-        /* WiFi: HEVC encoder rate-limits via pendingFrameCount.
-         * WirelessTransport's pacing queue spaces UDP chunks.
-         * WiFi latency (~400ms median) is higher than USB due to
-         * pacing queue depth — needs adaptive pacing for improvement. */
+        /* WiFi: avoid building multi-second DTLS pacing debt.
+         * Oversized HEVC frames can expand into hundreds of 1400-byte chunks.
+         * Send those frames over TCP, and drop smaller frames if the paced UDP
+         * queue is already too deep to preserve smoothness. */
         WirelessTransport *transport = _wirelessTransport;
+        size_t maxChunkPayload = KEYDRD_MTU_WIFI - sizeof(MediaFrameHeader);
+        NSUInteger chunkCount = (payloadLen + maxChunkPayload - 1) / maxChunkPayload;
+        NSUInteger queuedChunks = transport.queuedMediaChunkCount;
+
+        if (chunkCount > kWirelessLargeFrameChunkThreshold) {
+            static int tcpFallbackCount = 0;
+            tcpFallbackCount++;
+            if (tcpFallbackCount <= 10 || tcpFallbackCount % 100 == 0) {
+                os_log(sLog, "WiFi large-frame TCP fallback: seq=%u chunks=%lu bytes=%zu queued=%lu",
+                       originalHeader->seq, (unsigned long)chunkCount, payloadLen,
+                       (unsigned long)queuedChunks);
+            }
+            [transport sendMediaFrameViaTCP:data length:len];
+            return;
+        }
+
+        if (queuedChunks + chunkCount > kWirelessMaxQueuedChunks) {
+            static int wifiDropCount = 0;
+            wifiDropCount++;
+            if (wifiDropCount <= 10 || wifiDropCount % 100 == 0) {
+                os_log(sLog, "WiFi pacing backpressure: dropped frame seq=%u chunks=%lu queued=%lu totalDropped=%d",
+                       originalHeader->seq, (unsigned long)chunkCount,
+                       (unsigned long)queuedChunks, wifiDropCount);
+            }
+            return;
+        }
+
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
             [transport sendMediaFrame:chunk length:chunkLen];
@@ -1322,24 +1353,28 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
      * At 40Mbps it produces 15-30Mbps actual = good text quality + fast encode.
      * Quality-based (0.85-0.95) was tried but makes encoder work much harder
      * per frame (~40ms vs ~20ms), causing stutter on complex content.
-     * WiFi: bitrate-based at 20Mbps (bandwidth constrained). */
+     * WiFi: use a lower, steadier operating point. 120 Hz / 20 Mbps produced
+     * 300-800 KB frames and overwhelmed the paced DTLS path. */
     int bitrate;
     float quality;
+    int fps;
     if (_usbTransport.isConnected) {
         bitrate = 40000000; /* 40 Mbps — realistic target, not undershooting */
         quality = 0.0f;     /* bitrate-based, faster than quality-based */
+        fps = 120;
     } else {
-        bitrate = 20000000;
+        bitrate = kWirelessHEVCBitrate;
         quality = 0.0f;     /* bitrate-based */
+        fps = kWirelessHEVCFPS;
     }
 
-    os_log(sLog, "Starting HEVC encoder: %ux%u @120fps bitrate=%dMbps (capture: %ux%u, viewport: %ux%u)",
-           encodeWidth, encodeHeight, bitrate / 1000000,
+    os_log(sLog, "Starting HEVC encoder: %ux%u @%dfps bitrate=%dMbps (capture: %ux%u, viewport: %ux%u)",
+           encodeWidth, encodeHeight, fps, bitrate / 1000000,
            _captureWidth, _captureHeight, _viewportWidth, _viewportHeight);
 
     [_hevcEncoder startWithWidth:(int)encodeWidth
                           height:(int)encodeHeight
-                             fps:120
+                             fps:fps
                          bitrate:bitrate
                          quality:quality];
 

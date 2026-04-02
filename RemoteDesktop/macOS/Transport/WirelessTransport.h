@@ -50,6 +50,9 @@ NS_ASSUME_NONNULL_BEGIN
  *  Parameters: lossRate (0.0-1.0), framesDelivered, framesLost. */
 @property (nonatomic, copy, nullable) void (^onCongestionStats)(float lossRate, int framesDelivered, int framesLost);
 
+/** Number of media chunks currently queued in the wireless pacing path. */
+@property (nonatomic, readonly) NSUInteger queuedMediaChunkCount;
+
 /**
  * Start advertising the Bonjour service and listening for connections.
  * Enables peer-to-peer (AWDL) discovery.

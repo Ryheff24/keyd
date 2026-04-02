@@ -4,6 +4,7 @@
 #import <os/log.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <stdatomic.h>
 #include <mach/mach_time.h>
 
 static os_log_t wireless_log(void) {
@@ -23,6 +24,8 @@ static const char *kInputPortStr = "14568";
     dispatch_queue_t _sendPacingQueue;     // serial queue for paced UDP sends
     uint64_t _pacingIntervalTicks;         // mach absolute time ticks between chunk sends
     uint64_t _nextSendTime;               // next allowed send time (mach absolute time)
+    atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
+    atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
 }
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t bonjourListener;
@@ -49,6 +52,8 @@ static const char *kInputPortStr = "14568";
         mach_timebase_info(&timebase);
         _pacingIntervalTicks = (uint64_t)(560000ULL * timebase.denom / timebase.numer);
         _nextSendTime = 0;
+        atomic_init(&_queuedMediaChunks, 0);
+        atomic_init(&_sendGeneration, 1);
     }
     return self;
 }
@@ -322,6 +327,8 @@ static const char *kInputPortStr = "14568";
     if (!copy) return;
     memcpy(copy, data, len);
     size_t copyLen = len;
+    uint64_t generation = atomic_load_explicit(&_sendGeneration, memory_order_relaxed);
+    atomic_fetch_add_explicit(&_queuedMediaChunks, 1, memory_order_relaxed);
 
     /* Pace sends on a dedicated serial queue.
      * Without pacing, a single keyframe (~100KB = 73 chunks) gets blasted
@@ -329,6 +336,13 @@ static const char *kInputPortStr = "14568";
      * buffers and causing burst packet loss. We space chunk sends by
      * _pacingIntervalTicks (~0.56ms at 20 Mbps for 1400-byte chunks). */
     dispatch_async(_sendPacingQueue, ^{
+        if (generation != atomic_load_explicit(&self->_sendGeneration, memory_order_relaxed) ||
+            conn != self->_mediaConnection) {
+            atomic_fetch_sub_explicit(&self->_queuedMediaChunks, 1, memory_order_relaxed);
+            free(copy);
+            return;
+        }
+
         /* Wait until our scheduled send time */
         uint64_t now = mach_absolute_time();
         if (self->_nextSendTime > now) {
@@ -345,6 +359,7 @@ static const char *kInputPortStr = "14568";
          * is_complete=true is required (false gives "Operation not supported"). */
         nw_connection_send(conn, ddata, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                            true, ^(nw_error_t _Nullable error) {
+            atomic_fetch_sub_explicit(&self->_queuedMediaChunks, 1, memory_order_relaxed);
             if (error) {
                 os_log_error(wireless_log(), "Wireless media send error: %{public}@", error);
             }
@@ -360,6 +375,11 @@ static const char *kInputPortStr = "14568";
 
 - (void)resetSendPacing {
     _nextSendTime = 0;
+    atomic_fetch_add_explicit(&_sendGeneration, 1, memory_order_relaxed);
+}
+
+- (NSUInteger)queuedMediaChunkCount {
+    return (NSUInteger)atomic_load_explicit(&_queuedMediaChunks, memory_order_relaxed);
 }
 
 - (void)handleCongestionFeedback:(float)lossRate {
@@ -426,11 +446,20 @@ static const char *kInputPortStr = "14568";
 - (void)handleNewConnection:(nw_connection_t)connection {
     os_log(wireless_log(), "TLS wireless connection accepted from iPad");
 
-    /* Always accept the new connection and replace any existing one.
-     * The iPad may reconnect after a transport rotation test, and the old
-     * connection may not have been cleaned up yet on our side. */
+    /* Ignore duplicate candidates while the current connection is still
+     * handshaking. Replacing an in-flight candidate causes the iPad to see
+     * EOF before the first TLS session becomes ready.
+     *
+     * Once a session is fully connected, a later accepted connection is
+     * treated as a genuine reconnect and replaces the active one. */
     if (_inputConnection) {
-        os_log(wireless_log(), "Replacing existing connection (was connected=%d)", _isConnected);
+        if (!_isConnected) {
+            os_log(wireless_log(), "Ignoring duplicate wireless candidate while current connection is still preparing");
+            nw_connection_cancel(connection);
+            return;
+        }
+
+        os_log(wireless_log(), "Replacing existing connected wireless session");
         nw_connection_cancel(_inputConnection);
         _isConnected = NO;
     }
@@ -641,6 +670,7 @@ static const char *kInputPortStr = "14568";
 #pragma mark - Private: Teardown
 
 - (void)tearDownConnections {
+    [self resetSendPacing];
     if (_mediaListener) {
         nw_listener_cancel(_mediaListener);
         _mediaListener = nil;
