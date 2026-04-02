@@ -9,6 +9,17 @@ import os.log
 /// and max-concurrent-sequence eviction.
 final class UDPReassembler {
 
+    struct StatsSnapshot {
+        let framesDelivered: Int
+        let framesEvicted: Int
+        let framesPurged: Int
+        let chunksReceived: Int
+        let pendingFrames: Int
+        let outOfOrderBuffered: Int
+        let hasDeliveredFirstFrame: Bool
+        let lastDeliveredSeq: UInt16
+    }
+
     // MARK: - Configuration
 
     /// Maximum number of concurrent sequences being reassembled.
@@ -109,10 +120,12 @@ final class UDPReassembler {
 
         chunksReceived += 1
 
-        // Single-chunk frame (no chunking needed) -- pass through directly
+        // Single-chunk frame (no chunking needed).
+        // Still route through the in-order delivery path so TCP fallback,
+        // one-chunk UDP frames, and multi-chunk UDP frames share the same
+        // sequence continuity guarantees.
         if chunkTotal <= 1 {
-            framesDelivered += 1
-            onFrameReassembled?(data)
+            deliverFrameData(seq: seq, frameData: data)
             return
         }
 
@@ -160,6 +173,19 @@ final class UDPReassembler {
         if pending.isComplete {
             deliverCompleteFrame(seq: seq, pending: pending)
         }
+    }
+
+    func statsSnapshot() -> StatsSnapshot {
+        StatsSnapshot(
+            framesDelivered: framesDelivered,
+            framesEvicted: framesEvicted,
+            framesPurged: framesPurged,
+            chunksReceived: chunksReceived,
+            pendingFrames: pendingFrames.count,
+            outOfOrderBuffered: outOfOrderBuffer.count,
+            hasDeliveredFirstFrame: hasDeliveredFirstFrame,
+            lastDeliveredSeq: lastDeliveredSeq
+        )
     }
 
     // MARK: - Private
@@ -214,8 +240,12 @@ final class UDPReassembler {
         }
 
         guard let frameData = buildFrameData(seq: seq, pending: pending) else { return }
+        deliverFrameData(seq: seq, frameData: frameData)
+    }
 
-        // In-order delivery logic
+    /// Deliver a complete frame while preserving sequence continuity across
+    /// all media paths, including direct single-chunk and TCP-fallback frames.
+    private func deliverFrameData(seq: UInt16, frameData: Data) {
         if !hasDeliveredFirstFrame {
             // First frame ever — deliver immediately and set baseline
             hasDeliveredFirstFrame = true

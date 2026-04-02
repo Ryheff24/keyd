@@ -112,6 +112,19 @@ final class DeviceTestRunner {
     private var throughputFrames: Int = 0
     private static let throughputDuration: TimeInterval = 10.0
 
+    // Continuous stream telemetry across the full test run
+    private var streamTelemetryTimer: Timer?
+    private var streamTelemetryStartTime: CFAbsoluteTime = 0
+    private var observedFrameCount = 0
+    private var keyframesObserved = 0
+    private var hevcDecodeFailures = 0
+    private var lastTelemetryObservedCount = 0
+    private var lastTelemetryRenderedCount = 0
+    private var lastTelemetryKeyframeCount = 0
+    private var lastTelemetryDecodeFailureCount = 0
+    private var lastTelemetryPipelineCount = 0
+    private var lastTelemetryGlassCount = 0
+
     // Transport type assertion
     private var transportAssertionComplete = false
 
@@ -227,8 +240,10 @@ final class DeviceTestRunner {
     /// Run the full E2E test suite. Called from SessionManager after start().
     func runAllTests() {
         testStartTime = CFAbsoluteTimeGetCurrent()
+        streamTelemetryStartTime = testStartTime
         print("[TEST] START: on-device E2E test suite")
         print("[TEST] INFO: device=iPad, timestamp=\(ISO8601DateFormatter().string(from: Date()))")
+        startStreamTelemetry()
 
         // Set overall timeout
         overallTimer = Timer.scheduledTimer(withTimeInterval: Self.overallTimeout, repeats: false) { [weak self] _ in
@@ -239,6 +254,20 @@ final class DeviceTestRunner {
         // Test 4 (Bonjour discovery) runs after pairing completes, when the Mac
         // starts advertising _keydrd._tcp via startTransportMonitoring.
         // Tests 5+ are driven by SessionManager state change callbacks.
+    }
+
+    func noteReceivedFrameHeader(_ header: MediaFrameHeader) {
+        observedFrameCount += 1
+        if header.isKeyframe {
+            keyframesObserved += 1
+        }
+    }
+
+    func noteHEVCDecodeFailure(seq: UInt16) {
+        hevcDecodeFailures += 1
+        if hevcDecodeFailures <= 10 || hevcDecodeFailures % 25 == 0 {
+            print("[CONSOLE] STREAM-TELEMETRY decode-failure seq=\(seq) total=\(hevcDecodeFailures)")
+        }
     }
 
     /// Run the Bonjour discovery test. Called after pairing completes and
@@ -1836,6 +1865,72 @@ final class DeviceTestRunner {
         }
     }
 
+    // MARK: - Continuous Stream Telemetry
+
+    private func startStreamTelemetry() {
+        DispatchQueue.main.async {
+            self.streamTelemetryTimer?.invalidate()
+            let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.logStreamTelemetryTick()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.streamTelemetryTimer = timer
+        }
+    }
+
+    private func stopStreamTelemetry() {
+        streamTelemetryTimer?.invalidate()
+        streamTelemetryTimer = nil
+    }
+
+    private func logStreamTelemetryTick() {
+        guard let sm = sessionManager else { return }
+        let elapsed = CFAbsoluteTimeGetCurrent() - streamTelemetryStartTime
+
+        let observed = observedFrameCount
+        let rendered = totalRenderedFrames
+        let keyframes = keyframesObserved
+        let decodeFailures = hevcDecodeFailures
+        let observedDelta = observed - lastTelemetryObservedCount
+        let renderedDelta = rendered - lastTelemetryRenderedCount
+        let keyframeDelta = keyframes - lastTelemetryKeyframeCount
+        let decodeFailureDelta = decodeFailures - lastTelemetryDecodeFailureCount
+
+        let pipelineWindow = Array(pipelineLatenciesUs.suffix(from: min(lastTelemetryPipelineCount, pipelineLatenciesUs.count)))
+        let glassWindow = Array(glassToGlassLatenciesUs.suffix(from: min(lastTelemetryGlassCount, glassToGlassLatenciesUs.count)))
+        lastTelemetryObservedCount = observed
+        lastTelemetryRenderedCount = rendered
+        lastTelemetryKeyframeCount = keyframes
+        lastTelemetryDecodeFailureCount = decodeFailures
+        lastTelemetryPipelineCount = pipelineLatenciesUs.count
+        lastTelemetryGlassCount = glassToGlassLatenciesUs.count
+
+        let transport: String
+        if sm.usbTransport.isConnected {
+            transport = "usb"
+        } else if sm.wirelessTransport.isConnected {
+            transport = sm.wirelessTransport.isAWDL ? "awdl" : "wifi"
+        } else {
+            transport = "none"
+        }
+
+        let pipelineSummary = latencyWindowSummary(window: pipelineWindow)
+        let glassSummary = latencyWindowSummary(window: glassWindow)
+        let udpStats = sm.udpReassembler.statsSnapshot()
+
+        print("[CONSOLE] STREAM-TELEMETRY t=\(String(format: "%.1f", elapsed))s transport=\(transport) state=\(sm.state.rawValue) observed=\(observedDelta)fps rendered=\(renderedDelta)fps keyframes+\(keyframeDelta) decodeFail+\(decodeFailureDelta) pipeline=\(pipelineSummary) glass=\(glassSummary) reasm[pending=\(udpStats.pendingFrames) ooo=\(udpStats.outOfOrderBuffered) delivered=\(udpStats.framesDelivered) evicted=\(udpStats.framesEvicted) purged=\(udpStats.framesPurged) lastSeq=\(udpStats.lastDeliveredSeq)]")
+    }
+
+    private func latencyWindowSummary(window: [Int64]) -> String {
+        guard !window.isEmpty else { return "n/a" }
+        let sorted = window.sorted()
+        let medianMs = sorted[sorted.count / 2] / 1000
+        let p95Idx = min(Int(Double(sorted.count) * 0.95), sorted.count - 1)
+        let p95Ms = sorted[p95Idx] / 1000
+        let maxMs = sorted.last! / 1000
+        return "median=\(medianMs)ms p95=\(p95Ms)ms max=\(maxMs)ms n=\(sorted.count)"
+    }
+
     // MARK: - Results
 
     private func qrPayloadHost() -> String? {
@@ -1859,6 +1954,7 @@ final class DeviceTestRunner {
     private func finishTests() {
         overallTimer?.invalidate()
         overallTimer = nil
+        stopStreamTelemetry()
 
         let elapsed = CFAbsoluteTimeGetCurrent() - testStartTime
         let passCount = testResults.filter { $0.passed }.count

@@ -492,6 +492,7 @@ final class SessionManager {
         let payload = data.subdata(in: MediaFrameHeader.size..<data.count)
 
         frameRecvCount += 1
+        testRunner?.noteReceivedFrameHeader(header)
 
         // Pipeline latency probe: capture → iPad receive (before decode)
         if header.tsUs > 0 {
@@ -516,6 +517,7 @@ final class SessionManager {
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
             guard let pixelBuffer = hevcDecoder.decode(data: payload, header: header) else {
+                testRunner?.noteHEVCDecodeFailure(seq: header.seq)
                 if frameRecvCount <= 5 {
                     print("[CONSOLE] handleReceivedFrame: HEVC decode FAILED for seq=\(header.seq)")
                 }
@@ -672,11 +674,13 @@ final class SessionManager {
             return
         }
 
-        // Check if this is a media frame sent over TCP (fallback for frames too large
-        // for UDP chunking, e.g. keyframes at native resolution exceeding 255 chunks)
+        // Check if this is a media frame sent over TCP (fallback for large HEVC
+        // frames) or over UDP. Route all HEVC frames through the reassembler so
+        // single-chunk, multi-chunk, and TCP-fallback delivery all share one
+        // sequencing path.
         if data.count >= MediaFrameHeader.size,
            let mediaHeader = MediaFrameHeader.parse(from: data) {
-            if mediaHeader.chunkTotal > 1 {
+            if mediaHeader.isHEVC {
                 udpReassembler.processChunk(data)
             } else {
                 handleReceivedFrame(data)
