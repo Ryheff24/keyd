@@ -53,6 +53,8 @@ struct QRPayload {
 
 struct PairingResponsePayload {
     let publicKey: Data
+    let clientCertificateDER: Data?
+    let clientPrivateKeyRepresentation: Data?
     let clientIdentityPKCS12: Data?
     let clientCertFingerprint: Data?
 
@@ -63,19 +65,31 @@ struct PairingResponsePayload {
             return nil
         }
 
+        var clientCertificateDER: Data?
+        var clientPrivateKeyRepresentation: Data?
         var clientIdentityPKCS12: Data?
         var clientCertFingerprint: Data?
-        if let clientIdentityBase64 = json["clientIdentityPKCS12"] as? String,
-           let clientFingerprintHex = json["clientCertFingerprint"] as? String,
-           let pkcs12 = Data(base64Encoded: clientIdentityBase64),
+        if let clientFingerprintHex = json["clientCertFingerprint"] as? String,
            let fingerprint = Data(hexString: clientFingerprintHex),
            fingerprint.count == 32 {
-            clientIdentityPKCS12 = pkcs12
             clientCertFingerprint = fingerprint
+        }
+        if let certBase64 = json["clientCertificateDER"] as? String,
+           let keyBase64 = json["clientPrivateKeyRepresentation"] as? String,
+           let certDER = Data(base64Encoded: certBase64),
+           let privateKey = Data(base64Encoded: keyBase64) {
+            clientCertificateDER = certDER
+            clientPrivateKeyRepresentation = privateKey
+        }
+        if let clientIdentityBase64 = json["clientIdentityPKCS12"] as? String,
+           let pkcs12 = Data(base64Encoded: clientIdentityBase64) {
+            clientIdentityPKCS12 = pkcs12
         }
 
         return PairingResponsePayload(
             publicKey: publicKey,
+            clientCertificateDER: clientCertificateDER,
+            clientPrivateKeyRepresentation: clientPrivateKeyRepresentation,
             clientIdentityPKCS12: clientIdentityPKCS12,
             clientCertFingerprint: clientCertFingerprint
         )
@@ -146,6 +160,8 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     private var captureSession: AVCaptureSession?
     private let keychainService = "com.ryheff.keyd.remote.app"
     private let clientIdentityPKCS12Account = "client-identity-p12"
+    private let clientCertificateDERAccount = "client-cert-der"
+    private let clientPrivateKeyRepresentationAccount = "client-private-key"
     private let provisionedClientIdentityPassphrase = "keydrd-client"
 
     /// Guard against re-entrant metadataOutput calls while pairing is in progress.
@@ -279,19 +295,54 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     }
 
     private func importProvisionedClientIdentity(from pkcs12Data: Data) -> SecIdentity? {
-        let options: [CFString: Any] = [
-            kSecImportExportPassphrase: provisionedClientIdentityPassphrase,
+        var status: OSStatus = errSecSuccess
+        guard let identity = KeydPKCS12ImportCopyIdentity(
+            pkcs12Data,
+            provisionedClientIdentityPassphrase,
+            &status
+        ) else {
+            log.error("Failed to import provisioned client identity during pairing: \(status), bytes=\(pkcs12Data.count)")
+            print("[CONSOLE] QRPairing: client identity import FAILED: status=\(status), bytes=\(pkcs12Data.count)")
+            return nil
+        }
+        if status != errSecSuccess {
+            log.warning("SecPKCS12Import returned status \(status), but an identity was still provided")
+            print("[CONSOLE] QRPairing: client identity import returned status=\(status) but produced an identity")
+        }
+        return identity
+    }
+
+    private func importProvisionedClientIdentity(certificateDER: Data,
+                                                 privateKeyRepresentation: Data) -> SecIdentity? {
+        let keyAttrs: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits: 256,
         ]
-        var items: CFArray?
-        let status = SecPKCS12Import(pkcs12Data as CFData, options as CFDictionary, &items)
-        guard status == errSecSuccess,
-              let importedItems = items as? [[String: Any]],
-              let firstItem = importedItems.first,
-              let identityRef = firstItem[kSecImportItemIdentity as String] else {
+        var keyError: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateWithData(
+            privateKeyRepresentation as CFData,
+            keyAttrs as CFDictionary,
+            &keyError
+        ) else {
+            log.error("Failed to import provisioned client private key: \(String(describing: keyError?.takeRetainedValue()))")
+            print("[CONSOLE] QRPairing: client private key import FAILED")
             return nil
         }
 
-        return (identityRef as! SecIdentity)
+        guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData) else {
+            log.error("Failed to import provisioned client certificate")
+            print("[CONSOLE] QRPairing: client certificate import FAILED")
+            return nil
+        }
+
+        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
+            log.error("Failed to assemble provisioned client identity from certificate + private key")
+            print("[CONSOLE] QRPairing: client identity assembly FAILED")
+            return nil
+        }
+
+        return identity
     }
 
     private func validateAndStoreProvisionedClientIdentity(_ pkcs12Data: Data) -> Bool {
@@ -299,6 +350,29 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             return false
         }
         saveToKeychain(data: pkcs12Data, account: clientIdentityPKCS12Account)
+        return true
+    }
+
+    private func validateAndStoreProvisionedClientIdentity(certificateDER: Data,
+                                                           privateKeyRepresentation: Data,
+                                                           expectedFingerprint: Data) -> Bool {
+        guard importProvisionedClientIdentity(
+            certificateDER: certificateDER,
+            privateKeyRepresentation: privateKeyRepresentation
+        ) != nil else {
+            return false
+        }
+
+        let actualFingerprint = Data(SHA256.hash(data: certificateDER))
+        guard actualFingerprint == expectedFingerprint else {
+            log.error("Provisioned client certificate fingerprint mismatch")
+            print("[CONSOLE] QRPairing: client certificate fingerprint MISMATCH")
+            return false
+        }
+
+        saveToKeychain(data: certificateDER, account: clientCertificateDERAccount)
+        saveToKeychain(data: privateKeyRepresentation, account: clientPrivateKeyRepresentationAccount)
+        deleteFromKeychain(account: clientIdentityPKCS12Account)
         return true
     }
 
@@ -519,7 +593,17 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 // Store in Keychain
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
-                if let clientPKCS12 = response.clientIdentityPKCS12 {
+                if let certDER = response.clientCertificateDER,
+                   let privateKey = response.clientPrivateKeyRepresentation,
+                   let fingerprint = response.clientCertFingerprint {
+                    if !self.validateAndStoreProvisionedClientIdentity(
+                        certificateDER: certDER,
+                        privateKeyRepresentation: privateKey,
+                        expectedFingerprint: fingerprint
+                    ) {
+                        print("[CONSOLE] QRPairing: client identity validation failed — continuing without mTLS")
+                    }
+                } else if let clientPKCS12 = response.clientIdentityPKCS12 {
                     if !self.validateAndStoreProvisionedClientIdentity(clientPKCS12) {
                         print("[CONSOLE] QRPairing: client identity validation failed — continuing without mTLS")
                     }
@@ -919,7 +1003,17 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 /* Step 5: Store shared secret + Mac cert fingerprint in Keychain */
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
-                if let clientPKCS12 = response.clientIdentityPKCS12 {
+                if let certDER = response.clientCertificateDER,
+                   let privateKey = response.clientPrivateKeyRepresentation,
+                   let fingerprint = response.clientCertFingerprint {
+                    if !self.validateAndStoreProvisionedClientIdentity(
+                        certificateDER: certDER,
+                        privateKeyRepresentation: privateKey,
+                        expectedFingerprint: fingerprint
+                    ) {
+                        self.log.warning("Client identity validation failed — continuing without mTLS")
+                    }
+                } else if let clientPKCS12 = response.clientIdentityPKCS12 {
                     if !self.validateAndStoreProvisionedClientIdentity(clientPKCS12) {
                         self.log.warning("Client identity validation failed — continuing without mTLS")
                     }
@@ -953,6 +1047,8 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         deleteFromKeychain(account: "pairing")
         deleteFromKeychain(account: "peer-cert-fingerprint")
         deleteFromKeychain(account: clientIdentityPKCS12Account)
+        deleteFromKeychain(account: clientCertificateDERAccount)
+        deleteFromKeychain(account: clientPrivateKeyRepresentationAccount)
         log.info("Pairing state cleared from Keychain")
     }
 

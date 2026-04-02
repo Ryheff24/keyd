@@ -140,11 +140,14 @@ static const char *kInputPortStr = "14568";
 - (nw_parameters_t)createSecureTCPParameters {
     __weak WirelessTransport *weakSelf = self;
     SecIdentityRef identity = _tlsIdentity;
+    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
+    BOOL requirePeerAuth = (storedFingerprint.length == CC_SHA256_DIGEST_LENGTH);
 
     nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t tls_options) {
             sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(tls_options);
             sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+            sec_protocol_options_set_peer_authentication_required(sec, requirePeerAuth);
 
             if (identity) {
                 sec_identity_t secIdentity = sec_identity_create(identity);
@@ -181,11 +184,14 @@ static const char *kInputPortStr = "14568";
 - (nw_parameters_t)createSecureUDPParameters {
     __weak WirelessTransport *weakSelf = self;
     SecIdentityRef identity = _tlsIdentity;
+    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
+    BOOL requirePeerAuth = (storedFingerprint.length == CC_SHA256_DIGEST_LENGTH);
 
     nw_parameters_t udpParams = nw_parameters_create_secure_udp(
         ^(nw_protocol_options_t dtls_options) {
             sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(dtls_options);
             sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+            sec_protocol_options_set_peer_authentication_required(sec, requirePeerAuth);
 
             if (identity) {
                 sec_identity_t secIdentity = sec_identity_create(identity);

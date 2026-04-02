@@ -27,6 +27,7 @@
 		B2000040000000000000000A /* HEVCDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000040000000000000000F /* HEVCDecoder.swift */; };
 		B2000041000000000000000A /* LZ4Decompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000041000000000000000F /* LZ4Decompressor.swift */; };
 		B2000050000000000000000A /* QRPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000050000000000000000F /* QRPairing.swift */; };
+		B2000051000000000000000A /* PKCS12ImportHelper.m in Sources */ = {isa = PBXBuildFile; fileRef = B2000051000000000000000F /* PKCS12ImportHelper.m */; };
 		B2000060000000000000000A /* HUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000060000000000000000F /* HUDView.swift */; };
 		B2000061000000000000000A /* HUDViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000061000000000000000F /* HUDViewModel.swift */; };
 		B2000062000000000000000A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000062000000000000000F /* ContentView.swift */; };
@@ -61,6 +62,8 @@
 		B2000040000000000000000F /* HEVCDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCDecoder.swift; sourceTree = "<group>"; };
 		B2000041000000000000000F /* LZ4Decompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LZ4Decompressor.swift; sourceTree = "<group>"; };
 		B2000050000000000000000F /* QRPairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRPairing.swift; sourceTree = "<group>"; };
+		B2000051000000000000000F /* PKCS12ImportHelper.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PKCS12ImportHelper.m; sourceTree = "<group>"; };
+		B2000052000000000000000F /* PKCS12ImportHelper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PKCS12ImportHelper.h; sourceTree = "<group>"; };
 		B2000060000000000000000F /* HUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDView.swift; sourceTree = "<group>"; };
 		B2000061000000000000000F /* HUDViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDViewModel.swift; sourceTree = "<group>"; };
 		B2000062000000000000000F /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -200,6 +203,8 @@
 			isa = PBXGroup;
 			children = (
 				B2000050000000000000000F /* QRPairing.swift */,
+				B2000052000000000000000F /* PKCS12ImportHelper.h */,
+				B2000051000000000000000F /* PKCS12ImportHelper.m */,
 			);
 			path = Pairing;
 			sourceTree = "<group>";
@@ -288,6 +293,7 @@
 				B2000040000000000000000A /* HEVCDecoder.swift in Sources */,
 				B2000041000000000000000A /* LZ4Decompressor.swift in Sources */,
 				B2000050000000000000000A /* QRPairing.swift in Sources */,
+				B2000051000000000000000A /* PKCS12ImportHelper.m in Sources */,
 				B2000060000000000000000A /* HUDView.swift in Sources */,
 				B2000061000000000000000A /* HUDViewModel.swift in Sources */,
 				B2000062000000000000000A /* ContentView.swift in Sources */,

@@ -51,6 +51,8 @@ final class WirelessTransport {
 
     private let keychainService = "com.ryheff.keyd.remote.app"
     private let clientIdentityPKCS12Account = "client-identity-p12"
+    private let clientCertificateDERAccount = "client-cert-der"
+    private let clientPrivateKeyRepresentationAccount = "client-private-key"
     private let provisionedClientIdentityPassphrase = "keydrd-client"
 
     // MARK: - Certificate Pinning
@@ -103,6 +105,49 @@ final class WirelessTransport {
     }
 
     private func loadProvisionedClientIdentity() -> SecIdentity? {
+        let certificateQuery: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: clientCertificateDERAccount,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        let privateKeyQuery: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: clientPrivateKeyRepresentationAccount,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+
+        var certificateResult: CFTypeRef?
+        var privateKeyResult: CFTypeRef?
+        if SecItemCopyMatching(certificateQuery as CFDictionary, &certificateResult) == errSecSuccess,
+           SecItemCopyMatching(privateKeyQuery as CFDictionary, &privateKeyResult) == errSecSuccess,
+           let certificateDER = certificateResult as? Data,
+           let privateKeyRepresentation = privateKeyResult as? Data {
+            let keyAttrs: [CFString: Any] = [
+                kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
+                kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+                kSecAttrKeySizeInBits: 256,
+            ]
+            var keyError: Unmanaged<CFError>?
+            guard let privateKey = SecKeyCreateWithData(
+                privateKeyRepresentation as CFData,
+                keyAttrs as CFDictionary,
+                &keyError
+            ) else {
+                log.error("Failed to import provisioned client private key: \(String(describing: keyError?.takeRetainedValue()))")
+                return nil
+            }
+            guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData),
+                  let identity = SecIdentityCreate(nil, certificate, privateKey) else {
+                log.error("Failed to assemble provisioned client identity from stored certificate + private key")
+                return nil
+            }
+            return identity
+        }
+
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: keychainService,
@@ -117,20 +162,20 @@ final class WirelessTransport {
             return nil
         }
 
-        let options: [CFString: Any] = [
-            kSecImportExportPassphrase: provisionedClientIdentityPassphrase,
-        ]
-        var items: CFArray?
-        let status = SecPKCS12Import(pkcs12Data as CFData, options as CFDictionary, &items)
-        guard status == errSecSuccess,
-              let importedItems = items as? [[String: Any]],
-              let firstItem = importedItems.first,
-              let identityRef = firstItem[kSecImportItemIdentity as String] else {
+        var status: OSStatus = errSecSuccess
+        guard let identity = KeydPKCS12ImportCopyIdentity(
+            pkcs12Data,
+            provisionedClientIdentityPassphrase,
+            &status
+        ) else {
             log.error("Failed to import provisioned client identity: \(status)")
             return nil
         }
+        if status != errSecSuccess {
+            log.warning("SecPKCS12Import returned status \(status), but an identity was still provided")
+        }
 
-        return (identityRef as! SecIdentity)
+        return identity
     }
 
     // MARK: - TLS/DTLS Parameter Configuration
@@ -377,8 +422,13 @@ final class WirelessTransport {
 
         let udpParams = createSecureUDPParameters()
 
-        // Bind to the same interface as the TCP connection
-        if let pathInterface = path.availableInterfaces.first {
+        // Bind the DTLS media path to the same interface class as the TCP path.
+        // `availableInterfaces.first` is unstable when both Wi-Fi and peer-to-peer
+        // are available, which can move media onto the wrong path.
+        let prefersAWDL = detectAWDL(connection: tcpConnection)
+        let requiredType: NWInterface.InterfaceType = prefersAWDL ? .other : .wifi
+        if let pathInterface = path.availableInterfaces.first(where: { $0.type == requiredType })
+            ?? path.availableInterfaces.first(where: { $0.type != .loopback }) {
             udpParams.requiredInterface = pathInterface
         }
 

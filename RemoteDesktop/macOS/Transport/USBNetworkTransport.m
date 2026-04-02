@@ -149,11 +149,14 @@ static const char *kInputPortStr = "14568";
 - (nw_parameters_t)createSecureTCPParameters {
     __weak USBNetworkTransport *weakSelf = self;
     SecIdentityRef identity = _tlsIdentity;
+    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
+    BOOL requirePeerAuth = (storedFingerprint.length == CC_SHA256_DIGEST_LENGTH);
 
     nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t tls_options) {
             sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(tls_options);
             sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+            sec_protocol_options_set_peer_authentication_required(sec, requirePeerAuth);
 
             /* Set server identity (Mac's self-signed cert) */
             if (identity) {
@@ -162,10 +165,6 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
-            /* mTLS: only require peer auth when a stored fingerprint exists.
-             * Without mTLS provisioning, accept any TLS client — the ECDH
-             * shared secret from pairing provides authentication. */
-
             /* Certificate verify: accept self-signed, pin if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
@@ -202,11 +201,14 @@ static const char *kInputPortStr = "14568";
 - (nw_parameters_t)createSecureUDPParameters {
     __weak USBNetworkTransport *weakSelf = self;
     SecIdentityRef identity = _tlsIdentity;
+    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
+    BOOL requirePeerAuth = (storedFingerprint.length == CC_SHA256_DIGEST_LENGTH);
 
     nw_parameters_t udpParams = nw_parameters_create_secure_udp(
         ^(nw_protocol_options_t dtls_options) {
             sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(dtls_options);
             sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
+            sec_protocol_options_set_peer_authentication_required(sec, requirePeerAuth);
 
             /* Set server identity */
             if (identity) {

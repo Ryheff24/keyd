@@ -3,4 +3,5 @@
 #include "lz4.h"
 #include "delta.h"
 #include "protocol.h"
+#include "PKCS12ImportHelper.h"
 #endif

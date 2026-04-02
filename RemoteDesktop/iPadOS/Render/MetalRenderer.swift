@@ -157,6 +157,9 @@ final class MetalRenderer: NSObject {
 
         // Prefer high frame rate for ProMotion 120Hz
         // CADisableMinimumFrameDuration=YES in Info.plist enables this
+        // Ask Core Animation to keep render lead time to a single frame to
+        // minimize display-link queuing latency during glass-to-glass tests.
+        link.preferredFrameLatency = 1
         link.preferredFrameRateRange = CAFrameRateRange(
             minimum: 30,
             maximum: 120,

@@ -35,7 +35,8 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 @property (nonatomic, readwrite, nullable) SecIdentityRef tlsIdentity;
 @property (nonatomic, nullable) SecKeyRef ecdhPrivateKey;
 @property (nonatomic, nullable) nw_listener_t pairingListener;
-@property (nonatomic, nullable) NSData *provisionedClientIdentityPKCS12;
+@property (nonatomic, nullable) NSData *provisionedClientCertificateDER;
+@property (nonatomic, nullable) NSData *provisionedClientPrivateKeyRepresentation;
 @property (nonatomic, nullable) NSData *provisionedClientFingerprint;
 @end
 
@@ -415,116 +416,61 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 }
 
 - (BOOL)ensureProvisionedClientIdentity {
-    if (_provisionedClientIdentityPKCS12.length > 0 && _provisionedClientFingerprint.length == CC_SHA256_DIGEST_LENGTH) {
+    if (_provisionedClientCertificateDER.length > 0 &&
+        _provisionedClientPrivateKeyRepresentation.length > 0 &&
+        _provisionedClientFingerprint.length == CC_SHA256_DIGEST_LENGTH) {
         return YES;
     }
 
-    NSString *clientDir = @"/tmp/keydrd-tls/client-provisioning";
-    NSString *keyPath = [clientDir stringByAppendingPathComponent:@"client-key.pem"];
-    NSString *certPath = [clientDir stringByAppendingPathComponent:@"client-cert.pem"];
-    NSString *p12Path = [clientDir stringByAppendingPathComponent:@"client-identity.p12"];
-    NSFileManager *fm = [NSFileManager defaultManager];
-
-    NSError *fsError = nil;
-    [fm removeItemAtPath:clientDir error:nil];
-    if (![fm createDirectoryAtPath:clientDir withIntermediateDirectories:YES attributes:nil error:&fsError]) {
-        os_log_error(pairing_log(), "Failed to create client provisioning dir: %{public}@",
-                     fsError.localizedDescription);
-        return NO;
-    }
-
-    NSError *taskError = nil;
-    BOOL generated = [self runTaskAtPath:@"/usr/bin/openssl"
-                                arguments:@[
-                                    @"req", @"-x509", @"-newkey", @"ec",
-                                    @"-pkeyopt", @"ec_paramgen_curve:P-256",
-                                    @"-keyout", keyPath,
-                                    @"-out", certPath,
-                                    @"-days", @"3650",
-                                    @"-nodes",
-                                    @"-subj", @"/CN=keydrd-client"
-                                ]
-                                   error:&taskError];
-    if (!generated) {
-        os_log_error(pairing_log(), "Failed to generate provisioned client cert: %{public}@",
-                     taskError.localizedDescription);
-        return NO;
-    }
-
-    generated = [self runTaskAtPath:@"/usr/bin/openssl"
-                           arguments:@[
-                               @"pkcs12", @"-export",
-                               @"-out", p12Path,
-                               @"-inkey", keyPath,
-                               @"-in", certPath,
-                               @"-passout", [NSString stringWithFormat:@"pass:%@", kProvisionedClientPKCS12Passphrase],
-                               @"-legacy"
-                           ]
-                              error:&taskError];
-    if (!generated) {
-        /* -legacy not supported (e.g. LibreSSL on macOS).
-         * Use explicit old algorithms that SecPKCS12Import can handle. */
-        NSMutableArray<NSString *> *retryArguments = [@[
-            @"pkcs12", @"-export",
-            @"-out", p12Path,
-            @"-inkey", keyPath,
-            @"-in", certPath,
-            @"-passout", [NSString stringWithFormat:@"pass:%@", kProvisionedClientPKCS12Passphrase],
-            @"-certpbe", @"PBE-SHA1-3DES",
-            @"-keypbe", @"PBE-SHA1-3DES",
-            @"-macalg", @"sha1"
-        ] mutableCopy];
-        generated = [self runTaskAtPath:@"/usr/bin/openssl" arguments:retryArguments error:&taskError];
-        if (!generated) {
-            os_log_error(pairing_log(), "Failed to package provisioned client identity: %{public}@",
-                         taskError.localizedDescription);
-            return NO;
-        }
-    }
-
-    NSData *pkcs12Data = [NSData dataWithContentsOfFile:p12Path];
-    [fm removeItemAtPath:keyPath error:nil];
-    [fm removeItemAtPath:certPath error:nil];
-    [fm removeItemAtPath:p12Path error:nil];
-    [fm removeItemAtPath:clientDir error:nil];
-
-    if (!pkcs12Data) {
-        os_log_error(pairing_log(), "Failed to read provisioned client identity package");
-        return NO;
-    }
-
-    NSDictionary *importOptions = @{
-        (__bridge id)kSecImportExportPassphrase: kProvisionedClientPKCS12Passphrase,
+    NSDictionary *attrs = @{
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecAttrKeySizeInBits: @256,
+        (__bridge id)kSecAttrIsPermanent: @NO,
     };
-    CFArrayRef items = NULL;
-    OSStatus status = errSecInternalError;
-    @try {
-        status = SecPKCS12Import((__bridge CFDataRef)pkcs12Data,
-                                  (__bridge CFDictionaryRef)importOptions,
-                                  &items);
-    } @catch (NSException *exception) {
-        os_log_error(pairing_log(), "SecPKCS12Import threw exception: %{public}@ — %{public}@",
-                     exception.name, exception.reason);
-        return NO;
-    }
-    if (status != errSecSuccess || !items || CFArrayGetCount(items) == 0) {
-        os_log_error(pairing_log(), "Failed to import provisioned client identity for fingerprinting: %d",
-                     (int)status);
-        if (items) CFRelease(items);
+    CFErrorRef keyError = NULL;
+    SecKeyRef privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)attrs, &keyError);
+    if (!privateKey) {
+        os_log_error(pairing_log(), "Failed to generate provisioned client key: %{public}@",
+                     keyError ? (__bridge NSError *)keyError : nil);
+        if (keyError) CFRelease(keyError);
         return NO;
     }
 
-    NSDictionary *item = (__bridge NSDictionary *)CFArrayGetValueAtIndex(items, 0);
-    SecIdentityRef identity = (__bridge SecIdentityRef)item[(__bridge id)kSecImportItemIdentity];
-    NSData *fingerprint = [self fingerprintForIdentity:identity];
-    CFRelease(items);
-
-    if (!fingerprint || fingerprint.length != CC_SHA256_DIGEST_LENGTH) {
-        os_log_error(pairing_log(), "Failed to compute provisioned client cert fingerprint");
+    SecCertificateRef cert = [self createSelfSignedCertificateWithPrivateKey:privateKey];
+    if (!cert) {
+        os_log_error(pairing_log(), "Failed to create provisioned client certificate");
+        CFRelease(privateKey);
         return NO;
     }
 
-    _provisionedClientIdentityPKCS12 = pkcs12Data;
+    CFDataRef certDataRef = SecCertificateCopyData(cert);
+    CFRelease(cert);
+    if (!certDataRef) {
+        os_log_error(pairing_log(), "Failed to export provisioned client certificate");
+        CFRelease(privateKey);
+        return NO;
+    }
+
+    CFErrorRef exportError = NULL;
+    CFDataRef privateKeyDataRef = SecKeyCopyExternalRepresentation(privateKey, &exportError);
+    CFRelease(privateKey);
+    if (!privateKeyDataRef) {
+        os_log_error(pairing_log(), "Failed to export provisioned client private key: %{public}@",
+                     exportError ? (__bridge NSError *)exportError : nil);
+        if (exportError) CFRelease(exportError);
+        CFRelease(certDataRef);
+        return NO;
+    }
+
+    NSData *certDerData = CFBridgingRelease(certDataRef);
+    NSData *privateKeyData = CFBridgingRelease(privateKeyDataRef);
+
+    uint8_t hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(certDerData.bytes, (CC_LONG)certDerData.length, hash);
+    NSData *fingerprint = [NSData dataWithBytes:hash length:CC_SHA256_DIGEST_LENGTH];
+
+    _provisionedClientCertificateDER = certDerData;
+    _provisionedClientPrivateKeyRepresentation = privateKeyData;
     _provisionedClientFingerprint = fingerprint;
     os_log(pairing_log(), "Provisioned client identity generated for pairing");
     return YES;
@@ -538,13 +484,16 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         @"protocolVersion": @1,
     } mutableCopy];
 
-    if (_provisionedClientIdentityPKCS12.length > 0 && _provisionedClientFingerprint.length == CC_SHA256_DIGEST_LENGTH) {
+    if (_provisionedClientCertificateDER.length > 0 &&
+        _provisionedClientPrivateKeyRepresentation.length > 0 &&
+        _provisionedClientFingerprint.length == CC_SHA256_DIGEST_LENGTH) {
         NSMutableString *fingerprintHex = [NSMutableString stringWithCapacity:_provisionedClientFingerprint.length * 2];
         const uint8_t *fingerprintBytes = _provisionedClientFingerprint.bytes;
         for (NSUInteger i = 0; i < _provisionedClientFingerprint.length; i++) {
             [fingerprintHex appendFormat:@"%02x", fingerprintBytes[i]];
         }
-        payload[@"clientIdentityPKCS12"] = [_provisionedClientIdentityPKCS12 base64EncodedStringWithOptions:0];
+        payload[@"clientCertificateDER"] = [_provisionedClientCertificateDER base64EncodedStringWithOptions:0];
+        payload[@"clientPrivateKeyRepresentation"] = [_provisionedClientPrivateKeyRepresentation base64EncodedStringWithOptions:0];
         payload[@"clientCertFingerprint"] = fingerprintHex;
     } else {
         os_log(pairing_log(), "Pairing response: no client identity — mTLS not available");
@@ -854,7 +803,8 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 
     _isPaired = NO;
     _sharedSecret = nil;
-    _provisionedClientIdentityPKCS12 = nil;
+    _provisionedClientCertificateDER = nil;
+    _provisionedClientPrivateKeyRepresentation = nil;
     _provisionedClientFingerprint = nil;
 
     os_log(pairing_log(), "Pairing state cleared from Keychain");
