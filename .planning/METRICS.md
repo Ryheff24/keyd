@@ -17,19 +17,19 @@ Rules:
 |--------|---------|------|------|--------|
 | USB resolution width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | USB resolution height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `114.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.187` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `13 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `15 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `13 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `34 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `35 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `34 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `97.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `13 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `15 ms` | `8 ms` | `7 ms` | ❌ |
-| Security rejection | `0` | `0` | `1` | ❌ |
-| Overall pass rate | `96.3%` | `96.3%` | `100.0%` | ❌ |
+| FPS | `10.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.031` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `207 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `219 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `208 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `222 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `238 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `224 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `10.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `211 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `224 ms` | `8 ms` | `7 ms` | ❌ |
+| Security rejection | `1` | `1` | `1` | ✅ |
+| Overall pass rate | `88.9%` | `96.3%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -58,3 +58,4 @@ Rules:
 | 2026-04-01 | 22:20:29 EDT | `84fe069` | `2752x1786` | `92.0 fps` | `0.329` | `14/16/14 ms` | `36/37/34 ms` | `87.1 fps, 14/16 ms` | `0` | `26/27` | Gradient + 20pct video window (4MB delta target), LZ4 acc=32 |
 | 2026-04-01 | 22:52:09 EDT | `5a2acd1` | `2752x1786` | `100.9 fps` | `0.332` | `12/14/12 ms` | `28/29/29 ms` | `98.8 fps, 13/15 ms` | `0` | `26/27` | 15pct video window (~3MB delta), 3 TCP in-flight, branchless loops |
 | 2026-04-01 | 22:54:31 EDT | `dc72aa7` | `2752x1786` | `114.5 fps` | `0.187` | `13/15/13 ms` | `34/35/34 ms` | `97.4 fps, 13/15 ms` | `0` | `26/27` | 15pct video window (~3MB delta), 3 TCP in-flight, rerun |
+| 2026-04-01 | 23:43:24 EDT | `ca59267` | `2752x1786` | `10.8 fps` | `0.031` | `207/219/208 ms` | `222/238/224 ms` | `10.7 fps, 211/224 ms` | `1` | `24/27` | raw client identity payload (cert+key), no pkcs12 |
