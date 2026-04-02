@@ -965,7 +965,7 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
          * fresher content anyway. This prevents multi-second queue buildup
          * that causes stale-timestamp latency inflation. */
         int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
-        if (inFlight > (_usbTransport.isConnected ? kMaxMediaSendsInFlightUSB : kMaxMediaSendsInFlightWiFi)) {
+        if (inFlight > kMaxMediaSendsInFlightUSB) {
             OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
             static int dropCount = 0;
             dropCount++;
@@ -984,29 +984,15 @@ static const size_t kMaxLZ4FrameBytes = 2 * 1024 * 1024;
             }
         }];
     } else if (_wirelessTransport.isConnected) {
-        /* WiFi: backpressure via pacing queue fence.
-         * Reuse _tcpMediaSendsInFlight (only one transport active at a time).
-         * Decrement AFTER all chunks pass through the pacing queue. */
-        int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
-        if (inFlight > (_usbTransport.isConnected ? kMaxMediaSendsInFlightUSB : kMaxMediaSendsInFlightWiFi)) {
-            OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
-            return;
-        }
-
+        /* WiFi: HEVC encoder already rate-limits (pendingFrameCount > 1 drop),
+         * and WirelessTransport's pacing queue spaces chunks. No additional
+         * frame-level backpressure needed — the encoder + pacing provide
+         * natural flow control at the HEVC output rate (~40-60fps). */
         WirelessTransport *transport = _wirelessTransport;
         chunk_frame(payload, payloadLen, originalHeader->seq, KEYDRD_MTU_WIFI,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
             [transport sendMediaFrame:chunk length:chunkLen];
         });
-
-        /* Fence: decrement after all chunks are actually sent */
-        __weak SessionManager *weakSelf = self;
-        [transport afterPendingSends:^{
-            SessionManager *strongSelf = weakSelf;
-            if (strongSelf) {
-                OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
-            }
-        }];
     }
 }
 
