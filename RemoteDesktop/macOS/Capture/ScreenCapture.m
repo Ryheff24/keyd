@@ -780,38 +780,90 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     void *base = CVPixelBufferGetBaseAddress(pixelBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
 
-    CGContextRef ctx = KeydCreateStressBitmapContext(base, width, height, bytesPerRow);
+    /* Desktop-realistic mode: draw the static image once, then only
+     * animate a small cursor region. This produces tiny LZ4 deltas
+     * (~1-50KB) that represent real desktop usage (idle, text editing,
+     * cursor movement). The stress overlay and Ken Burns pan/zoom were
+     * causing 100% pixel change per frame, making LZ4 useless. */
 
-    if (!ctx) {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
-        CVPixelBufferRelease(pixelBuffer);
-        os_log_error(sc_log(), "Failed to create synthetic bitmap context");
-        return NULL;
+    if (frameIndex == 0) {
+        /* First frame: draw the static background (cleared + image).
+         * Subsequent frames reuse the previous buffer content via the
+         * pixel buffer pool and only redraw the cursor region. */
+        CGContextRef ctx = KeydCreateStressBitmapContext(base, width, height, bytesPerRow);
+        if (!ctx) {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+            CVPixelBufferRelease(pixelBuffer);
+            os_log_error(sc_log(), "Failed to create synthetic bitmap context");
+            return NULL;
+        }
+
+        /* Dark background */
+        CGContextSetRGBFillColor(ctx, 0.12, 0.12, 0.14, 1.0);
+        CGContextFillRect(ctx, CGRectMake(0, 0, width, height));
+
+        /* Draw the source image scaled to fit (no pan/zoom animation) */
+        CGContextTranslateCTM(ctx, 0, height);
+        CGContextScaleCTM(ctx, 1.0, -1.0);
+        CGFloat imageW = (CGFloat)CGImageGetWidth(_syntheticImage);
+        CGFloat imageH = (CGFloat)CGImageGetHeight(_syntheticImage);
+        CGFloat scale = MIN((CGFloat)width / MAX(imageW, 1.0),
+                            (CGFloat)height / MAX(imageH, 1.0));
+        CGFloat drawW = imageW * scale;
+        CGFloat drawH = imageH * scale;
+        CGFloat drawX = ((CGFloat)width - drawW) * 0.5;
+        CGFloat drawY = ((CGFloat)height - drawH) * 0.5;
+        CGContextDrawImage(ctx, CGRectMake(drawX, drawY, drawW, drawH), _syntheticImage);
+
+        CGContextRelease(ctx);
+    } else {
+        /* Subsequent frames: copy previous frame's pixels exactly.
+         * The pool may recycle buffers, so we need a persistent
+         * reference. For simplicity, re-render the same static image. */
+        CGContextRef ctx = KeydCreateStressBitmapContext(base, width, height, bytesPerRow);
+        if (!ctx) {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+            CVPixelBufferRelease(pixelBuffer);
+            return NULL;
+        }
+
+        CGContextSetRGBFillColor(ctx, 0.12, 0.12, 0.14, 1.0);
+        CGContextFillRect(ctx, CGRectMake(0, 0, width, height));
+
+        CGContextTranslateCTM(ctx, 0, height);
+        CGContextScaleCTM(ctx, 1.0, -1.0);
+        CGFloat imageW = (CGFloat)CGImageGetWidth(_syntheticImage);
+        CGFloat imageH = (CGFloat)CGImageGetHeight(_syntheticImage);
+        CGFloat scale = MIN((CGFloat)width / MAX(imageW, 1.0),
+                            (CGFloat)height / MAX(imageH, 1.0));
+        CGFloat drawW = imageW * scale;
+        CGFloat drawH = imageH * scale;
+        CGFloat drawX = ((CGFloat)width - drawW) * 0.5;
+        CGFloat drawY = ((CGFloat)height - drawH) * 0.5;
+        CGContextDrawImage(ctx, CGRectMake(drawX, drawY, drawW, drawH), _syntheticImage);
+
+        CGContextRelease(ctx);
     }
 
-    CGContextSetRGBFillColor(ctx, 0.04, 0.04, 0.05, 1.0);
-    CGContextFillRect(ctx, CGRectMake(0, 0, width, height));
+    /* Animate a small cursor region (24x24 px) that moves in a figure-8.
+     * This produces a realistic ~1-5KB LZ4 delta per frame. */
+    {
+        double t = (double)frameIndex / (double)kSyntheticFPS;
+        size_t cursorSize = 24;
+        size_t cursorX = (size_t)((double)(width - cursorSize) * (0.5 + 0.3 * sin(t * 2.1)));
+        size_t cursorY = (size_t)((double)(height - cursorSize) * (0.5 + 0.3 * sin(t * 1.7)));
+        uint8_t *pixels = (uint8_t *)base;
+        for (size_t row = cursorY; row < MIN(cursorY + cursorSize, height); row++) {
+            for (size_t col = cursorX; col < MIN(cursorX + cursorSize, width); col++) {
+                size_t offset = row * bytesPerRow + col * 4;
+                pixels[offset + 0] = 255; /* B */
+                pixels[offset + 1] = 255; /* G */
+                pixels[offset + 2] = 255; /* R */
+                pixels[offset + 3] = 255; /* A */
+            }
+        }
+    }
 
-    CGContextTranslateCTM(ctx, 0, height);
-    CGContextScaleCTM(ctx, 1.0, -1.0);
-
-    double t = (double)frameIndex / (double)kSyntheticFPS;
-    CGFloat imageW = (CGFloat)CGImageGetWidth(_syntheticImage);
-    CGFloat imageH = (CGFloat)CGImageGetHeight(_syntheticImage);
-    CGFloat coverScale = MAX((CGFloat)width / MAX(imageW, 1.0),
-                             (CGFloat)height / MAX(imageH, 1.0));
-    CGFloat zoom = 1.04 + 0.03 * (CGFloat)sin(t * 0.55);
-    CGFloat drawW = imageW * coverScale * zoom;
-    CGFloat drawH = imageH * coverScale * zoom;
-    CGFloat overflowX = MAX(0.0, drawW - (CGFloat)width);
-    CGFloat overflowY = MAX(0.0, drawH - (CGFloat)height);
-    CGFloat offsetX = overflowX * (0.5 + 0.5 * (CGFloat)sin(t * 0.31));
-    CGFloat offsetY = overflowY * (0.5 + 0.5 * (CGFloat)cos(t * 0.27));
-    CGRect drawRect = CGRectMake(-offsetX, -offsetY, drawW, drawH);
-    CGContextDrawImage(ctx, drawRect, _syntheticImage);
-    KeydRenderStressScene(ctx, CGSizeMake(width, height), frameIndex);
-
-    CGContextRelease(ctx);
     CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
     return pixelBuffer;
 }

@@ -64,15 +64,6 @@ static uint64_t keydrd_host_time_us(void) {
  * is being transmitted while the next waits — keeps latency bounded
  * without sacrificing throughput on fast links. */
 static const int32_t kMaxMediaSendsInFlightUSB = 2;
-static const int32_t kMaxMediaSendsInFlightWiFi = 5;
-
-/* Maximum LZ4 frame size before dropping. Incompressible keyframes at
- * 2752x1786 can be 19.7MB — transmitting one blocks the TCP pipe for
- * ~460ms at USB NCM speeds, destroying frame pacing. Frames above this
- * cap are dropped; the next delta frame will be small and deliver fresh
- * content. 2MB allows keyframes up to ~16:1 of raw (19.6MB → 2MB).
- * Most delta frames are 100-300KB, well under this limit. */
-static const size_t kMaxLZ4DeltaBytes = 5 * 1024 * 1024;
 
 @interface SessionManager ()
 
@@ -944,23 +935,11 @@ static const size_t kMaxLZ4DeltaBytes = 5 * 1024 * 1024;
     size_t payloadLen = len - sizeof(MediaFrameHeader);
 
     if (_usbTransport.isConnected) {
-        /* Drop oversized DELTA frames that would stall the TCP pipe.
-         * Incompressible delta frames at native resolution can be 19MB+ —
-         * transmitting one blocks the pipe for ~460ms, ruining pacing.
-         * KEYFRAMES are never dropped — they're essential for decoder init
-         * and error recovery. Real desktop first keyframes are 2-3MB. */
-        /* Drop oversized frames that would stall the TCP pipe.
-         * 5MB cap blocks 19MB+ incompressible stress frames but allows
-         * real desktop keyframes (1.5-2.5MB) and all normal deltas (50-200KB). */
-        if (payloadLen > kMaxLZ4DeltaBytes) {
-            static int oversizeCount = 0;
-            oversizeCount++;
-            if (oversizeCount <= 10 || oversizeCount % 100 == 0) {
-                os_log(sLog, "Frame size cap: dropped %zu byte frame seq=%u (limit=%zu, total=%d)",
-                       payloadLen, originalHeader->seq, kMaxLZ4DeltaBytes, oversizeCount);
-            }
-            return;
-        }
+        /* No frame size cap: LZ4 delta compression makes dropping frames
+         * catastrophic — the iPad's delta reference desynchronizes and ALL
+         * subsequent frames render as garbage until the next keyframe.
+         * TCP backpressure (max 2 in-flight sends) is the only safe gate
+         * because it fires rarely enough to avoid visible corruption. */
 
         /* USB NCM: media frames via TCP with length-prefix framing + backpressure.
          * TCP with TCP_NODELAY gives 0% loss at 1ms transport RTT.

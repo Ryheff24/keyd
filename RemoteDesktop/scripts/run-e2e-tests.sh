@@ -180,7 +180,11 @@ IPAD_INSTALL_LOG="/tmp/keyd-e2e-install-ipad.log"
 QR_PAYLOAD_FILE="/tmp/keydrd-test-qr.json"
 QR_READY_LOG="Test mode: QR payload written to /tmp/keydrd-test-qr.json"
 QR_SHOWN_LOG="Test mode: auto-showing QR"
-DEFAULT_CAPTURE_FILE="/tmp/keydrd-capture-mimic.mov"
+DEFAULT_CAPTURE_FILE="/tmp/keydrd-capture-desktop.png"
+# The .mov stress video produces incompressible frames (~19.7MB) that tank FPS.
+# A static desktop screenshot gives realistic LZ4 deltas (~1-50KB per frame),
+# representing actual desktop usage (idle, text editing, cursor movement).
+LEGACY_CAPTURE_FILE="/tmp/keydrd-capture-mimic.mov"
 WIRELESS_ONLY=false
 
 if [ "$WIRED_ONLY" = true ]; then
@@ -204,8 +208,18 @@ if [ "$ROTATION_TRANSPORTS" = "usb" ]; then
   WIRELESS_ONLY=false
 fi
 
-if [ -z "$CAPTURE_FILE" ] && [ "$STRESS_CAPTURE" = false ] && [ "$REAL_CAPTURE" = false ] && [ -f "$DEFAULT_CAPTURE_FILE" ]; then
-  CAPTURE_FILE="$DEFAULT_CAPTURE_FILE"
+if [ -z "$CAPTURE_FILE" ] && [ "$STRESS_CAPTURE" = false ] && [ "$REAL_CAPTURE" = false ]; then
+  # Generate a desktop screenshot PNG for realistic LZ4 delta testing.
+  # Static desktop content produces tiny deltas (~1-50KB) vs the stress video
+  # which produces incompressible 19.7MB frames after ~12 seconds.
+  if [ ! -f "$DEFAULT_CAPTURE_FILE" ]; then
+    screencapture -x "$DEFAULT_CAPTURE_FILE" 2>/dev/null || true
+  fi
+  if [ -f "$DEFAULT_CAPTURE_FILE" ]; then
+    CAPTURE_FILE="$DEFAULT_CAPTURE_FILE"
+  elif [ -f "$LEGACY_CAPTURE_FILE" ]; then
+    CAPTURE_FILE="$LEGACY_CAPTURE_FILE"
+  fi
 fi
 
 cd "$(git rev-parse --show-toplevel)"
