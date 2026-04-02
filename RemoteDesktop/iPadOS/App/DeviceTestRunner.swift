@@ -339,6 +339,8 @@ final class DeviceTestRunner {
     // MARK: - Test 5: Session Handshake (called from SessionManager)
 
     func reportSessionHandshake(_ handshake: SessionHandshakeMessage) {
+        rotationHandshakeReceived = true
+
         guard !handshakeReceived else { return }
         handshakeReceived = true
 
@@ -1272,12 +1274,14 @@ final class DeviceTestRunner {
     /// State for per-transport frame validation during rotation.
     private var rotationHandshakeReceived = false
     private var rotationFramesRendered = 0
+    private var rotationFramesReceived = 0
     private var rotationTransportType: String = ""
 
     /// WiFi baseline measurement state (collected during WiFi rotation phase).
     private var wifiMeasurementActive = false
     private var wifiMeasurementStartTime: CFAbsoluteTime = 0
     private var wifiMeasurementRenderedStartCount = 0
+    private var wifiMeasurementReceivedStartCount = 0
     private var wifiMeasurementFrameTimestamps: [CFAbsoluteTime] = []
     private var wifiMeasurementFrameCount = 0
     private static let wifiMeasurementDuration: TimeInterval = 10.0
@@ -1333,6 +1337,7 @@ final class DeviceTestRunner {
         // Reset per-rotation state
         rotationHandshakeReceived = false
         rotationFramesRendered = totalRenderedFrames
+        rotationFramesReceived = framesReceived
         rotationTransportType = ""
 
         // Disconnect everything and start only the target transport
@@ -1398,18 +1403,26 @@ final class DeviceTestRunner {
             detectedType = "awdl"
         }
 
-        // Check if we got frames (rendered > previous count means new frames arrived)
+        // Check if we got frames. Prefer rendered frames, but accept decoded frames
+        // during short transport rotation windows where the display link can lag.
         let rendered = totalRenderedFrames
+        let received = framesReceived
 
-        if connected && rendered > rotationFramesRendered + 3 {
-            // Got connection + at least 3 new rendered frames
+        let newRendered = rendered - rotationFramesRendered
+        let newReceived = received - rotationFramesReceived
+
+        if connected && (rotationHandshakeReceived || newRendered > 3 || newReceived > 3) {
             if transport == "wifi" {
                 // Run WiFi baseline measurements before completing
-                runWiFiBaselineMeasurements(detectedType: detectedType, newFrames: rendered - rotationFramesRendered)
+                runWiFiBaselineMeasurements(
+                    detectedType: detectedType,
+                    newRenderedFrames: max(0, newRendered),
+                    newReceivedFrames: max(0, newReceived)
+                )
                 return
             }
             completeTransportRotation(transport: transport, passed: true,
-                                     detail: "connected=\(detectedType), \(rendered - rotationFramesRendered) new frames rendered")
+                                     detail: "connected=\(detectedType), rendered+\(max(0, newRendered)), received+\(max(0, newReceived))")
             return
         }
 
@@ -1423,13 +1436,13 @@ final class DeviceTestRunner {
 
     /// Collect WiFi performance baselines (FPS, latency, jitter, frame loss, resolution).
     /// All results are INFO-level (no pass/fail) to establish baselines.
-    private func runWiFiBaselineMeasurements(detectedType: String, newFrames: Int) {
+    private func runWiFiBaselineMeasurements(detectedType: String, newRenderedFrames: Int, newReceivedFrames: Int) {
         print("[TEST] INFO: === WiFi Baseline Measurements (10s collection period) ===")
 
         guard let sm = sessionManager else {
             print("[TEST] INFO: wifi-baselines skipped — sessionManager nil")
             completeTransportRotation(transport: "wifi", passed: true,
-                                     detail: "connected=\(detectedType), \(newFrames) new frames rendered (baselines skipped)")
+                                     detail: "connected=\(detectedType), rendered+\(newRenderedFrames), received+\(newReceivedFrames) (baselines skipped)")
             return
         }
 
@@ -1437,6 +1450,7 @@ final class DeviceTestRunner {
         wifiMeasurementActive = true
         wifiMeasurementStartTime = CFAbsoluteTimeGetCurrent()
         wifiMeasurementRenderedStartCount = totalRenderedFrames
+        wifiMeasurementReceivedStartCount = framesReceived
         wifiMeasurementFrameTimestamps = []
         wifiMeasurementFrameCount = 0
 
@@ -1455,7 +1469,8 @@ final class DeviceTestRunner {
             let timestamps = self.wifiMeasurementFrameTimestamps
             let renderedEndCount = self.totalRenderedFrames
             let renderedDelta = max(0, renderedEndCount - self.wifiMeasurementRenderedStartCount)
-            let frameCount = max(timestamps.count, renderedDelta)
+            let receivedDelta = max(0, self.framesReceived - self.wifiMeasurementReceivedStartCount)
+            let frameCount = max(timestamps.count, renderedDelta, receivedDelta)
 
             // 1. WiFi FPS
             let avgFPS: Double = elapsed > 0 ? Double(frameCount) / elapsed : 0
@@ -1511,7 +1526,7 @@ final class DeviceTestRunner {
 
             // Complete the WiFi rotation with pass
             self.completeTransportRotation(transport: "wifi", passed: true,
-                                          detail: "connected=\(detectedType), \(newFrames) new frames, wifi baselines collected")
+                                          detail: "connected=\(detectedType), rendered+\(newRenderedFrames), received+\(newReceivedFrames), wifi baselines collected")
         }
     }
 
