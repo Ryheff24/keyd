@@ -49,15 +49,13 @@ static const char *kInputPortStr = "14568";
                                                  DISPATCH_QUEUE_SERIAL);
 
         /* Convert chunk pacing intervals from nanoseconds to mach ticks.
-         * The prior pacing was conservative enough that large WiFi bursts
-         * routinely backed up behind keyframes. This keeps DTLS sends paced,
-         * but lifts the operating point so 60 fps HEVC can drain without
-         * bouncing large frames onto TCP. */
+         * Keep DTLS sends paced, but preserve a high enough operating point
+         * that large HEVC bursts can drain without stretching frame delivery. */
         mach_timebase_info_data_t timebase;
         mach_timebase_info(&timebase);
-        _pacingFastIntervalTicks = (uint64_t)(220000ULL * timebase.denom / timebase.numer);
-        _pacingDefaultIntervalTicks = (uint64_t)(280000ULL * timebase.denom / timebase.numer);
-        _pacingCongestedIntervalTicks = (uint64_t)(360000ULL * timebase.denom / timebase.numer);
+        _pacingFastIntervalTicks = (uint64_t)(90000ULL * timebase.denom / timebase.numer);
+        _pacingDefaultIntervalTicks = (uint64_t)(120000ULL * timebase.denom / timebase.numer);
+        _pacingCongestedIntervalTicks = (uint64_t)(160000ULL * timebase.denom / timebase.numer);
         _nextSendTime = 0;
         atomic_init(&_queuedMediaChunks, 0);
         atomic_init(&_sendGeneration, 1);
@@ -361,9 +359,9 @@ static const char *kInputPortStr = "14568";
          * queue is shallow so large UI bursts do not monopolize the sender. */
         uint32_t queued = atomic_load_explicit(&self->_queuedMediaChunks, memory_order_relaxed);
         uint64_t pacingTicks = self->_pacingDefaultIntervalTicks;
-        if (queued <= 64) {
+        if (queued <= 96) {
             pacingTicks = self->_pacingFastIntervalTicks;
-        } else if (queued >= 192) {
+        } else if (queued >= 320) {
             pacingTicks = self->_pacingCongestedIntervalTicks;
         }
         self->_nextSendTime = mach_absolute_time() + pacingTicks;
@@ -408,15 +406,20 @@ static const char *kInputPortStr = "14568";
     nw_connection_t conn = _inputConnection;
     if (!conn) return;
 
-    /* 4-byte big-endian length prefix + payload — same framing as sendInputEvent.
-     * iPad drains TCP buffer and routes frames via handleInputReceived which
-     * detects MediaFrameHeader magic and sends to handleReceivedFrame. */
+    /* Copy the framed payload so nw_connection_send owns stable bytes until
+     * the completion handler fires. The previous stack/borrowed-buffer path
+     * was only safe if Network.framework copied synchronously, which is not a
+     * contract we should rely on for large media frames. */
+    size_t framedLen = 4 + len;
+    uint8_t *framedBytes = malloc(framedLen);
+    if (!framedBytes) return;
+
     uint32_t netLen = htonl((uint32_t)len);
-    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
-                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
-                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+    memcpy(framedBytes, &netLen, 4);
+    memcpy(framedBytes + 4, data, len);
+
+    dispatch_data_t framed = dispatch_data_create(framedBytes, framedLen, _transportQueue,
+                                                  DISPATCH_DATA_DESTRUCTOR_FREE);
 
     nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
@@ -439,14 +442,18 @@ static const char *kInputPortStr = "14568";
     }
     sendCount++;
 
-    /* Prepend 4-byte big-endian length prefix for TCP message framing.
-     * iPad reassembles using this prefix to handle large HEVC frames. */
+    /* See sendMediaFrameViaTCP: send a copied, framed payload so the bytes stay
+     * valid until Network.framework finishes with them. */
+    size_t framedLen = 4 + len;
+    uint8_t *framedBytes = malloc(framedLen);
+    if (!framedBytes) return;
+
     uint32_t netLen = htonl((uint32_t)len);
-    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
-                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
-                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+    memcpy(framedBytes, &netLen, 4);
+    memcpy(framedBytes + 4, data, len);
+
+    dispatch_data_t framed = dispatch_data_create(framedBytes, framedLen, _transportQueue,
+                                                  DISPATCH_DATA_DESTRUCTOR_FREE);
 
     nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
@@ -461,22 +468,14 @@ static const char *kInputPortStr = "14568";
 - (void)handleNewConnection:(nw_connection_t)connection {
     os_log(wireless_log(), "TLS wireless connection accepted from iPad");
 
-    /* Ignore duplicate candidates while the current connection is still
-     * handshaking. Replacing an in-flight candidate causes the iPad to see
-     * EOF before the first TLS session becomes ready.
-     *
-     * Once a session is fully connected, a later accepted connection is
-     * treated as a genuine reconnect and replaces the active one. */
+    /* Ignore duplicate candidates while an existing session is still alive.
+     * Replacing a healthy connection causes avoidable EOFs on the iPad and
+     * was tearing down long-running Wi-Fi tests near completion. A genuine
+     * reconnect will arrive after the old connection has already ended. */
     if (_inputConnection) {
-        if (!_isConnected) {
-            os_log(wireless_log(), "Ignoring duplicate wireless candidate while current connection is still preparing");
-            nw_connection_cancel(connection);
-            return;
-        }
-
-        os_log(wireless_log(), "Replacing existing connected wireless session");
-        nw_connection_cancel(_inputConnection);
-        _isConnected = NO;
+        os_log(wireless_log(), "Ignoring duplicate wireless candidate while an existing session is active");
+        nw_connection_cancel(connection);
+        return;
     }
     _inputConnection = connection;
 

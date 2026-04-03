@@ -50,6 +50,10 @@ _Static_assert(sizeof(MediaFrameHeader) == 25,
 #define KEYDRD_INPUT_CLOCK_SYNC_RESP      0xFD  /* Mac -> iPad: clock sync response */
 #define KEYDRD_INPUT_LATENCY_PROBE        0xFF
 
+/* ---- Mode change subtypes (sent after InputEventHeader type=0x20) ---- */
+#define KEYDRD_MODE_CHANGE_ECO               0x02
+#define KEYDRD_MODE_CHANGE_REQUEST_KEYFRAME  0x03
+
 /* ---- InputEventHeader (9 bytes, packed) ---- */
 typedef struct __attribute__((packed)) {
     uint8_t  type;           /* KEYDRD_INPUT_* */

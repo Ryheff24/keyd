@@ -43,6 +43,7 @@ static const int kEcoMaxHeight720 = 720;
     float _currentQuality;
     uint16_t _seq;
     atomic_int _pendingFrameCount;
+    atomic_bool _forceNextKeyframe;
     int _skipLogCount;
 }
 
@@ -54,6 +55,7 @@ static const int kEcoMaxHeight720 = 720;
         _session = NULL;
         _seq = 0;
         _pendingFrameCount = 0;
+        _forceNextKeyframe = false;
         _skipLogCount = 0;
     }
     return self;
@@ -76,6 +78,7 @@ static const int kEcoMaxHeight720 = 720;
     _originalBitrate = bitrate;
     _originalQuality = quality;
     _pendingFrameCount = 0;
+    _forceNextKeyframe = false;
 
     [self _createSessionWithWidth:width height:height fps:fps bitrate:bitrate quality:quality];
 }
@@ -144,11 +147,11 @@ static const int kEcoMaxHeight720 = 720;
     }
 
     /* Max keyframe interval (seconds).
-     * Keyframes at native resolution can be 100-200KB (70-140 UDP chunks).
-     * Each chunk requires individual DTLS encryption + WiFi transmission.
-     * Too-frequent keyframes create ~200ms stalls as chunks flood the transport.
-     * 5-second interval balances error recovery with smooth delivery. */
-    float maxKeyframeInterval = 5.0f;
+     * Recovery now requests an IDR immediately when the iPad loses decoder
+     * continuity, so the steady-state stream does not need frequent periodic
+     * keyframes. Longer spacing avoids repeated 100KB+ DTLS bursts that were
+     * knocking the Wi-Fi path into backlog and fallback. */
+    float maxKeyframeInterval = 300.0f;
     CFNumberRef keyframeRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberFloatType, &maxKeyframeInterval);
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, keyframeRef);
     CFRelease(keyframeRef);
@@ -174,6 +177,7 @@ static const int kEcoMaxHeight720 = 720;
      * while we're tearing down the session. */
     _isActive = NO;
     _pendingFrameCount = 0;
+    _forceNextKeyframe = false;
     _onEncodedFrame = nil;
 
     if (_session) {
@@ -183,6 +187,11 @@ static const int kEcoMaxHeight720 = 720;
         _session = NULL;
     }
     os_log_info(hevc_log(), "HEVC encoder stopped");
+}
+
+- (void)requestKeyframe {
+    if (!_isActive || !_session) return;
+    atomic_store_explicit(&_forceNextKeyframe, true, memory_order_relaxed);
 }
 
 #pragma mark - Encoding
@@ -242,16 +251,32 @@ static const int kEcoMaxHeight720 = 720;
     /* Increment pending count BEFORE submitting to encoder */
     atomic_fetch_add_explicit(&_pendingFrameCount, 1, memory_order_relaxed);
 
-    /* frameProperties: nil = let encoder decide keyframe placement */
+    CFDictionaryRef frameProperties = NULL;
+    if (atomic_exchange_explicit(&_forceNextKeyframe, false, memory_order_relaxed)) {
+        const void *keys[] = { kVTEncodeFrameOptionKey_ForceKeyFrame };
+        const void *values[] = { kCFBooleanTrue };
+        frameProperties = CFDictionaryCreate(kCFAllocatorDefault,
+                                             keys,
+                                             values,
+                                             1,
+                                             &kCFTypeDictionaryKeyCallBacks,
+                                             &kCFTypeDictionaryValueCallBacks);
+        os_log_info(hevc_log(), "Forcing HEVC keyframe on next encode");
+    }
+
     OSStatus status = VTCompressionSessionEncodeFrame(
         _session,
         pixelBuffer,
         timestamp,
         kCMTimeInvalid,  /* duration -- invalid = encoder decides */
-        NULL,            /* frameProperties -- nil */
+        frameProperties,
         tsRef,           /* sourceFrameRefcon -- capture timestamp */
         NULL             /* infoFlagsOut */
     );
+
+    if (frameProperties) {
+        CFRelease(frameProperties);
+    }
 
     if (status != noErr) {
         os_log_error(hevc_log(), "VTCompressionSessionEncodeFrame failed: %d", (int)status);

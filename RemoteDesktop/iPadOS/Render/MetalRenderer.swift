@@ -22,6 +22,18 @@ struct ViewportUniforms {
 /// arrives via `updateFrame(_:width:height:)` and is rendered on the next
 /// display link callback.
 final class MetalRenderer: NSObject {
+    private struct PendingRenderFrame {
+        let texture: MTLTexture
+        let cvTextureRef: CVMetalTexture?
+        let captureTimestampUs: UInt64
+    }
+
+    struct StatsSnapshot {
+        let overwrittenFrames: Int
+        let hasPendingFrame: Bool
+    }
+
+    private static let maxPendingFrames = 3
 
     // MARK: - Properties
 
@@ -38,9 +50,10 @@ final class MetalRenderer: NSObject {
     /// Prevents CPU stalls while GPU processes previous frames.
     private let inflightSemaphore = DispatchSemaphore(value: 3)
 
-    /// Current BGRA frame texture received from the decode pipeline.
-    /// Updated atomically on the frame delivery thread; read on the render thread.
-    private var frameTexture: MTLTexture?
+    /// Small render queue of decoded frames waiting for presentation.
+    /// A depth of 3 absorbs short decode bursts without turning them straight
+    /// into dropped presents, while still bounding latency tightly.
+    private var pendingFrames: [PendingRenderFrame] = []
     private let textureLock = NSLock()
 
     /// Count of NEW unique frames rendered (texture changed since last render).
@@ -60,12 +73,14 @@ final class MetalRenderer: NSObject {
     /// Both values are on the Core Animation host-time timeline.
     var onFramePresented: ((_ captureTimestampUs: UInt64, _ presentedHostTimeUs: Int64) -> Void)?
 
-    /// Dirty flag: set when updateFrame uploads new pixel data, cleared after render.
-    private var frameDirty = false
+    /// Count of decoded frames that replaced a previous frame before the display
+    /// link consumed it. This quantifies render-path coalescing under load.
+    private var overwrittenFrameCount = 0
 
-    /// Capture timestamp (Mac host-time microseconds) of the current frame texture.
-    /// Set in updateFrame alongside texture data, read during render for latency tracking.
-    private var frameCaptureTimestampUs: UInt64 = 0
+    /// Count of display-link ticks skipped because no drawable slot was
+    /// available immediately. Used to detect render-side backpressure without
+    /// blocking the main run loop.
+    private var inflightSkipCount = 0
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -81,9 +96,6 @@ final class MetalRenderer: NSObject {
     /// CVMetalTextureCache for zero-copy CVPixelBuffer → MTLTexture.
     /// Eliminates the ~5ms CPU→GPU memcpy of 33MB pixel data per frame.
     private var textureCache: CVMetalTextureCache?
-
-    /// Retain the CVMetalTexture ref so the IOSurface-backed texture stays valid until rendered.
-    private var cvTextureRef: CVMetalTexture?
 
     // MARK: - Init
 
@@ -155,8 +167,8 @@ final class MetalRenderer: NSObject {
         let link = CAMetalDisplayLink(metalLayer: metalLayer)
         link.delegate = self
 
-        // Prefer high frame rate for ProMotion 120Hz
-        // CADisableMinimumFrameDuration=YES in Info.plist enables this
+        // Prefer high frame rate for ProMotion 120Hz.
+        // CADisableMinimumFrameDuration=YES in Info.plist enables this.
         // Ask Core Animation to keep render lead time to a single frame to
         // minimize display-link queuing latency during glass-to-glass tests.
         link.preferredFrameLatency = 1
@@ -183,25 +195,16 @@ final class MetalRenderer: NSObject {
     ///   - width: Frame width in pixels.
     ///   - height: Frame height in pixels.
     func updateFrame(_ data: UnsafeRawPointer, width: Int, height: Int, captureTimestampUs: UInt64 = 0) {
-        textureLock.lock()
-        defer { textureLock.unlock() }
-        frameCaptureTimestampUs = captureTimestampUs
-        cvTextureRef = nil
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
 
-        // Recreate texture if dimensions changed
-        if frameTexture == nil
-            || frameTexture!.width != width
-            || frameTexture!.height != height {
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .bgra8Unorm,
-                width: width,
-                height: height,
-                mipmapped: false
-            )
-            descriptor.usage = .shaderRead
-            descriptor.storageMode = .shared
-            frameTexture = device.makeTexture(descriptor: descriptor)
-        }
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return }
 
         // Upload pixel data to texture
         let bytesPerRow = width * 4
@@ -209,13 +212,13 @@ final class MetalRenderer: NSObject {
             origin: MTLOrigin(x: 0, y: 0, z: 0),
             size: MTLSize(width: width, height: height, depth: 1)
         )
-        frameTexture?.replace(
+        texture.replace(
             region: region,
             mipmapLevel: 0,
             withBytes: data,
             bytesPerRow: bytesPerRow
         )
-        frameDirty = true
+        enqueueFrame(texture: texture, cvTextureRef: nil, captureTimestampUs: captureTimestampUs)
     }
 
     /// Zero-copy frame update from CVPixelBuffer (HEVC decode output).
@@ -263,12 +266,28 @@ final class MetalRenderer: NSObject {
             return
         }
 
+        enqueueFrame(texture: texture, cvTextureRef: cvTex, captureTimestampUs: captureTimestampUs)
+    }
+
+    private func enqueueFrame(texture: MTLTexture,
+                              cvTextureRef: CVMetalTexture?,
+                              captureTimestampUs: UInt64) {
         textureLock.lock()
-        frameTexture = texture
-        cvTextureRef = cvTex  // retain so IOSurface stays valid until next frame
-        frameCaptureTimestampUs = captureTimestampUs
-        frameDirty = true
-        textureLock.unlock()
+        defer { textureLock.unlock() }
+
+        if pendingFrames.count >= Self.maxPendingFrames {
+            pendingFrames.removeFirst()
+            overwrittenFrameCount += 1
+            if overwrittenFrameCount <= 5 || overwrittenFrameCount % 100 == 0 {
+                print("[CONSOLE] MetalRenderer: overwrote pending frame before display (total=\(overwrittenFrameCount))")
+            }
+        }
+
+        pendingFrames.append(PendingRenderFrame(
+            texture: texture,
+            cvTextureRef: cvTextureRef,
+            captureTimestampUs: captureTimestampUs
+        ))
     }
 
     /// Set the Mac display dimensions (called during session handshake).
@@ -347,6 +366,15 @@ final class MetalRenderer: NSObject {
         computeViewport(screenBounds: pixelBounds)
     }
 
+    func statsSnapshot() -> StatsSnapshot {
+        textureLock.lock()
+        defer { textureLock.unlock() }
+        return StatsSnapshot(
+            overwrittenFrames: overwrittenFrameCount,
+            hasPendingFrame: !pendingFrames.isEmpty
+        )
+    }
+
     // MARK: - Teardown
 
     /// Stop the display link and release resources.
@@ -367,8 +395,23 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
 
     func metalDisplayLink(_ link: CAMetalDisplayLink,
                           needsUpdate update: CAMetalDisplayLink.Update) {
-        // Step 1: Wait for an available in-flight slot (triple buffering)
-        inflightSemaphore.wait()
+        textureLock.lock()
+        let hasPendingFrame = !pendingFrames.isEmpty
+        textureLock.unlock()
+
+        // Nothing new to show. Keep the last presented frame on screen rather
+        // than consuming drawables/redrawing stale content at display-link rate.
+        guard hasPendingFrame else { return }
+
+        // Never block the main run loop waiting for a drawable slot; if the GPU
+        // is briefly behind, keep the newest decoded frame pending for the next tick.
+        if inflightSemaphore.wait(timeout: .now()) == .timedOut {
+            inflightSkipCount += 1
+            if inflightSkipCount <= 5 || inflightSkipCount % 100 == 0 {
+                print("[CONSOLE] MetalRenderer: skipped render tick waiting for inflight slot (total=\(inflightSkipCount))")
+            }
+            return
+        }
 
         // Step 2: Get the drawable from the update
         let drawable = update.drawable
@@ -396,76 +439,55 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             return
         }
 
-        // Snapshot the texture/timestamp/dirty bit atomically so latency samples
-        // always pair the rendered frame with the matching capture timestamp.
+        // Pop one queued frame atomically so latency samples always pair the
+        // presented texture with its original capture timestamp.
         textureLock.lock()
-        let currentTexture = frameTexture
-        let currentCVTextureRef = cvTextureRef
-        let currentCaptureTimestampUs = frameCaptureTimestampUs
-        let hasNewFrame = frameDirty
-        if hasNewFrame {
-            frameDirty = false
+        guard !pendingFrames.isEmpty else {
+            textureLock.unlock()
+            encoder.endEncoding()
+            inflightSemaphore.signal()
+            return
         }
+        let frame = pendingFrames.removeFirst()
         textureLock.unlock()
 
-        if let texture = currentTexture {
-            // Step 6: Set pipeline state and resources
-            encoder.setRenderPipelineState(pipelineState)
+        // Step 6: Set pipeline state and resources
+        encoder.setRenderPipelineState(pipelineState)
 
-            // Pass viewport uniforms to vertex shader
-            var uniforms = viewportUniforms
-            encoder.setVertexBytes(
-                &uniforms,
-                length: MemoryLayout<ViewportUniforms>.size,
-                index: 0
-            )
+        // Pass viewport uniforms to vertex shader
+        var uniforms = viewportUniforms
+        encoder.setVertexBytes(
+            &uniforms,
+            length: MemoryLayout<ViewportUniforms>.size,
+            index: 0
+        )
 
-            // Set frame texture for fragment shader
-            encoder.setFragmentTexture(texture, index: 0)
+        // Set frame texture for fragment shader
+        encoder.setFragmentTexture(frame.texture, index: 0)
 
-            // Step 7: Draw triangle strip (4 vertices = full-screen quad)
-            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        // Step 7: Draw triangle strip (4 vertices = full-screen quad)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        renderedFrameCount += 1
+        renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+        onFrameRendered?()
 
-            // Only count as NEW rendered frame if texture was updated since last render.
-            // Re-drawing the same stale texture at 120Hz doesn't count as a new frame.
-            if hasNewFrame {
-                renderedFrameCount += 1
-                renderedFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
-                onFrameRendered?()
+        // Step 8: End encoding
+        encoder.endEncoding()
 
-                // Step 8: End encoding
-                encoder.endEncoding()
+        // Step 9: Present drawable
+        commandBuffer.present(drawable)
 
-                // Step 9: Present drawable
-                commandBuffer.present(drawable)
-
-                // Glass-to-glass: compare the capture host time to the display
-                // link's target presentation time for this drawable.
-                if currentCaptureTimestampUs > 0 {
-                    let targetPresentation = update.targetPresentationTimestamp
-                    if targetPresentation > 0 {
-                        let presentedHostTimeUs = Int64(targetPresentation * 1_000_000)
-                        onFramePresented?(currentCaptureTimestampUs, presentedHostTimeUs)
-                    }
-                }
-
-                // Step 10: Signal semaphore on completion (triple buffering)
-                commandBuffer.addCompletedHandler { [weak self, retainedCVTexture = currentCVTextureRef] _ in
-                    _ = retainedCVTexture
-                    self?.inflightSemaphore.signal()
-                }
-
-                // Step 11: Commit
-                commandBuffer.commit()
-                return
+        // Glass-to-glass: compare the capture host time to the display
+        // link's target presentation time for this drawable.
+        if frame.captureTimestampUs > 0 {
+            let targetPresentation = update.targetPresentationTimestamp
+            if targetPresentation > 0 {
+                let presentedHostTimeUs = Int64(targetPresentation * 1_000_000)
+                onFramePresented?(frame.captureTimestampUs, presentedHostTimeUs)
             }
         }
 
-        // No new frame — still need to present the stale redraw
-        encoder.endEncoding()
-        commandBuffer.present(drawable)
-
-        commandBuffer.addCompletedHandler { [weak self, retainedCVTexture = currentCVTextureRef] _ in
+        commandBuffer.addCompletedHandler { [weak self, retainedCVTexture = frame.cvTextureRef] _ in
             _ = retainedCVTexture
             self?.inflightSemaphore.signal()
         }

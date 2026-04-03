@@ -141,6 +141,7 @@ final class DeviceTestRunner {
     private var lastTelemetryDecodeFailureCount = 0
     private var lastTelemetryPipelineCount = 0
     private var lastTelemetryGlassCount = 0
+    private var lastTelemetryRendererOverwriteCount = 0
 
     // Sustained stream validation for full-clip WiFi runs
     private let sustainedStreamDuration: TimeInterval
@@ -2532,10 +2533,12 @@ final class DeviceTestRunner {
         let rendered = totalRenderedFrames
         let keyframes = keyframesObserved
         let decodeFailures = hevcDecodeFailures
+        let rendererStats = sm.metalRenderer.statsSnapshot()
         let observedDelta = observed - lastTelemetryObservedCount
         let renderedDelta = rendered - lastTelemetryRenderedCount
         let keyframeDelta = keyframes - lastTelemetryKeyframeCount
         let decodeFailureDelta = decodeFailures - lastTelemetryDecodeFailureCount
+        let overwriteDelta = rendererStats.overwrittenFrames - lastTelemetryRendererOverwriteCount
 
         let pipelineWindow = Array(pipelineLatenciesUs.suffix(from: min(lastTelemetryPipelineCount, pipelineLatenciesUs.count)))
         let glassWindow = Array(glassToGlassLatenciesUs.suffix(from: min(lastTelemetryGlassCount, glassToGlassLatenciesUs.count)))
@@ -2545,6 +2548,7 @@ final class DeviceTestRunner {
         lastTelemetryDecodeFailureCount = decodeFailures
         lastTelemetryPipelineCount = pipelineLatenciesUs.count
         lastTelemetryGlassCount = glassToGlassLatenciesUs.count
+        lastTelemetryRendererOverwriteCount = rendererStats.overwrittenFrames
 
         let transport: String
         if sm.usbTransport.isConnected {
@@ -2559,7 +2563,7 @@ final class DeviceTestRunner {
         let glassSummary = latencyWindowSummary(window: glassWindow)
         let udpStats = sm.udpReassembler.statsSnapshot()
 
-        print("[CONSOLE] STREAM-TELEMETRY t=\(String(format: "%.1f", elapsed))s transport=\(transport) state=\(sm.state.rawValue) observed=\(observedDelta)fps rendered=\(renderedDelta)fps keyframes+\(keyframeDelta) decodeFail+\(decodeFailureDelta) pipeline=\(pipelineSummary) glass=\(glassSummary) reasm[pending=\(udpStats.pendingFrames) ooo=\(udpStats.outOfOrderBuffered) delivered=\(udpStats.framesDelivered) evicted=\(udpStats.framesEvicted) purged=\(udpStats.framesPurged) lastSeq=\(udpStats.lastDeliveredSeq)]")
+        print("[CONSOLE] STREAM-TELEMETRY t=\(String(format: "%.1f", elapsed))s transport=\(transport) state=\(sm.state.rawValue) observed=\(observedDelta)fps rendered=\(renderedDelta)fps keyframes+\(keyframeDelta) decodeFail+\(decodeFailureDelta) renderer[overwrites+\(overwriteDelta) pending=\(rendererStats.hasPendingFrame ? 1 : 0)] pipeline=\(pipelineSummary) glass=\(glassSummary) reasm[pending=\(udpStats.pendingFrames) ooo=\(udpStats.outOfOrderBuffered) delivered=\(udpStats.framesDelivered) evicted=\(udpStats.framesEvicted) purged=\(udpStats.framesPurged) lastSeq=\(udpStats.lastDeliveredSeq)]")
     }
 
     private func latencyWindowSummary(window: [Int64]) -> String {

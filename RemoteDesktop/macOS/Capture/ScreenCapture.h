@@ -60,6 +60,10 @@ typedef void (^ScreenCaptureReauthCallback)(void);
 @property (nonatomic, assign) uint32_t captureWidth;
 @property (nonatomic, assign) uint32_t captureHeight;
 
+/* Target capture cadence. Defaults to 120fps and can be lowered by the
+ * transport so frames are produced evenly at the actual send rate. */
+@property (nonatomic, assign) uint32_t captureFPS;
+
 /* Optional file-backed synthetic source for test runs.
  * When set, startCapture generates frames from this file instead of live display capture.
  * Supported by common macOS still image formats plus video files readable by AVFoundation. */

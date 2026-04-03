@@ -34,6 +34,7 @@ final class WirelessTransport {
 
     private var browser: NWBrowser?
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.wireless.transport")
+    private let mediaProcessingQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.wireless.media-processing")
 
     private var mediaConnection: NWConnection?
     private var inputConnection: NWConnection?
@@ -46,6 +47,8 @@ final class WirelessTransport {
     /// preventing duplicate connections when NWBrowser fires multiple `.added`
     /// events for the same service on different interfaces (Wi-Fi + AWDL).
     private var connectedServiceName: String?
+    private var pendingMediaCallbacks = 0
+    private var maxPendingMediaCallbacks = 0
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "WirelessTransport")
 
@@ -487,12 +490,33 @@ final class WirelessTransport {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
 
+            if error == nil {
+                /* Keep the DTLS receive pipeline armed before we hand the
+                 * datagram to reassembly/decode. Media processing can be
+                 * expensive enough to starve receive callbacks under load if
+                 * we wait to reschedule until after it completes. */
+                self.scheduleMediaReceive(connection)
+            }
+
             if let data = content, !data.isEmpty {
                 self.mediaRecvCount += 1
                 if self.mediaRecvCount <= 3 {
                     print("[CONSOLE] WirelessTransport: UDP media recv #\(self.mediaRecvCount) (\(data.count) bytes)")
                 }
-                self.onMediaReceived?(data)
+                self.pendingMediaCallbacks += 1
+                self.maxPendingMediaCallbacks = max(self.maxPendingMediaCallbacks, self.pendingMediaCallbacks)
+                let backlog = self.pendingMediaCallbacks
+                if backlog >= 8 && (backlog == 8 || backlog % 16 == 0) {
+                    print("[CONSOLE] WirelessTransport: media processing backlog=\(backlog) max=\(self.maxPendingMediaCallbacks)")
+                }
+                self.mediaProcessingQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    self.onMediaReceived?(data)
+                    self.transportQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        self.pendingMediaCallbacks = max(0, self.pendingMediaCallbacks - 1)
+                    }
+                }
             }
 
             if let error = error {
@@ -501,8 +525,7 @@ final class WirelessTransport {
             }
             /* For DTLS/UDP: ignore isComplete. Each datagram from the sender has
              * is_complete=true (required by DTLS), but this does NOT mean the
-             * connection is closed. Always re-schedule to receive next datagram. */
-            self.scheduleMediaReceive(connection)
+             * connection is closed. */
         }
     }
 

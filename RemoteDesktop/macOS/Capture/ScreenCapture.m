@@ -238,6 +238,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         _compressorInitialized = NO;
         _needsReauthorization = NO;
         _lastFrameTime = 0;
+        self.captureFPS = kSyntheticFPS;
 
         dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
             DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
@@ -333,7 +334,8 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     /* Configure capture */
     SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
     config.pixelFormat = kCVPixelFormatType_32BGRA;  /* RD-CAP-06: BGRA throughout */
-    config.minimumFrameInterval = CMTimeMake(1, 120); /* RD-CAP-02: 120fps */
+    uint32_t targetFPS = MAX((uint32_t)1, self.captureFPS > 0 ? self.captureFPS : (uint32_t)kSyntheticFPS);
+    config.minimumFrameInterval = CMTimeMake(1, (int32_t)targetFPS);
     config.queueDepth = 3;
     config.showsCursor = YES;
     /* Determine capture resolution.
@@ -360,8 +362,9 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     config.width = pixelWidth;
     config.height = pixelHeight;
 
-    os_log(sc_log(), "Setting up capture: %lux%lu @120fps BGRA (display points: %lux%lu)",
+    os_log(sc_log(), "Setting up capture: %lux%lu @%ufps BGRA (display points: %lux%lu)",
            (unsigned long)pixelWidth, (unsigned long)pixelHeight,
+           targetFPS,
            (unsigned long)display.width, (unsigned long)display.height);
 
     /* Create content filter with the display — no excluded apps */
@@ -537,11 +540,12 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     config.width = width;
     config.height = height;
     config.pixelFormat = kCVPixelFormatType_32BGRA;
-    config.minimumFrameInterval = CMTimeMake(1, 120);
+    uint32_t targetFPS = MAX((uint32_t)1, self.captureFPS > 0 ? self.captureFPS : (uint32_t)kSyntheticFPS);
+    config.minimumFrameInterval = CMTimeMake(1, (int32_t)targetFPS);
     config.queueDepth = 3;
     config.showsCursor = YES;
 
-    os_log(sc_log(), "Updating capture resolution to %ux%u (live reconfigure)", width, height);
+    os_log(sc_log(), "Updating capture resolution to %ux%u @%ufps (live reconfigure)", width, height, targetFPS);
 
     [_stream updateConfiguration:config completionHandler:^(NSError * _Nullable error) {
         if (error) {
@@ -1018,6 +1022,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
 
 - (CMSampleBufferRef)_createSyntheticSampleBufferForPixelBuffer:(CVPixelBufferRef)pixelBuffer
                                                      frameIndex:(uint64_t)frameIndex {
+    uint32_t targetFPS = MAX((uint32_t)1, self.captureFPS > 0 ? self.captureFPS : (uint32_t)kSyntheticFPS);
     CMVideoFormatDescriptionRef format = NULL;
     OSStatus formatStatus = CMVideoFormatDescriptionCreateForImageBuffer(NULL, pixelBuffer, &format);
     if (formatStatus != noErr || !format) {
@@ -1026,9 +1031,9 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     }
 
     CMSampleTimingInfo timing = {
-        .presentationTimeStamp = CMTimeMake((int64_t)frameIndex, kSyntheticFPS),
+        .presentationTimeStamp = CMTimeMake((int64_t)frameIndex, (int32_t)targetFPS),
         .decodeTimeStamp = kCMTimeInvalid,
-        .duration = CMTimeMake(1, kSyntheticFPS),
+        .duration = CMTimeMake(1, (int32_t)targetFPS),
     };
 
     CMSampleBufferRef sampleBuffer = NULL;
@@ -1127,9 +1132,11 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     [self _startWatchdog];
 
     __block uint64_t frameIndex = 0;
-    uint64_t timerIntervalNs = (uint64_t)llround((double)NSEC_PER_SEC /
-                                                 (self.testCaptureStressMode ? (double)kSyntheticFPS :
-                                                  MAX(1.0, _syntheticIsVideo ? _syntheticSourceFPS : (double)kSyntheticFPS)));
+    double timerFPSValue = MAX(1.0, (double)(self.captureFPS > 0 ? self.captureFPS : (uint32_t)kSyntheticFPS));
+    if (_syntheticIsVideo && _syntheticSourceFPS > 1.0) {
+        timerFPSValue = MIN(timerFPSValue, _syntheticSourceFPS);
+    }
+    uint64_t timerIntervalNs = (uint64_t)llround((double)NSEC_PER_SEC / timerFPSValue);
     _syntheticTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _captureQueue);
     dispatch_source_set_timer(_syntheticTimer,
                               dispatch_time(DISPATCH_TIME_NOW, 0),
@@ -1147,7 +1154,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     });
     dispatch_resume(_syntheticTimer);
 
-    int timerFPS = self.testCaptureStressMode ? kSyntheticFPS : (_syntheticIsVideo ? (int)llround(MAX(1.0, _syntheticSourceFPS)) : kSyntheticFPS);
+    int timerFPS = (int)llround(timerFPSValue);
     os_log(sc_log(), "Synthetic capture started: %lux%lu @%dfps (%{public}s)",
            (unsigned long)pixelWidth, (unsigned long)pixelHeight,
            timerFPS,

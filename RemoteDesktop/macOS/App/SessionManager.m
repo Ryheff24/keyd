@@ -55,14 +55,15 @@ static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
 static const int kWirelessHEVCFPS = 60;
-static const int kWirelessHEVCBitrate = 15000000; /* 15 Mbps */
+static const int kWirelessHEVCBitrate = 4000000; /* 4 Mbps */
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
+static const BOOL kWirelessUseTCPMedia = NO;
 static const NSUInteger kWirelessLargeFrameChunkThreshold = 320;
 static const NSUInteger kWirelessMaxQueuedChunks = 384;
-static const NSUInteger kWirelessCongestionChunkThreshold = 160;
-static const uint64_t kWirelessMinFrameIntervalUs = 16667;       /* 60 fps nominal */
-static const uint64_t kWirelessCongestedFrameIntervalUs = 20000; /* 50 fps under backlog */
+static const NSUInteger kWirelessCongestionChunkThreshold = 224;
+static const uint64_t kWirelessCongestedFrameIntervalUs = 12000; /* smooth bursty capture without capping 60fps */
+static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate source timestamp jitter around cadence */
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -720,6 +721,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 - (void)onTransportConnected {
     os_log(sLog, "Transport connected -- sending handshake");
     _tcpMediaSendsInFlight = 0;
+    _wirelessLastEncodeSubmitUs = 0;
     [self stopWirelessPerformanceTimer];
     [self transitionTo:SESSION_STREAMING];
 
@@ -942,26 +944,32 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
             if (!strongSelf->_hevcEncoder.isActive) return;
 
-            if (strongSelf->_wirelessTransport.isConnected && !strongSelf->_usbTransport.isConnected) {
+            if (strongSelf->_wirelessTransport.isConnected &&
+                !strongSelf->_usbTransport.isConnected &&
+                !kWirelessUseTCPMedia) {
                 NSUInteger queuedChunks = strongSelf->_wirelessTransport.queuedMediaChunkCount;
-                uint64_t minIntervalUs = queuedChunks > kWirelessCongestionChunkThreshold
-                    ? kWirelessCongestedFrameIntervalUs
-                    : kWirelessMinFrameIntervalUs;
-                uint64_t submitTimeUs = captureTimestampUs > 0 ? captureTimestampUs : keydrd_host_time_us();
-                uint64_t lastSubmitUs = strongSelf.wirelessLastEncodeSubmitUs;
-                if (lastSubmitUs > 0 && submitTimeUs > lastSubmitUs &&
-                    submitTimeUs - lastSubmitUs < minIntervalUs) {
-                    OSAtomicIncrement32Barrier(&_wifiPerfPreEncodeDrops);
-                    static int wifiPreEncodeDropCount = 0;
-                    wifiPreEncodeDropCount++;
-                    if (wifiPreEncodeDropCount <= 10 || wifiPreEncodeDropCount % 100 == 0) {
-                        os_log(sLog, "WiFi pre-encode pacing: dropped source frame queued=%lu minInterval=%lluus delta=%lluus totalDropped=%d",
-                               (unsigned long)queuedChunks, minIntervalUs,
-                               submitTimeUs - lastSubmitUs, wifiPreEncodeDropCount);
+                if (queuedChunks > kWirelessCongestionChunkThreshold) {
+                    uint64_t minIntervalUs = kWirelessCongestedFrameIntervalUs;
+                    uint64_t submitTimeUs = captureTimestampUs > 0 ? captureTimestampUs : keydrd_host_time_us();
+                    uint64_t nextSubmitUs = strongSelf.wirelessLastEncodeSubmitUs;
+                    if (nextSubmitUs > 0 &&
+                        submitTimeUs + kWirelessPacingToleranceUs < nextSubmitUs) {
+                        OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfPreEncodeDrops);
+                        static int wifiPreEncodeDropCount = 0;
+                        wifiPreEncodeDropCount++;
+                        if (wifiPreEncodeDropCount <= 10 || wifiPreEncodeDropCount % 100 == 0) {
+                            os_log(sLog, "WiFi congested pre-encode drop: queued=%lu minInterval=%lluus delta=%lluus totalDropped=%d",
+                                   (unsigned long)queuedChunks, minIntervalUs,
+                                   nextSubmitUs > submitTimeUs ? nextSubmitUs - submitTimeUs : 0,
+                                   wifiPreEncodeDropCount);
+                        }
+                        return;
                     }
-                    return;
+                    uint64_t scheduledSubmitUs = nextSubmitUs > submitTimeUs ? nextSubmitUs : submitTimeUs;
+                    strongSelf.wirelessLastEncodeSubmitUs = scheduledSubmitUs + minIntervalUs;
+                } else {
+                    strongSelf.wirelessLastEncodeSubmitUs = 0;
                 }
-                strongSelf.wirelessLastEncodeSubmitUs = submitTimeUs;
             }
 
             [strongSelf->_hevcEncoder encodePixelBuffer:pixelBuffer timestamp:timestamp captureTimestampUs:captureTimestampUs];
@@ -1058,6 +1066,21 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             }
         }];
     } else if (_wirelessTransport.isConnected) {
+        if (kWirelessUseTCPMedia) {
+            /* WiFi media is now kept on the established TLS/TCP stream.
+             * The paced DTLS chunk path still works, but on this workload it
+             * was the dominant source of burst loss, recovery freezes, and the
+             * reconnect cascade near the end of the long-run test. */
+            static int wifiTCPMediaLogCount = 0;
+            if (wifiTCPMediaLogCount < 10 || wifiTCPMediaLogCount % 200 == 0) {
+                os_log(sLog, "WiFi media via TCP: seq=%u bytes=%zu",
+                       originalHeader->seq, payloadLen);
+            }
+            wifiTCPMediaLogCount++;
+            [_wirelessTransport sendMediaFrameViaTCP:data length:len];
+            return;
+        }
+
         /* WiFi: keep the whole stream on UDP when possible.
          * Mixing startup/keyframes across TCP and UDP created visible stalls.
          * Pre-encode pacing decides how much content we feed the encoder.
@@ -1071,31 +1094,28 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         }
 
         if (chunkCount > kWirelessLargeFrameChunkThreshold) {
-            OSAtomicIncrement32Barrier(&_wifiPerfTCPFallbacks);
-            static int tcpFallbackCount = 0;
-            tcpFallbackCount++;
-            if (tcpFallbackCount <= 10 || tcpFallbackCount % 100 == 0) {
-                os_log(sLog, "WiFi oversized-frame TCP fallback: seq=%u chunks=%lu bytes=%zu queued=%lu",
+            OSAtomicIncrement32Barrier(&_wifiPerfQueueDrops);
+            static int oversizedDropCount = 0;
+            oversizedDropCount++;
+            if (oversizedDropCount <= 10 || oversizedDropCount % 100 == 0) {
+                os_log(sLog, "WiFi oversized-frame drop: seq=%u chunks=%lu bytes=%zu queued=%lu totalDropped=%d",
                        originalHeader->seq, (unsigned long)chunkCount, payloadLen,
-                       (unsigned long)queuedChunks);
+                       (unsigned long)queuedChunks, oversizedDropCount);
             }
-            [transport sendMediaFrameViaTCP:data length:len];
+            [_hevcEncoder requestKeyframe];
             return;
         }
 
         if (queuedChunks + chunkCount > kWirelessMaxQueuedChunks) {
-            OSAtomicIncrement32Barrier(&_wifiPerfTCPFallbacks);
-            static int wifiQueueFallbackCount = 0;
-            wifiQueueFallbackCount++;
-            if (wifiQueueFallbackCount <= 10 || wifiQueueFallbackCount % 100 == 0) {
-                os_log(sLog, "WiFi queue-overflow TCP fallback: seq=%u chunks=%lu queued=%lu totalFallbacks=%d",
+            OSAtomicIncrement32Barrier(&_wifiPerfQueueDrops);
+            static int wifiQueueDropCount = 0;
+            wifiQueueDropCount++;
+            if (wifiQueueDropCount <= 10 || wifiQueueDropCount % 100 == 0) {
+                os_log(sLog, "WiFi queue-overflow drop: seq=%u chunks=%lu queued=%lu totalDropped=%d",
                        originalHeader->seq, (unsigned long)chunkCount,
-                       (unsigned long)queuedChunks, wifiQueueFallbackCount);
+                       (unsigned long)queuedChunks, wifiQueueDropCount);
             }
-            /* Dropping an encoded inter-frame poisons the decoder chain until
-             * the next keyframe. Once ordering is unified on the iPad, TCP
-             * fallback is the safer overload behavior than post-encode drop. */
-            [transport sendMediaFrameViaTCP:data length:len];
+            [_hevcEncoder requestKeyframe];
             return;
         }
 
@@ -1153,11 +1173,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t peakQueued = strongSelf->_wifiPerfPeakQueuedChunks;
         NSUInteger queuedNow = strongSelf->_wirelessTransport.queuedMediaChunkCount;
         double avgKB = encodedFrames > 0 ? ((double)encodedBytes / (double)encodedFrames) / 1024.0 : 0.0;
+        const char *pacingMode = queuedNow >= 320 ? "congested" : (queuedNow <= 96 ? "fast" : "default");
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d queuedNow=%lu queuedPeak=%d",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
                preDrops, queueDrops, tcpFallbacks,
-               (unsigned long)queuedNow, peakQueued);
+               (unsigned long)queuedNow, peakQueued, pacingMode);
 
         [strongSelf resetWirelessPerformanceWindow];
     }];
@@ -1498,11 +1519,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         bitrate = 40000000; /* 40 Mbps — realistic target, not undershooting */
         quality = 0.0f;     /* bitrate-based, faster than quality-based */
         fps = 120;
+        _capture.captureFPS = 120;
         self.wirelessLastEncodeSubmitUs = 0;
     } else {
         bitrate = kWirelessHEVCBitrate;
         quality = 0.0f;     /* bitrate-based */
         fps = kWirelessHEVCFPS;
+        _capture.captureFPS = fps;
         self.wirelessLastEncodeSubmitUs = 0;
         keydrd_limit_size(_viewportWidth, _viewportHeight,
                           kWirelessMaxEncodeWidth, kWirelessMaxEncodeHeight,
@@ -1587,11 +1610,16 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     uint8_t subtype = payload[0];
 
     switch (subtype) {
-        case 0x02: {
+        case KEYDRD_MODE_CHANGE_ECO: {
             /* Eco mode change: next byte is 0x01 (on) or 0x00 (off) */
             if (length < sizeof(InputEventHeader) + 2) return;
             BOOL ecoOn = (payload[1] != 0);
             [self handleEcoModeRequest:ecoOn];
+            break;
+        }
+        case KEYDRD_MODE_CHANGE_REQUEST_KEYFRAME: {
+            os_log(sLog, "Immediate HEVC keyframe requested by iPad recovery path");
+            [_hevcEncoder requestKeyframe];
             break;
         }
         default:
@@ -1607,6 +1635,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 
     if (ecoOn) {
         _isEcoMode = YES;
+        _capture.captureFPS = kEcoFPS;
 
         /* Activate HEVC at reduced resolution (1080p) and 30fps.
          * Eco mode always uses bitrate-based encoding (quality=0). */

@@ -136,6 +136,11 @@ enum InputEventType: UInt8 {
     case latencyProbe       = 0xFF
 }
 
+enum ModeChangeSubtype: UInt8 {
+    case eco = 0x02
+    case requestKeyframe = 0x03
+}
+
 /// Swift mirror of the C InputEventHeader struct (9 bytes packed).
 struct InputEventHeader {
     let type: UInt8    // InputEventType

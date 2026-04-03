@@ -58,6 +58,7 @@ final class UDPReassembler {
 
     /// Callback to deliver reassembled complete frames (header bytes + payload).
     var onFrameReassembled: ((Data) -> Void)?
+    var onRecoveryNeeded: (() -> Void)?
 
     /// Pending frames keyed by sequence number.
     private var pendingFrames: [UInt16: PendingFrame] = [:]
@@ -66,7 +67,9 @@ final class UDPReassembler {
     private var insertionOrder: [UInt16] = []
 
     /// Timer that periodically purges stale incomplete frames.
-    private var purgeTimer: Timer?
+    private var purgeTimer: DispatchSourceTimer?
+    private let queue = DispatchQueue(label: "com.ryheff.keyd.remote.app.udpreassembler")
+    private let callbackQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.udpreassembler.callback")
 
     private static let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "UDPReassembler")
 
@@ -99,7 +102,7 @@ final class UDPReassembler {
     }
 
     deinit {
-        purgeTimer?.invalidate()
+        purgeTimer?.cancel()
     }
 
     // MARK: - Public API
@@ -108,6 +111,44 @@ final class UDPReassembler {
     ///
     /// - Parameter data: Raw packet data including the 24-byte MediaFrameHeader + chunk payload.
     func processChunk(_ data: Data) {
+        queue.async {
+            self.processChunkLocked(data)
+        }
+    }
+
+    func statsSnapshot() -> StatsSnapshot {
+        queue.sync {
+            StatsSnapshot(
+                framesDelivered: framesDelivered,
+                framesEvicted: framesEvicted,
+                framesPurged: framesPurged,
+                chunksReceived: chunksReceived,
+                pendingFrames: pendingFrames.count,
+                outOfOrderBuffered: outOfOrderBuffer.count,
+                hasDeliveredFirstFrame: hasDeliveredFirstFrame,
+                lastDeliveredSeq: lastDeliveredSeq
+            )
+        }
+    }
+
+    /// Returns current loss rate (0.0 to 1.0) and resets counters for the next window.
+    func consumeLossRate() -> Float {
+        queue.sync {
+            let total = framesDelivered + framesEvicted + framesPurged
+            guard total > 0 else { return 0 }
+            let lost = framesEvicted + framesPurged
+            let rate = Float(lost) / Float(total)
+            // Reset for next window
+            framesDelivered = 0
+            framesEvicted = 0
+            framesPurged = 0
+            return rate
+        }
+    }
+
+    // MARK: - Private
+
+    private func processChunkLocked(_ data: Data) {
         guard data.count >= MediaFrameHeader.size else {
             print("[CONSOLE] UDPReassembler: chunk too small (\(data.count) bytes)")
             return
@@ -178,22 +219,6 @@ final class UDPReassembler {
             deliverCompleteFrame(seq: seq, pending: pending)
         }
     }
-
-    func statsSnapshot() -> StatsSnapshot {
-        StatsSnapshot(
-            framesDelivered: framesDelivered,
-            framesEvicted: framesEvicted,
-            framesPurged: framesPurged,
-            chunksReceived: chunksReceived,
-            pendingFrames: pendingFrames.count,
-            outOfOrderBuffered: outOfOrderBuffer.count,
-            hasDeliveredFirstFrame: hasDeliveredFirstFrame,
-            lastDeliveredSeq: lastDeliveredSeq
-        )
-    }
-
-    // MARK: - Private
-
     /// Reassemble a complete frame into deliverable data.
     private func buildFrameData(seq: UInt16, pending: PendingFrame) -> Data? {
         // Reassemble payload in chunk_idx order
@@ -247,6 +272,12 @@ final class UDPReassembler {
         deliverFrameData(seq: seq, frameData: frameData)
     }
 
+    private func enqueueReassembledFrame(_ frameData: Data) {
+        callbackQueue.async { [weak self] in
+            self?.onFrameReassembled?(frameData)
+        }
+    }
+
     /// Deliver a complete frame while preserving sequence continuity across
     /// all media paths, including direct single-chunk and TCP-fallback frames.
     private func deliverFrameData(seq: UInt16, frameData: Data) {
@@ -271,7 +302,7 @@ final class UDPReassembler {
             lastDeliveredSeq = seq
             framesDelivered += 1
             print("[CONSOLE] UDPReassembler: recovered on keyframe seq=\(seq)")
-            onFrameReassembled?(frameData)
+            enqueueReassembledFrame(frameData)
             return
         }
 
@@ -285,7 +316,7 @@ final class UDPReassembler {
             hasDeliveredFirstFrame = true
             lastDeliveredSeq = seq
             framesDelivered += 1
-            onFrameReassembled?(frameData)
+            enqueueReassembledFrame(frameData)
             drainOutOfOrderBuffer()
             return
         }
@@ -299,7 +330,7 @@ final class UDPReassembler {
             // Next in sequence — deliver immediately
             lastDeliveredSeq = seq
             framesDelivered += 1
-            onFrameReassembled?(frameData)
+            enqueueReassembledFrame(frameData)
             drainOutOfOrderBuffer()
         } else if distance <= Self.maxForwardGapBeforeSkip {
             // Slightly ahead — buffer and wait for the missing frames rather than
@@ -317,7 +348,7 @@ final class UDPReassembler {
                 lastDeliveredSeq = seq
                 framesDelivered += 1
                 print("[CONSOLE] UDPReassembler: skipped forward to keyframe seq=\(seq) after gap")
-                onFrameReassembled?(frameData)
+                enqueueReassembledFrame(frameData)
             } else {
                 enterRecoveryMode(reason: "gap exceeded \(Self.maxForwardGapBeforeSkip) frames", missingSeq: lastDeliveredSeq &+ 1)
             }
@@ -331,36 +362,29 @@ final class UDPReassembler {
             guard let frameData = outOfOrderBuffer.removeValue(forKey: nextSeq) else { break }
             lastDeliveredSeq = nextSeq
             framesDelivered += 1
-            onFrameReassembled?(frameData)
+            enqueueReassembledFrame(frameData)
         }
     }
 
     private func enterRecoveryMode(reason: String, missingSeq: UInt16) {
-        if !awaitingKeyframeAfterLoss {
+        let shouldNotifyRecovery = !awaitingKeyframeAfterLoss
+        if shouldNotifyRecovery {
             print("[CONSOLE] UDPReassembler: entering recovery, waiting for keyframe (\(reason), missing seq=\(missingSeq), buffered=\(outOfOrderBuffer.count), pending=\(pendingFrames.count))")
         }
         awaitingKeyframeAfterLoss = true
         droppedUntilKeyframeCount = 0
         outOfOrderBuffer.removeAll()
+        if shouldNotifyRecovery {
+            callbackQueue.async { [weak self] in
+                self?.onRecoveryNeeded?()
+            }
+        }
     }
 
     /// Compute forward distance between two wrapping UInt16 sequence numbers.
     /// Returns a value in [0, 65535]. A result > 32768 means `to` is behind `from`.
     private func seqDistance(from a: UInt16, to b: UInt16) -> UInt16 {
         return b &- a
-    }
-
-    /// Returns current loss rate (0.0 to 1.0) and resets counters for the next window.
-    func consumeLossRate() -> Float {
-        let total = framesDelivered + framesEvicted + framesPurged
-        guard total > 0 else { return 0 }
-        let lost = framesEvicted + framesPurged
-        let rate = Float(lost) / Float(total)
-        // Reset for next window
-        framesDelivered = 0
-        framesEvicted = 0
-        framesPurged = 0
-        return rate
     }
 
     /// Evict the oldest pending frame to make room for a new one.
@@ -383,10 +407,14 @@ final class UDPReassembler {
 
     /// Start a timer that periodically purges stale incomplete frames.
     private func startPurgeTimer() {
-        purgeTimer = Timer.scheduledTimer(withTimeInterval: Self.frameTimeoutInterval, repeats: true) {
-            [weak self] _ in
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.frameTimeoutInterval,
+                       repeating: Self.frameTimeoutInterval)
+        timer.setEventHandler { [weak self] in
             self?.purgeStaleFrames()
         }
+        timer.resume()
+        purgeTimer = timer
     }
 
     /// Remove any pending frames older than the timeout interval.

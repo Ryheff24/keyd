@@ -56,6 +56,9 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 /// @param captureTimestampUs Host-time capture time in microseconds.
 - (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp captureTimestampUs:(uint64_t)captureTimestampUs;
 
+/// Request that the next submitted frame be encoded as a keyframe.
+- (void)requestKeyframe;
+
 /// Stop the encoder and release the compression session.
 - (void)stop;
 

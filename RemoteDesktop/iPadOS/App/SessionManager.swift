@@ -64,6 +64,8 @@ final class SessionManager {
 
     private var latencyProbeTimer: Timer?
     private static let latencyProbeInterval: TimeInterval = 1.0
+    private var lastKeyframeRequestUs: UInt64 = 0
+    private static let keyframeRequestCooldownUs: UInt64 = 500_000
 
     // MARK: - Reconnection
 
@@ -333,6 +335,11 @@ final class SessionManager {
         // Wire UDPReassembler: delivers complete frames to handleReceivedFrame
         udpReassembler.onFrameReassembled = { [weak self] data in
             self?.handleReceivedFrame(data)
+        }
+        udpReassembler.onRecoveryNeeded = { [weak self] in
+            DispatchQueue.main.async {
+                self?.requestImmediateKeyframe()
+            }
         }
 
         // Set up USB NCM transport callbacks
@@ -868,11 +875,13 @@ final class SessionManager {
     /// Record a frame arrival timestamp for rolling FPS calculation.
     private func recordFrameTimestamp() {
         let now = CFAbsoluteTimeGetCurrent()
-        frameTimestamps.append(now)
+        DispatchQueue.main.async {
+            self.frameTimestamps.append(now)
 
-        // Keep only the last N timestamps
-        if frameTimestamps.count > Self.fpsWindowSize {
-            frameTimestamps.removeFirst(frameTimestamps.count - Self.fpsWindowSize)
+            // Keep only the last N timestamps
+            if self.frameTimestamps.count > Self.fpsWindowSize {
+                self.frameTimestamps.removeFirst(self.frameTimestamps.count - Self.fpsWindowSize)
+            }
         }
     }
 
@@ -914,12 +923,31 @@ final class SessionManager {
         let header = InputEventHeader(type: InputEventType.modeChange.rawValue, tsUs: timestamp)
         var data = header.serialize()
 
-        // Append subtype byte: 0x02 = eco mode change, then 0x01/0x00 for on/off
-        var subtype: UInt8 = 0x02
+        // Append subtype byte, then 0x01/0x00 for on/off
+        var subtype = ModeChangeSubtype.eco.rawValue
         data.append(Data(bytes: &subtype, count: 1))
         var enabled: UInt8 = isEco ? 1 : 0
         data.append(Data(bytes: &enabled, count: 1))
 
+        sendInputEventToMac(data)
+    }
+
+    private func requestImmediateKeyframe() {
+        guard wirelessTransport.isConnected, !usbTransport.isConnected else { return }
+
+        let timestamp = currentTimestampUs()
+        if lastKeyframeRequestUs > 0,
+           timestamp > lastKeyframeRequestUs,
+           timestamp - lastKeyframeRequestUs < Self.keyframeRequestCooldownUs {
+            return
+        }
+        lastKeyframeRequestUs = timestamp
+
+        let header = InputEventHeader(type: InputEventType.modeChange.rawValue, tsUs: timestamp)
+        var data = header.serialize()
+        var subtype = ModeChangeSubtype.requestKeyframe.rawValue
+        data.append(Data(bytes: &subtype, count: 1))
+        print("[CONSOLE] SessionManager: requesting immediate HEVC keyframe for recovery")
         sendInputEventToMac(data)
     }
 
