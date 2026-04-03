@@ -113,6 +113,22 @@ final class DeviceTestRunner {
     private var throughputFrames: Int = 0
     private static let throughputDuration: TimeInterval = 10.0
 
+    // Parallel full-run performance suite
+    private var parallelPerformanceSuiteActive = false
+    private var parallelPerformanceSuiteFinalized = false
+    private var parallelPerformanceStartTime: CFAbsoluteTime = 0
+    private var parallelPerformanceFrameTimestamps: [CFAbsoluteTime] = []
+    private var parallelPerformanceThroughputBytes = 0
+    private var parallelPerformanceRenderedStartCount = 0
+    private var parallelPerformanceFramesReceivedStartCount = 0
+    private var parallelPerformanceDeliveredStartCount = 0
+    private var parallelPerformanceEvictedStartCount = 0
+    private var parallelPerformancePurgedStartCount = 0
+    private var parallelPerformanceChunksStartCount = 0
+    private var parallelPerformancePipelineStartCount = 0
+    private var parallelPerformanceGlassStartCount = 0
+    private static let parallelPerformanceHeavyLoadLeadIn: TimeInterval = 25.0
+
     // Continuous stream telemetry across the full test run
     private var streamTelemetryTimer: Timer?
     private var streamTelemetryStartTime: CFAbsoluteTime = 0
@@ -246,6 +262,10 @@ final class DeviceTestRunner {
         // frame bytes actually received from the transport.
         if throughputTestActive && !throughputTestComplete {
             throughputFrames += 1
+        }
+
+        if parallelPerformanceSuiteActive {
+            parallelPerformanceFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
         }
 
         // Feed WiFi baseline measurement during WiFi rotation phase
@@ -432,6 +452,10 @@ final class DeviceTestRunner {
 
         if throughputTestActive && !throughputTestComplete {
             throughputBytes += MediaFrameHeader.size + Int(header.payloadSize)
+        }
+
+        if parallelPerformanceSuiteActive {
+            parallelPerformanceThroughputBytes += MediaFrameHeader.size + Int(header.payloadSize)
         }
 
         // Pipeline latency (capture-to-decode): Mac embeds host time in ts_us.
@@ -726,7 +750,7 @@ final class DeviceTestRunner {
     private func runTransportAssertionTest() {
         guard let expected = expectTransport else {
             // No --expect-transport flag, skip
-            runResolutionTest()
+            runParallelPerformanceSuite()
             return
         }
 
@@ -734,7 +758,7 @@ final class DeviceTestRunner {
 
         guard transportDetected else {
             recordResult(name: "transport-assertion", passed: false, detail: "no transport detected yet")
-            runResolutionTest()
+            runParallelPerformanceSuite()
             return
         }
 
@@ -759,7 +783,380 @@ final class DeviceTestRunner {
         transportAssertionComplete = true
         recordResult(name: "transport-assertion", passed: passed,
                     detail: "expected=\(normalizedExpected), actual=\(actualMapped)")
-        runResolutionTest()
+        runParallelPerformanceSuite()
+    }
+
+    private func runParallelPerformanceSuite() {
+        guard let sm = sessionManager else {
+            recordResult(name: "resolution", passed: false, detail: "sessionManager nil")
+            recordResult(name: "fps", passed: false, detail: "sessionManager nil")
+            recordResult(name: "frame-pacing", passed: false, detail: "sessionManager nil")
+            recordResult(name: "frame-loss", passed: false, detail: "sessionManager nil")
+            recordResult(name: "throughput", passed: false, detail: "sessionManager nil")
+            recordResult(name: "pipeline-latency", passed: false, detail: "sessionManager nil")
+            recordResult(name: "glass-to-glass-latency", passed: false, detail: "sessionManager nil")
+            if skipTransportRotation {
+                runSecurityTests()
+            } else {
+                runTransportRotationTests()
+            }
+            return
+        }
+
+        guard !parallelPerformanceSuiteActive, !parallelPerformanceSuiteFinalized else { return }
+
+        parallelPerformanceSuiteActive = true
+        parallelPerformanceSuiteFinalized = false
+        parallelPerformanceStartTime = CFAbsoluteTimeGetCurrent()
+        parallelPerformanceFrameTimestamps = []
+        parallelPerformanceThroughputBytes = 0
+        parallelPerformanceRenderedStartCount = sm.metalRenderer.renderedFrameCount
+        parallelPerformanceFramesReceivedStartCount = framesReceived
+        parallelPerformanceDeliveredStartCount = sm.udpReassembler.framesDelivered
+        parallelPerformanceEvictedStartCount = sm.udpReassembler.framesEvicted
+        parallelPerformancePurgedStartCount = sm.udpReassembler.framesPurged
+        parallelPerformanceChunksStartCount = sm.udpReassembler.chunksReceived
+        parallelPerformancePipelineStartCount = pipelineLatenciesUs.count
+        parallelPerformanceGlassStartCount = glassToGlassLatenciesUs.count
+
+        print("[TEST] RUNNING: resolution")
+        print("[TEST] RUNNING: fps")
+        print("[TEST] RUNNING: frame-pacing")
+        print("[TEST] RUNNING: frame-loss")
+        print("[TEST] RUNNING: throughput")
+        print("[TEST] RUNNING: pipeline-latency")
+        print("[TEST] RUNNING: glass-to-glass-latency")
+
+        runTieredLatencyTest()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.parallelPerformanceHeavyLoadLeadIn) { [weak self] in
+            self?.runHeavyLoadTest()
+        }
+    }
+
+    private func finalizeParallelPerformanceSuiteAndContinue() {
+        guard parallelPerformanceSuiteActive, !parallelPerformanceSuiteFinalized else {
+            if skipTransportRotation {
+                runSecurityTests()
+            } else {
+                runTransportRotationTests()
+            }
+            return
+        }
+
+        parallelPerformanceSuiteActive = false
+        parallelPerformanceSuiteFinalized = true
+
+        reportParallelResolution()
+        reportParallelFPSAndPacing()
+        reportParallelFrameLoss()
+        reportParallelThroughput()
+        reportParallelPipelineLatency()
+        reportParallelGlassToGlassLatency()
+
+        if skipTransportRotation {
+            runSecurityTests()
+        } else {
+            runTransportRotationTests()
+        }
+    }
+
+    private func reportParallelResolution() {
+        guard handshakeReceived else {
+            recordResult(name: "resolution", passed: false, detail: "no handshake received")
+            return
+        }
+
+        let iPadW = max(Int(UIScreen.main.nativeBounds.width), Int(UIScreen.main.nativeBounds.height))
+        let iPadH = min(Int(UIScreen.main.nativeBounds.width), Int(UIScreen.main.nativeBounds.height))
+        let (vpW, vpH) = SessionManager.computeViewportPixels(
+            macWidth: Int(handshakeWidth), macHeight: Int(handshakeHeight),
+            screenWidth: iPadW, screenHeight: iPadH
+        )
+
+        let handshakeW = Int(handshakeWidth)
+        let handshakeH = Int(handshakeHeight)
+        let currentVpW = sessionManager?.viewportWidth ?? vpW
+        let currentVpH = sessionManager?.viewportHeight ?? vpH
+
+        guard let frameW = decodedFrameWidths.last, let frameH = decodedFrameHeights.last else {
+            recordResult(name: "resolution", passed: false,
+                        detail: "frame=n/a, viewport=\(vpW)x\(vpH), geometry=\(currentVpW)x\(currentVpH), mac=\(handshakeW)x\(handshakeH) [ISSUES: no decoded frame dimensions to verify]")
+            return
+        }
+
+        let geometryWidthScale = vpW > 0 ? Double(currentVpW) / Double(vpW) : 0
+        let geometryHeightScale = vpH > 0 ? Double(currentVpH) / Double(vpH) : 0
+        let frameWidthScale = vpW > 0 ? Double(frameW) / Double(vpW) : 0
+        let frameHeightScale = vpH > 0 ? Double(frameH) / Double(vpH) : 0
+        let geometryWidthOK = geometryWidthScale >= E2ETestThresholds.Resolution.minGeometryWidthScale
+        let geometryHeightOK = geometryHeightScale >= E2ETestThresholds.Resolution.minGeometryHeightScale
+        let frameWidthOK = frameWidthScale >= E2ETestThresholds.Resolution.minFrameWidthScale
+        let frameHeightOK = frameHeightScale >= E2ETestThresholds.Resolution.minFrameHeightScale
+        let passed = geometryWidthOK && geometryHeightOK && frameWidthOK && frameHeightOK
+
+        var issues: [String] = []
+        if !geometryWidthOK { issues.append("geometry width scale \(String(format: "%.3f", geometryWidthScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryWidthScale))") }
+        if !geometryHeightOK { issues.append("geometry height scale \(String(format: "%.3f", geometryHeightScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryHeightScale))") }
+        if !frameWidthOK { issues.append("frame width scale \(String(format: "%.3f", frameWidthScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameWidthScale))") }
+        if !frameHeightOK { issues.append("frame height scale \(String(format: "%.3f", frameHeightScale)) < \(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameHeightScale))") }
+        var detail = "geometryScale=\(String(format: "%.3f", geometryWidthScale))x\(String(format: "%.3f", geometryHeightScale)) (target >=\(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryWidthScale))x\(String(format: "%.2f", E2ETestThresholds.Resolution.minGeometryHeightScale))), frameScale=\(String(format: "%.3f", frameWidthScale))x\(String(format: "%.3f", frameHeightScale)) (target >=\(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameWidthScale))x\(String(format: "%.2f", E2ETestThresholds.Resolution.minFrameHeightScale))), viewport=\(vpW)x\(vpH), geometry=\(currentVpW)x\(currentVpH), frame=\(frameW)x\(frameH), mac=\(handshakeW)x\(handshakeH)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
+        recordResult(name: "resolution", passed: passed, detail: detail)
+    }
+
+    private func reportParallelFPSAndPacing() {
+        let elapsed = CFAbsoluteTimeGetCurrent() - parallelPerformanceStartTime
+        let timestamps = parallelPerformanceFrameTimestamps
+        let frameCount = timestamps.count
+
+        guard frameCount > 0 else {
+            recordResult(name: "fps", passed: false,
+                        detail: "0 fps, 0 rendered frames in \(String(format: "%.1f", elapsed))s — display link not running")
+            recordResult(name: "frame-pacing", passed: false, detail: "no frame intervals to analyze")
+            return
+        }
+
+        let avgFPS: Double = elapsed > 0 ? Double(frameCount) / elapsed : 0
+        var intervals: [Double] = []
+        for i in 1..<frameCount {
+            intervals.append((timestamps[i] - timestamps[i - 1]) * 1000.0)
+        }
+
+        var stutterCount = 0
+        var medianInterval: Double = 0
+        var p95Interval: Double = 0
+        var p99Interval: Double = 0
+        var maxInterval: Double = 0
+        var minInterval: Double = 0
+        var jitterStdDev: Double = 0
+
+        if !intervals.isEmpty {
+            let sorted = intervals.sorted()
+            minInterval = sorted.first!
+            maxInterval = sorted.last!
+            medianInterval = sorted[sorted.count / 2]
+            p95Interval = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+            p99Interval = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.99))]
+            let mean = intervals.reduce(0, +) / Double(intervals.count)
+            let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+            jitterStdDev = sqrt(variance)
+            stutterCount = intervals.filter { $0 > 100.0 }.count
+        }
+
+        print("[TEST] INFO: fps-detail (avg=\(String(format: "%.1f", avgFPS)) fps, \(frameCount) frames in \(String(format: "%.1f", elapsed))s)")
+        if !intervals.isEmpty {
+            print("[TEST] INFO: frame-intervals (min=\(String(format: "%.0f", minInterval))ms, median=\(String(format: "%.0f", medianInterval))ms, p95=\(String(format: "%.0f", p95Interval))ms, max=\(String(format: "%.0f", maxInterval))ms)")
+            print("[TEST] INFO: frame-jitter (stddev=\(String(format: "%.1f", jitterStdDev))ms, stutters=\(stutterCount) (>100ms gaps))")
+        }
+
+        var worstWindowFPS: Double = avgFPS
+        if timestamps.count >= 10 {
+            let lastTimestamp = timestamps.last!
+            var minFramesInWindow = Int.max
+            for startIdx in 0..<timestamps.count {
+                if timestamps[startIdx] > lastTimestamp - 1.0 { break }
+                let windowEnd = timestamps[startIdx] + 1.0
+                var endIdx = startIdx
+                while endIdx < timestamps.count && timestamps[endIdx] < windowEnd {
+                    endIdx += 1
+                }
+                minFramesInWindow = min(minFramesInWindow, endIdx - startIdx)
+            }
+            if minFramesInWindow < Int.max {
+                worstWindowFPS = Double(minFramesInWindow)
+            }
+        }
+
+        let hasEnoughFrames = frameCount >= E2ETestThresholds.FPS.minFrameCount
+        let stutterRatio = intervals.isEmpty ? 1.0 : Double(stutterCount) / Double(intervals.count)
+        let isConsistent = stutterRatio < (E2ETestThresholds.FPS.maxStutterPercent / 100.0)
+        let noLongFreeze = maxInterval < E2ETestThresholds.FPS.maxGapMs
+        let worstWindowOK = worstWindowFPS >= E2ETestThresholds.FPS.minWorstOneSecondFPS
+        let requiredFPS = max(Double(expectFPS ?? 0), E2ETestThresholds.FPS.minAverageFPS)
+        let meetsTarget = avgFPS >= requiredFPS
+        let onePercentLowFPS = p99Interval > 0 ? 1000.0 / p99Interval : avgFPS
+        let onePercentLowOK = onePercentLowFPS >= E2ETestThresholds.FPS.minOnePercentLowFPS
+        let jitterOK = jitterStdDev <= E2ETestThresholds.FPS.maxJitterMs
+        let stutterRatioPct = stutterRatio * 100.0
+        let fpsPassed = meetsTarget && hasEnoughFrames && isConsistent && noLongFreeze && worstWindowOK && onePercentLowOK && jitterOK
+
+        var fpsIssues: [String] = []
+        if !hasEnoughFrames { fpsIssues.append("too few frames (\(frameCount))") }
+        if !isConsistent { fpsIssues.append("\(String(format: "%.0f", stutterRatioPct))% stutters") }
+        if !noLongFreeze { fpsIssues.append("max gap \(String(format: "%.0f", maxInterval))ms") }
+        if !worstWindowOK { fpsIssues.append("worst 1s window: \(String(format: "%.0f", worstWindowFPS))fps") }
+        if !meetsTarget { fpsIssues.append("avg \(String(format: "%.1f", avgFPS)) < target \(String(format: "%.0f", requiredFPS))") }
+        if !onePercentLowOK { fpsIssues.append("1% low \(String(format: "%.1f", onePercentLowFPS))fps < \(String(format: "%.1f", E2ETestThresholds.FPS.minOnePercentLowFPS))fps") }
+        if !jitterOK { fpsIssues.append("jitter \(String(format: "%.1f", jitterStdDev))ms > \(String(format: "%.1f", E2ETestThresholds.FPS.maxJitterMs))ms") }
+
+        var fpsDetail = "avgFPS=\(String(format: "%.1f", avgFPS)) (target >=\(String(format: "%.0f", requiredFPS))fps), onePctLow=\(String(format: "%.1f", onePercentLowFPS))fps (target >=\(String(format: "%.1f", E2ETestThresholds.FPS.minOnePercentLowFPS))fps), p95Frame=\(String(format: "%.0f", p95Interval))ms, stutterPct=\(String(format: "%.1f", stutterRatioPct)) (target <=\(String(format: "%.1f", E2ETestThresholds.FPS.maxStutterPercent))%), worst1s=\(String(format: "%.0f", worstWindowFPS))fps (target >=\(String(format: "%.0f", E2ETestThresholds.FPS.minWorstOneSecondFPS))fps), maxGap=\(String(format: "%.0f", maxInterval))ms (target <\(String(format: "%.0f", E2ETestThresholds.FPS.maxGapMs))ms), jitter=\(String(format: "%.1f", jitterStdDev))ms (target <=\(String(format: "%.1f", E2ETestThresholds.FPS.maxJitterMs))ms), frames=\(frameCount) (target >=\(E2ETestThresholds.FPS.minFrameCount))"
+        if !fpsIssues.isEmpty {
+            fpsDetail += " [ISSUES: \(fpsIssues.joined(separator: ", "))]"
+        }
+        recordResult(name: "fps", passed: fpsPassed, detail: fpsDetail)
+
+        guard !intervals.isEmpty else {
+            recordResult(name: "frame-pacing", passed: false, detail: "no frame intervals to analyze")
+            return
+        }
+
+        let mean = intervals.reduce(0, +) / Double(intervals.count)
+        let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+        let stddev = sqrt(variance)
+        let cv = mean > 0 ? stddev / mean : 999.0
+        let pacingPassed = cv < E2ETestThresholds.FramePacing.maxCoefficientOfVariation
+        let pacingDetail = "cv=\(String(format: "%.3f", cv)) (target <\(String(format: "%.3f", E2ETestThresholds.FramePacing.maxCoefficientOfVariation))), stddev=\(String(format: "%.1f", stddev))ms, mean=\(String(format: "%.1f", mean))ms"
+        recordResult(name: "frame-pacing", passed: pacingPassed, detail: pacingDetail)
+    }
+
+    private func reportParallelFrameLoss() {
+        guard let sm = sessionManager else {
+            recordResult(name: "frame-loss", passed: false, detail: "sessionManager nil")
+            return
+        }
+
+        let delivered = max(0, sm.udpReassembler.framesDelivered - parallelPerformanceDeliveredStartCount)
+        let evicted = max(0, sm.udpReassembler.framesEvicted - parallelPerformanceEvictedStartCount)
+        let purged = max(0, sm.udpReassembler.framesPurged - parallelPerformancePurgedStartCount)
+        let totalDropped = evicted + purged
+        let chunks = max(0, sm.udpReassembler.chunksReceived - parallelPerformanceChunksStartCount)
+        let rendered = max(0, sm.metalRenderer.renderedFrameCount - parallelPerformanceRenderedStartCount)
+        let received = max(0, framesReceived - parallelPerformanceFramesReceivedStartCount)
+        let totalReceived = max(delivered, received)
+        let totalFrames = totalReceived + totalDropped
+        let lossRatio: Double = totalFrames > 0 ? Double(totalDropped) / Double(totalFrames) : 0
+        let transport = sm.usbTransport.isConnected ? "USB/TCP" : "WiFi/UDP"
+        print("[TEST] INFO: frame-loss (transport=\(transport), delivered=\(delivered), received=\(received), evicted=\(evicted), purged=\(purged), chunks=\(chunks), rendered=\(rendered))")
+
+        let lossOK = lossRatio < (E2ETestThresholds.FrameLoss.maxLossPercent / 100.0)
+        let renderOK = rendered >= E2ETestThresholds.FrameLoss.minRenderedFrames
+        let passed = lossOK && renderOK
+
+        var issues: [String] = []
+        if !lossOK { issues.append("\(String(format: "%.1f", lossRatio * 100))% loss") }
+        if !renderOK { issues.append("only \(rendered) rendered") }
+
+        var detail = "loss=\(String(format: "%.1f", lossRatio * 100))% (target <\(String(format: "%.1f", E2ETestThresholds.FrameLoss.maxLossPercent))%), rendered=\(rendered) (target >=\(E2ETestThresholds.FrameLoss.minRenderedFrames)), transport=\(transport), dropped=\(totalDropped)/\(totalFrames)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
+        recordResult(name: "frame-loss", passed: passed, detail: detail)
+    }
+
+    private func reportParallelThroughput() {
+        let elapsed = CFAbsoluteTimeGetCurrent() - parallelPerformanceStartTime
+        let renderedFrames = parallelPerformanceFrameTimestamps.count
+        let mbps = elapsed > 0 ? (Double(parallelPerformanceThroughputBytes) * 8.0) / (elapsed * 1_000_000.0) : 0
+        let avgFPS = elapsed > 0 ? Double(renderedFrames) / elapsed : 0
+        let passed = renderedFrames >= E2ETestThresholds.Throughput.minFrameCount && avgFPS >= E2ETestThresholds.Throughput.minAverageFPS
+        print("[TEST] INFO: throughput (app-recv=\(String(format: "%.1f", mbps)) Mbps, \(String(format: "%.1f", avgFPS)) rendered fps over \(String(format: "%.1f", elapsed))s, frames=\(renderedFrames), excludes TCP/DTLS/IP overhead)")
+        let detail = "avgFPS=\(String(format: "%.1f", avgFPS)) (target >=\(String(format: "%.1f", E2ETestThresholds.Throughput.minAverageFPS))fps), frames=\(renderedFrames) (target >=\(E2ETestThresholds.Throughput.minFrameCount)), appRecv=\(String(format: "%.1f", mbps))Mbps, duration=\(String(format: "%.1f", elapsed))s"
+        recordResult(name: "throughput", passed: passed, detail: detail)
+    }
+
+    private func reportParallelPipelineLatency() {
+        let sliceStart = min(parallelPerformancePipelineStartCount, pipelineLatenciesUs.count)
+        let values = Array(pipelineLatenciesUs.suffix(from: sliceStart))
+        guard !values.isEmpty else {
+            print("[TEST] INFO: pipeline-latency (no samples — clock skew too large or no frames)")
+            recordResult(name: "pipeline-latency", passed: false, detail: "no samples collected — screen likely black")
+            return
+        }
+
+        let minSamples = E2ETestThresholds.PipelineLatency.minSamples
+        guard values.count >= minSamples else {
+            print("[TEST] INFO: pipeline-latency (only \(values.count) samples — too few, screen likely not rendering)")
+            recordResult(name: "pipeline-latency", passed: false,
+                        detail: "only \(values.count) samples (need \(minSamples)+) — insufficient frame delivery")
+            return
+        }
+
+        let sorted = values.sorted()
+        let count = sorted.count
+        let minMs = sorted.first! / 1000
+        let maxMs = sorted.last! / 1000
+        let medianMs = sorted[count / 2] / 1000
+        let p95Idx = min(Int(Double(count) * 0.95), count - 1)
+        let p95Ms = sorted[p95Idx] / 1000
+        let avgMs = sorted.reduce(0, +) / Int64(count) / 1000
+        let calibrated = clockOffsetCalibrated ? "calibrated, offset=\(clockOffsetUs/1000)ms" : "uncalibrated"
+        print("[TEST] INFO: pipeline-latency (capture-to-decode, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, clock=\(calibrated))")
+
+        let medianThreshold = E2ETestThresholds.PipelineLatency.maxMedianMs
+        let avgThreshold = E2ETestThresholds.PipelineLatency.maxAverageMs
+        let p95Threshold = E2ETestThresholds.PipelineLatency.maxP95Ms
+        let medianOK = medianMs < medianThreshold
+        let avgOK = avgMs < avgThreshold
+        let p95OK = p95Ms < p95Threshold
+        let passed = medianOK && avgOK && p95OK
+        var issues: [String] = []
+        if !medianOK { issues.append("median \(medianMs)ms >= \(medianThreshold)ms") }
+        if !avgOK { issues.append("avg \(avgMs)ms >= \(avgThreshold)ms") }
+        if !p95OK { issues.append("p95 \(p95Ms)ms >= \(p95Threshold)ms") }
+        var detail = "latency[min/med/avg/p95/max]=\(minMs)/\(medianMs)/\(avgMs)/\(p95Ms)/\(maxMs)ms, targets med<\(medianThreshold) avg<\(avgThreshold) p95<\(p95Threshold), samples=\(count), clock=\(calibrated)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
+        recordResult(name: "pipeline-latency", passed: passed, detail: detail)
+    }
+
+    private func reportParallelGlassToGlassLatency() {
+        let sliceStart = min(parallelPerformanceGlassStartCount, glassToGlassLatenciesUs.count)
+        let values = Array(glassToGlassLatenciesUs.suffix(from: sliceStart))
+        guard !values.isEmpty else {
+            print("[TEST] INFO: glass-to-glass-latency (no samples — presentedHandler not firing or clock skew)")
+            recordResult(name: "glass-to-glass-latency", passed: false,
+                        detail: "no samples collected — screen likely black")
+            return
+        }
+
+        let minSamples = E2ETestThresholds.GlassToGlassLatency.minSamples
+        guard values.count >= minSamples else {
+            print("[TEST] INFO: glass-to-glass-latency (only \(values.count) samples — too few)")
+            recordResult(name: "glass-to-glass-latency", passed: false,
+                        detail: "only \(values.count) samples (need \(minSamples)+) — insufficient frame delivery")
+            return
+        }
+
+        let sorted = values.sorted()
+        let count = sorted.count
+        let minMs = sorted.first! / 1000
+        let maxMs = sorted.last! / 1000
+        let medianMs = sorted[count / 2] / 1000
+        let p95Idx = min(Int(Double(count) * 0.95), count - 1)
+        let p95Ms = sorted[p95Idx] / 1000
+        let avgMs = sorted.reduce(0, +) / Int64(count) / 1000
+        let calibrated = clockOffsetCalibrated ? "calibrated, offset=\(clockOffsetUs/1000)ms" : "uncalibrated"
+        print("[TEST] INFO: glass-to-glass-latency (capture-to-presented, \(count) samples: min=\(minMs)ms, median=\(medianMs)ms, avg=\(avgMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, clock=\(calibrated))")
+
+        let pipelineSliceStart = min(parallelPerformancePipelineStartCount, pipelineLatenciesUs.count)
+        let pipelineValues = Array(pipelineLatenciesUs.suffix(from: pipelineSliceStart))
+        if !pipelineValues.isEmpty {
+            let pipelineSorted = pipelineValues.sorted()
+            let pipelineMedianMs = pipelineSorted[pipelineSorted.count / 2] / 1000
+            let overheadMs = medianMs - pipelineMedianMs
+            print("[TEST] INFO: glass-to-glass overhead vs decode: \(overheadMs)ms (present+display-link)")
+        }
+
+        let medianThreshold = E2ETestThresholds.GlassToGlassLatency.maxMedianMs
+        let avgThreshold = E2ETestThresholds.GlassToGlassLatency.maxAverageMs
+        let p95Threshold = E2ETestThresholds.GlassToGlassLatency.maxP95Ms
+        let medianOK = medianMs < medianThreshold
+        let avgOK = avgMs < avgThreshold
+        let p95OK = p95Ms < p95Threshold
+        let passed = medianOK && avgOK && p95OK
+        var issues: [String] = []
+        if !medianOK { issues.append("median \(medianMs)ms >= \(medianThreshold)ms") }
+        if !avgOK { issues.append("avg \(avgMs)ms >= \(avgThreshold)ms") }
+        if !p95OK { issues.append("p95 \(p95Ms)ms >= \(p95Threshold)ms") }
+        var detail = "latency[min/med/avg/p95/max]=\(minMs)/\(medianMs)/\(avgMs)/\(p95Ms)/\(maxMs)ms, targets med<\(medianThreshold) avg<\(avgThreshold) p95<\(p95Threshold), samples=\(count), clock=\(calibrated)"
+        if !issues.isEmpty {
+            detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+        }
+        recordResult(name: "glass-to-glass-latency", passed: passed, detail: detail)
     }
 
     // MARK: - Test 11: Resolution
@@ -1058,7 +1455,9 @@ final class DeviceTestRunner {
 
         guard let sm = sessionManager, sm.usbTransport.isConnected || sm.wirelessTransport.isConnected else {
             recordResult(name: "latency-tiered", passed: false, detail: "no transport connected")
-            runThroughputTest()
+            if !parallelPerformanceSuiteActive {
+                runThroughputTest()
+            }
             return
         }
         _ = sm // connectivity check only
@@ -1129,7 +1528,9 @@ final class DeviceTestRunner {
 
         guard !tieredLatencyProbes.isEmpty else {
             recordResult(name: "latency-tiered", passed: false, detail: "no probe responses received")
-            runThroughputTest()
+            if !parallelPerformanceSuiteActive {
+                runThroughputTest()
+            }
             return
         }
 
@@ -1156,7 +1557,9 @@ final class DeviceTestRunner {
                         detail: "min=\(minMs)ms, median=\(medianMs)ms, p95=\(p95Ms)ms, max=\(maxMs)ms, probes=\(count)/\(Self.tieredLatencyProbeCount), threshold=none")
         }
 
-        runThroughputTest()
+        if !parallelPerformanceSuiteActive {
+            runThroughputTest()
+        }
     }
 
     // MARK: - Test 14: Throughput Benchmark
@@ -1390,11 +1793,7 @@ final class DeviceTestRunner {
             runSustainedStreamTest()
             return
         }
-        if skipTransportRotation {
-            runSecurityTests()
-            return
-        }
-        runTransportRotationTests()
+        finalizeParallelPerformanceSuiteAndContinue()
     }
 
     private func runSustainedStreamTest() {
@@ -1510,11 +1909,7 @@ final class DeviceTestRunner {
                 detail: detail
             )
 
-            if self.skipTransportRotation {
-                self.runSecurityTests()
-            } else {
-                self.runTransportRotationTests()
-            }
+            self.finalizeParallelPerformanceSuiteAndContinue()
         }
     }
 

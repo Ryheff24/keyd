@@ -186,6 +186,7 @@ final class MetalRenderer: NSObject {
         textureLock.lock()
         defer { textureLock.unlock() }
         frameCaptureTimestampUs = captureTimestampUs
+        cvTextureRef = nil
 
         // Recreate texture if dimensions changed
         if frameTexture == nil
@@ -399,6 +400,7 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         // always pair the rendered frame with the matching capture timestamp.
         textureLock.lock()
         let currentTexture = frameTexture
+        let currentCVTextureRef = cvTextureRef
         let currentCaptureTimestampUs = frameCaptureTimestampUs
         let hasNewFrame = frameDirty
         if hasNewFrame {
@@ -448,7 +450,8 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
                 }
 
                 // Step 10: Signal semaphore on completion (triple buffering)
-                commandBuffer.addCompletedHandler { [weak self] _ in
+                commandBuffer.addCompletedHandler { [weak self, retainedCVTexture = currentCVTextureRef] _ in
+                    _ = retainedCVTexture
                     self?.inflightSemaphore.signal()
                 }
 
@@ -462,7 +465,8 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         encoder.endEncoding()
         commandBuffer.present(drawable)
 
-        commandBuffer.addCompletedHandler { [weak self] _ in
+        commandBuffer.addCompletedHandler { [weak self, retainedCVTexture = currentCVTextureRef] _ in
+            _ = retainedCVTexture
             self?.inflightSemaphore.signal()
         }
 
