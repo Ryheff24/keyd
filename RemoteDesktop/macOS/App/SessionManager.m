@@ -54,14 +54,15 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
-static const int kWirelessHEVCFPS = 40;
-static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps */
-static const uint32_t kWirelessMaxEncodeWidth = 1920;
-static const uint32_t kWirelessMaxEncodeHeight = 1200;
-static const NSUInteger kWirelessLargeFrameChunkThreshold = 192;
-static const NSUInteger kWirelessMaxQueuedChunks = 192;
-static const uint64_t kWirelessMinFrameIntervalUs = 25000;       /* 40 fps nominal */
-static const uint64_t kWirelessCongestedFrameIntervalUs = 33333; /* 30 fps under backlog */
+static const int kWirelessHEVCFPS = 60;
+static const int kWirelessHEVCBitrate = 15000000; /* 15 Mbps */
+static const uint32_t kWirelessMaxEncodeWidth = 2496;
+static const uint32_t kWirelessMaxEncodeHeight = 1620;
+static const NSUInteger kWirelessLargeFrameChunkThreshold = 320;
+static const NSUInteger kWirelessMaxQueuedChunks = 384;
+static const NSUInteger kWirelessCongestionChunkThreshold = 160;
+static const uint64_t kWirelessMinFrameIntervalUs = 16667;       /* 60 fps nominal */
+static const uint64_t kWirelessCongestedFrameIntervalUs = 20000; /* 50 fps under backlog */
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -943,7 +944,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 
             if (strongSelf->_wirelessTransport.isConnected && !strongSelf->_usbTransport.isConnected) {
                 NSUInteger queuedChunks = strongSelf->_wirelessTransport.queuedMediaChunkCount;
-                uint64_t minIntervalUs = queuedChunks > 64
+                uint64_t minIntervalUs = queuedChunks > kWirelessCongestionChunkThreshold
                     ? kWirelessCongestedFrameIntervalUs
                     : kWirelessMinFrameIntervalUs;
                 uint64_t submitTimeUs = captureTimestampUs > 0 ? captureTimestampUs : keydrd_host_time_us();

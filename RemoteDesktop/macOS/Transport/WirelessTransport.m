@@ -49,14 +49,15 @@ static const char *kInputPortStr = "14568";
                                                  DISPATCH_QUEUE_SERIAL);
 
         /* Convert chunk pacing intervals from nanoseconds to mach ticks.
-         * Low backlog can safely drain faster to reduce visible frame-time
-         * variance on bursty desktop content; high backlog falls back to the
-         * conservative 20 Mbps-equivalent pacing used previously. */
+         * The prior pacing was conservative enough that large WiFi bursts
+         * routinely backed up behind keyframes. This keeps DTLS sends paced,
+         * but lifts the operating point so 60 fps HEVC can drain without
+         * bouncing large frames onto TCP. */
         mach_timebase_info_data_t timebase;
         mach_timebase_info(&timebase);
-        _pacingFastIntervalTicks = (uint64_t)(360000ULL * timebase.denom / timebase.numer);
-        _pacingDefaultIntervalTicks = (uint64_t)(440000ULL * timebase.denom / timebase.numer);
-        _pacingCongestedIntervalTicks = (uint64_t)(560000ULL * timebase.denom / timebase.numer);
+        _pacingFastIntervalTicks = (uint64_t)(220000ULL * timebase.denom / timebase.numer);
+        _pacingDefaultIntervalTicks = (uint64_t)(280000ULL * timebase.denom / timebase.numer);
+        _pacingCongestedIntervalTicks = (uint64_t)(360000ULL * timebase.denom / timebase.numer);
         _nextSendTime = 0;
         atomic_init(&_queuedMediaChunks, 0);
         atomic_init(&_sendGeneration, 1);
@@ -360,9 +361,9 @@ static const char *kInputPortStr = "14568";
          * queue is shallow so large UI bursts do not monopolize the sender. */
         uint32_t queued = atomic_load_explicit(&self->_queuedMediaChunks, memory_order_relaxed);
         uint64_t pacingTicks = self->_pacingDefaultIntervalTicks;
-        if (queued <= 32) {
+        if (queued <= 64) {
             pacingTicks = self->_pacingFastIntervalTicks;
-        } else if (queued >= 96) {
+        } else if (queued >= 192) {
             pacingTicks = self->_pacingCongestedIntervalTicks;
         }
         self->_nextSendTime = mach_absolute_time() + pacingTicks;

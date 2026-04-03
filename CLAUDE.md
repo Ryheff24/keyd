@@ -1,7 +1,5 @@
 # keyd Project Instructions
 
-
-
 The user will ONLY perform simple physical actions on devices (tap buttons, scan QR codes, plug/unplug cables). They will NOT:
 - Paste logs
 - Build or run apps
@@ -15,6 +13,20 @@ The user will ONLY perform simple physical actions on devices (tap buttons, scan
 - **iPad:** `./RemoteDesktop/scripts/ipad-debug.sh [timeout_seconds]` — builds, installs, launches with console log capture
 - **macOS:** `./RemoteDesktop/scripts/mac-debug.sh [timeout_seconds]` — builds, launches with log streaming
 - iPad device ID: `00000000-0000-0000-0000-00000000000A`
+
+### E2E Tests
+- Use the canonical Wi-Fi repro when running the current streaming/debugging E2E path:
+  ```bash
+  ./RemoteDesktop/scripts/run-e2e-tests.sh \
+    --transports wifi \
+    --capture-file './RemoteDesktop/2026-04-02 10-55-42-prores.mov' \
+    --sustained-stream-seconds 90 \
+    --notes "brief one-line run note"
+  ```
+- `--notes` is required on every E2E run.
+- Keep `--sustained-stream-seconds 90` for this repro unless explicitly changing the failure window.
+- Use `--transports wifi` for this repro.
+- Do not substitute a different capture file unless the repro itself is being changed.
 
 ### Logging
 - **iPad:** Use `print("[CONSOLE] ...")` — os_log doesn't stream over devicectl. Captured via `xcrun devicectl device process launch --console`.

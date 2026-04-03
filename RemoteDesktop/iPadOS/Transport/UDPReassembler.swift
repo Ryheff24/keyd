@@ -8,6 +8,8 @@ import os.log
 /// delivered via callback. Handles out-of-order arrival, stale frame timeout,
 /// and max-concurrent-sequence eviction.
 final class UDPReassembler {
+    private static let maxForwardGapBeforeSkip: UInt16 = 32
+    private static let maxOutOfOrderFrames = 32
 
     struct StatsSnapshot {
         let framesDelivered: Int
@@ -81,6 +83,8 @@ final class UDPReassembler {
     private var lastDeliveredSeq: UInt16 = 0
     private var hasDeliveredFirstFrame = false
     private var outOfOrderBuffer: [UInt16: Data] = [:]
+    private var awaitingKeyframeAfterLoss = false
+    private var droppedUntilKeyframeCount = 0
 
     /// Stats logging interval counter (counts purge timer ticks).
     private var statsTickCount = 0
@@ -246,7 +250,37 @@ final class UDPReassembler {
     /// Deliver a complete frame while preserving sequence continuity across
     /// all media paths, including direct single-chunk and TCP-fallback frames.
     private func deliverFrameData(seq: UInt16, frameData: Data) {
+        guard let header = MediaFrameHeader.parse(from: frameData) else {
+            print("[CONSOLE] UDPReassembler: failed to parse complete frame for seq=\(seq)")
+            return
+        }
+
+        if awaitingKeyframeAfterLoss {
+            guard header.isKeyframe else {
+                droppedUntilKeyframeCount += 1
+                if droppedUntilKeyframeCount <= 10 || droppedUntilKeyframeCount % 25 == 0 {
+                    print("[CONSOLE] UDPReassembler: dropping seq=\(seq) while waiting for keyframe (dropped=\(droppedUntilKeyframeCount))")
+                }
+                return
+            }
+
+            awaitingKeyframeAfterLoss = false
+            droppedUntilKeyframeCount = 0
+            outOfOrderBuffer.removeAll()
+            hasDeliveredFirstFrame = true
+            lastDeliveredSeq = seq
+            framesDelivered += 1
+            print("[CONSOLE] UDPReassembler: recovered on keyframe seq=\(seq)")
+            onFrameReassembled?(frameData)
+            return
+        }
+
         if !hasDeliveredFirstFrame {
+            guard header.isKeyframe else {
+                enterRecoveryMode(reason: "first complete frame was not a keyframe", missingSeq: seq)
+                return
+            }
+
             // First frame ever — deliver immediately and set baseline
             hasDeliveredFirstFrame = true
             lastDeliveredSeq = seq
@@ -267,19 +301,26 @@ final class UDPReassembler {
             framesDelivered += 1
             onFrameReassembled?(frameData)
             drainOutOfOrderBuffer()
-        } else if distance <= 10 {
-            // Slightly ahead (2-10 frames) — buffer and wait for gap to fill
+        } else if distance <= Self.maxForwardGapBeforeSkip {
+            // Slightly ahead — buffer and wait for the missing frames rather than
+            // skipping forward and poisoning the HEVC reference chain.
             outOfOrderBuffer[seq] = frameData
-            // Also check if out-of-order buffer is overflowing
-            if outOfOrderBuffer.count > 10 {
-                flushOutOfOrderBuffer()
+            if outOfOrderBuffer.count > Self.maxOutOfOrderFrames {
+                enterRecoveryMode(reason: "out-of-order buffer overflow", missingSeq: lastDeliveredSeq &+ 1)
             }
         } else {
-            // Gap > 10 frames — assume intermediate frames lost, skip ahead
-            flushOutOfOrderBuffer()
-            lastDeliveredSeq = seq
-            framesDelivered += 1
-            onFrameReassembled?(frameData)
+            // A larger gap likely means the missing frames are gone for good.
+            // Only skip ahead if the new frame is a keyframe that can restart
+            // decoder state cleanly. Otherwise, freeze until the next keyframe.
+            if header.isKeyframe {
+                outOfOrderBuffer.removeAll()
+                lastDeliveredSeq = seq
+                framesDelivered += 1
+                print("[CONSOLE] UDPReassembler: skipped forward to keyframe seq=\(seq) after gap")
+                onFrameReassembled?(frameData)
+            } else {
+                enterRecoveryMode(reason: "gap exceeded \(Self.maxForwardGapBeforeSkip) frames", missingSeq: lastDeliveredSeq &+ 1)
+            }
         }
     }
 
@@ -294,16 +335,13 @@ final class UDPReassembler {
         }
     }
 
-    /// Flush all out-of-order buffered frames in sequence order (gap exceeded).
-    private func flushOutOfOrderBuffer() {
-        let sorted = outOfOrderBuffer.keys.sorted { seqDistance(from: lastDeliveredSeq, to: $0) < seqDistance(from: lastDeliveredSeq, to: $1) }
-        for seq in sorted {
-            if let frameData = outOfOrderBuffer.removeValue(forKey: seq) {
-                lastDeliveredSeq = seq
-                framesDelivered += 1
-                onFrameReassembled?(frameData)
-            }
+    private func enterRecoveryMode(reason: String, missingSeq: UInt16) {
+        if !awaitingKeyframeAfterLoss {
+            print("[CONSOLE] UDPReassembler: entering recovery, waiting for keyframe (\(reason), missing seq=\(missingSeq), buffered=\(outOfOrderBuffer.count), pending=\(pendingFrames.count))")
         }
+        awaitingKeyframeAfterLoss = true
+        droppedUntilKeyframeCount = 0
+        outOfOrderBuffer.removeAll()
     }
 
     /// Compute forward distance between two wrapping UInt16 sequence numbers.
@@ -335,6 +373,12 @@ final class UDPReassembler {
         insertionOrder.removeFirst()
         framesEvicted += 1
         print("[CONSOLE] UDPReassembler: EVICTED seq=\(oldestSeq) (\(received)/\(total) chunks, total evicted=\(framesEvicted))")
+        if hasDeliveredFirstFrame {
+            let distance = seqDistance(from: lastDeliveredSeq, to: oldestSeq)
+            if distance > 0 && distance <= 32768 {
+                enterRecoveryMode(reason: "evicted incomplete frame", missingSeq: oldestSeq)
+            }
+        }
     }
 
     /// Start a timer that periodically purges stale incomplete frames.
@@ -359,6 +403,12 @@ final class UDPReassembler {
             print("[CONSOLE] UDPReassembler: PURGED seq=\(seq) (\(received)/\(total) chunks, age=\(String(format: "%.0f", (now - (pending?.createdAt ?? now)) * 1000))ms, total purged=\(framesPurged))")
             pendingFrames.removeValue(forKey: seq)
             insertionOrder.removeAll { $0 == seq }
+            if hasDeliveredFirstFrame {
+                let distance = seqDistance(from: lastDeliveredSeq, to: seq)
+                if distance > 0 && distance <= 32768 {
+                    enterRecoveryMode(reason: "purged incomplete frame", missingSeq: seq)
+                }
+            }
         }
 
         // Periodic stats logging (every statsLogInterval purge ticks)

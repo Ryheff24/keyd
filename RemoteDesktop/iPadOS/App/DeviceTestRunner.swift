@@ -247,6 +247,13 @@ final class DeviceTestRunner {
         }
     }
 
+    @discardableResult
+    private func dispatchToMainIfNeeded(_ work: @escaping () -> Void) -> Bool {
+        guard !Thread.isMainThread else { return false }
+        DispatchQueue.main.async(execute: work)
+        return true
+    }
+
     /// Called by MetalRenderer each time a frame is actually presented to the display.
     private func onRenderedFrame() {
         totalRenderedFrames += 1
@@ -283,6 +290,7 @@ final class DeviceTestRunner {
 
     /// Run the full E2E test suite. Called from SessionManager after start().
     func runAllTests() {
+        if dispatchToMainIfNeeded({ [weak self] in self?.runAllTests() }) { return }
         testStartTime = CFAbsoluteTimeGetCurrent()
         streamTelemetryStartTime = testStartTime
         print("[TEST] START: on-device E2E test suite")
@@ -301,6 +309,7 @@ final class DeviceTestRunner {
     }
 
     func noteReceivedFrameHeader(_ header: MediaFrameHeader) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.noteReceivedFrameHeader(header) }) { return }
         observedFrameCount += 1
         if header.isKeyframe {
             keyframesObserved += 1
@@ -308,6 +317,7 @@ final class DeviceTestRunner {
     }
 
     func noteHEVCDecodeFailure(seq: UInt16) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.noteHEVCDecodeFailure(seq: seq) }) { return }
         hevcDecodeFailures += 1
         if hevcDecodeFailures <= 10 || hevcDecodeFailures % 25 == 0 {
             print("[CONSOLE] STREAM-TELEMETRY decode-failure seq=\(seq) total=\(hevcDecodeFailures)")
@@ -315,6 +325,7 @@ final class DeviceTestRunner {
     }
 
     func noteSessionStateChanged(old: SessionManager.State, new: SessionManager.State) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.noteSessionStateChanged(old: old, new: new) }) { return }
         if sustainedStreamActive && old == .streaming && new != .streaming {
             sustainedStreamReconnects += 1
             print("[CONSOLE] STREAM-TELEMETRY sustained-state-drop old=\(old.rawValue) new=\(new.rawValue) reconnects=\(sustainedStreamReconnects)")
@@ -324,6 +335,7 @@ final class DeviceTestRunner {
     /// Run the Bonjour discovery test. Called after pairing completes and
     /// transport monitoring starts (Mac is now advertising _keydrd._tcp).
     func runBonjourDiscoveryTestAfterPairing() {
+        if dispatchToMainIfNeeded({ [weak self] in self?.runBonjourDiscoveryTestAfterPairing() }) { return }
         if let sm = sessionManager, sm.isWiredOnly && !selectedTransports.contains("wifi") && !selectedTransports.contains("awdl") {
             recordResult(name: "bonjour-discovery", passed: true,
                          detail: "SKIPPED — wireless advertising disabled for usb-only transport set")
@@ -396,12 +408,14 @@ final class DeviceTestRunner {
     // MARK: - Test 2: TLS Connection (called from QRPairing auto-pair)
 
     func reportTLSConnection(success: Bool, detail: String) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportTLSConnection(success: success, detail: detail) }) { return }
         recordResult(name: "tls-connection", passed: success, detail: detail)
     }
 
     // MARK: - Test 3: ECDH Exchange (called from QRPairing auto-pair)
 
     func reportECDHExchange(success: Bool, detail: String) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportECDHExchange(success: success, detail: detail) }) { return }
         recordResult(name: "ecdh-exchange", passed: success, detail: detail)
 
         // After ECDH, pairing is complete. Tests 4+ happen via session lifecycle.
@@ -410,6 +424,7 @@ final class DeviceTestRunner {
     // MARK: - Test 4: Transport Detection (called from SessionManager)
 
     func reportTransportDetected(type: String) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportTransportDetected(type: type) }) { return }
         guard !transportDetected else { return }
         transportDetected = true
         detectedTransportType = type
@@ -419,6 +434,7 @@ final class DeviceTestRunner {
     // MARK: - Test 5: Session Handshake (called from SessionManager)
 
     func reportSessionHandshake(_ handshake: SessionHandshakeMessage) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportSessionHandshake(handshake) }) { return }
         rotationHandshakeReceived = true
 
         guard !handshakeReceived else { return }
@@ -444,6 +460,7 @@ final class DeviceTestRunner {
     // MARK: - Test 6 & 7: Frame Reception + Decompression (called from SessionManager)
 
     func reportFrameReceived(header: MediaFrameHeader, decompressedSize: Int) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportFrameReceived(header: header, decompressedSize: decompressedSize) }) { return }
         framesReceived += 1
         if decompressedSize > 0 {
             framesDecompressed += 1
@@ -518,6 +535,7 @@ final class DeviceTestRunner {
     /// Report decoded pixel buffer dimensions (called from SessionManager after HEVC decode or LZ4 decompress).
     /// Used by the resolution test to verify frame dimensions match the handshake.
     func reportDecodedFrameDimensions(width: Int, height: Int) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportDecodedFrameDimensions(width: width, height: height) }) { return }
         decodedFrameWidths.append(width)
         decodedFrameHeights.append(height)
     }
@@ -560,6 +578,7 @@ final class DeviceTestRunner {
     }
 
     func reportLatencyProbeResponse(rttUs: UInt64) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportLatencyProbeResponse(rttUs: rttUs) }) { return }
         // Route to tiered latency test if it's active
         if tieredLatencyActive && !tieredLatencyComplete {
             reportTieredLatencyProbeResponse(rttUs: rttUs)
@@ -687,6 +706,7 @@ final class DeviceTestRunner {
 
     /// Called by SessionManager when a CLOCK_SYNC_RESP arrives
     func reportClockSyncResponse(t1Us: UInt64, t2Us: UInt64, t3Us: UInt64, t4Us: UInt64) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.reportClockSyncResponse(t1Us: t1Us, t2Us: t2Us, t3Us: t3Us, t4Us: t4Us) }) { return }
         guard !clockSyncComplete else { return }
         guard awaitingClockSyncResponseT1Us == t1Us else { return }
         awaitingClockSyncResponseT1Us = nil
@@ -2567,6 +2587,7 @@ final class DeviceTestRunner {
     }
 
     private func recordResult(name: String, passed: Bool, detail: String) {
+        if dispatchToMainIfNeeded({ [weak self] in self?.recordResult(name: name, passed: passed, detail: detail) }) { return }
         testResults.append((name: name, passed: passed, detail: detail))
         let status = passed ? "PASS" : "FAIL"
         print("[TEST] \(status): \(name) (\(detail))")
