@@ -1,5 +1,50 @@
 # CURRENT
 
+## Lane WiFi Iteration 21 (adaptive severe-threshold probe, reverted)
+
+- Timestamp: 2026-04-04 16:31:41 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate less aggressive severe-downshift thresholds"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+- Key metrics:
+  - sustained-stream: `fps[avg/1%low]=57.8/6.7`, `pipe[med/avg/p95]=31/51/147ms`, `glass[med/avg/p95]=53/76/174ms`
+  - fps: `avg=58.1`, `1%low=6.7`, `maxGap=242ms`, `jitter=20.6ms`
+  - wifi baseline: `wifi-fps=41.5`, `wifi-latency median/p95=42/114ms`
+- Hypothesis tested:
+  - Soften severe congestion triggers in macOS adaptive controller to avoid unnecessary 54fps downshift from short TCP pressure bursts.
+- Instrumentation added:
+  - Added `severeTriggers[...]` reason fields to `WiFi adaptive eval` logging in `RemoteDesktop/macOS/App/SessionManager.m`.
+- Outcome:
+  - Non-improving vs prior run; change reverted with commit `718f6d0`.
+- Next move:
+  - Keep revert, shift to iPad render/present cadence tail bottleneck (high jitter + high glass latency with zero frame loss).
+
+## Lane WiFi Iteration 20 (transient DTLS receive-gap spin guard)
+
+- Timestamp: 2026-04-04 16:26:00 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate transient DTLS recv-gap backoff+rate-limited logging"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+- Key metrics (vs baseline run started by orchestrator):
+  - sustained 1% low: `6.7 -> 9.2`
+  - fps maxGap: `267ms -> 192ms`
+  - pipeline p95: `143ms -> 106ms`
+  - glass p95: `170ms -> 129ms`
+  - wifi baseline fps: `41.6 -> 47.3`
+  - resolution preserved (`2496x1620`, PASS)
+- Hypothesis tested:
+  - iPad WiFi receive loop was repeatedly spinning on transient DTLS `No message available on STREAM`, adding CPU/log pressure and tail stalls.
+- Instrumentation/behavior added (`RemoteDesktop/iPadOS/Transport/WirelessTransport.swift`):
+  - Added transient-gap streak tracking, suppressed-count tracking, and recovery summaries.
+  - Kept branch visibility with stable events (`ignored`, `ongoing`, `recovered`) while rate-limiting hot-loop detail logs.
+  - Added bounded receive re-arm backoff (`1-4ms`) for transient DTLS gap branch.
+- Residual blocker:
+  - sustained avg fps remains below target (`57.9`) and jitter still high (`22.4ms`); pipeline avg still ~`52ms`.
+- Next move:
+  - instrument render/present cadence at `MetalRenderer` + iPad session orchestration to isolate display-link/present tail spikes from transport effects.
+
 ## Lane A Iteration 19 (Wi‑Fi control-path grace recovery, non‑E2E)
 
 - Timestamp: 2026-04-04 12:57:20 EDT
