@@ -1641,12 +1641,16 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     int32_t targetBitrate = prevBitrate;
     NSString *reason = @"hold-stable";
 
-    BOOL severeCongestion = (tcpSendDrops > 0) ||
-                            (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi + 1) ||
-                            (tcpMaxCompletionMs >= 52) ||
-                            (preDrops >= 3) ||
-                            (staleDrops >= 4) ||
-                            (staleMaxAgeMs >= 200);
+    BOOL severeSendDrop = (tcpSendDrops > 0);
+    BOOL severeInflight = (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi + 1);
+    BOOL severeCompletionTail = (tcpMaxCompletionMs >= 80);
+    BOOL severePreDropBurst = (preDrops >= 6);
+    BOOL severeStaleDrop = (staleDrops >= 4) || (staleMaxAgeMs >= 200);
+    BOOL severeCongestion = severeSendDrop ||
+                            severeInflight ||
+                            severeCompletionTail ||
+                            severePreDropBurst ||
+                            severeStaleDrop;
     BOOL mildCongestion = !severeCongestion &&
                           ((tcpSlowCompletions >= 1) ||
                            (tcpMaxCompletionMs >= 24) ||
@@ -1677,13 +1681,18 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     wifiAdaptiveEvalCount++;
     if (wifiAdaptiveEvalCount <= 10 || wifiAdaptiveEvalCount % 30 == 0 ||
         severeCongestion || tailRiskCongestion || bitrateOvershootRisk || tcpSendDrops > 0) {
-        os_log(sLog, "WiFi adaptive eval: severe=%{public}s mild=%{public}s tailRisk=%{public}s overshootRisk=%{public}s healthy=%{public}s postStaleHold=%{public}s metrics[inFlight=%d slow=%d max=%dms preDrop=%d staleDrop=%d staleMaxAge=%dms sendDrop=%d queueDrop=%d prevTarget=%dfps/%dMbps] streaks[h=%d m=%d s=%d] sampled=%{public}s count=%d",
+        os_log(sLog, "WiFi adaptive eval: severe=%{public}s mild=%{public}s tailRisk=%{public}s overshootRisk=%{public}s healthy=%{public}s postStaleHold=%{public}s severeTriggers[sendDrop=%{public}s inFlight=%{public}s completionTail=%{public}s preDropBurst=%{public}s stale=%{public}s] metrics[inFlight=%d slow=%d max=%dms preDrop=%d staleDrop=%d staleMaxAge=%dms sendDrop=%d queueDrop=%d prevTarget=%dfps/%dMbps] streaks[h=%d m=%d s=%d] sampled=%{public}s count=%d",
                severeCongestion ? "yes" : "no",
                mildCongestion ? "yes" : "no",
                tailRiskCongestion ? "yes" : "no",
                bitrateOvershootRisk ? "yes" : "no",
                healthy ? "yes" : "no",
                postStaleHold ? "yes" : "no",
+               severeSendDrop ? "yes" : "no",
+               severeInflight ? "yes" : "no",
+               severeCompletionTail ? "yes" : "no",
+               severePreDropBurst ? "yes" : "no",
+               severeStaleDrop ? "yes" : "no",
                tcpInFlightNow, tcpSlowCompletions, tcpMaxCompletionMs,
                preDrops, staleDrops, staleMaxAgeMs, tcpSendDrops, queueDrops,
                prevFPS, prevBitrate / 1000000,
