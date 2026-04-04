@@ -60,6 +60,9 @@ final class SessionManager {
     private(set) var viewportHeight: Int = 0
     private var macDisplayWidth: Int = 0
     private var frameRecvCount: Int = 0
+    private var lastFrameReceiveUs: UInt64 = 0
+    private var lastFrameReceiveSeq: UInt16 = 0
+    private var frameArrivalLogCount: Int = 0
     private var macDisplayHeight: Int = 0
     private var macScaleFactor: Float = 2.0
 
@@ -649,10 +652,30 @@ final class SessionManager {
 
         frameRecvCount += 1
         testRunner?.noteReceivedFrameHeader(header)
+        let receiveNowUs = keydrdHostTimeUs()
+        let interArrivalMs: Double = lastFrameReceiveUs > 0
+            ? Double(Int64(receiveNowUs) - Int64(lastFrameReceiveUs)) / 1_000.0
+            : 0.0
+        let seqDelta = lastFrameReceiveUs > 0
+            ? Int((Int(header.seq) - Int(lastFrameReceiveSeq) + 65536) % 65536)
+            : 0
+        let rendererStats = metalRenderer.statsSnapshot()
+        let reassemblyStats = udpReassembler.statsSnapshot()
+        frameArrivalLogCount += 1
+        let starvationSignal = lastFrameReceiveUs > 0 &&
+            interArrivalMs >= 35.0 &&
+            !rendererStats.hasPendingFrame &&
+            rendererStats.pendingDepth == 0 &&
+            reassemblyStats.pendingFrames == 0
+        if starvationSignal || seqDelta > 1 || frameArrivalLogCount <= 10 || frameArrivalLogCount % 240 == 0 {
+            print("[CONSOLE] SessionManager: frame-arrival seq=\(header.seq) prevSeq=\(lastFrameReceiveSeq) seqDelta=\(seqDelta) interArrival=\(String(format: "%.2f", interArrivalMs))ms payload=\(payloadLength)B transport=\(currentTransport.rawValue) rendererPending=\(rendererStats.hasPendingFrame ? 1 : 0) rendererDepth=\(rendererStats.pendingDepth) reasmPending=\(reassemblyStats.pendingFrames) reasmOOO=\(reassemblyStats.outOfOrderBuffered) state=\(state.rawValue) starvationSignal=\(starvationSignal)")
+        }
+        lastFrameReceiveUs = receiveNowUs
+        lastFrameReceiveSeq = header.seq
 
         // Pipeline latency probe: capture → iPad receive (before decode)
         if header.tsUs > 0 {
-            let nowUs = keydrdHostTimeUs()
+            let nowUs = receiveNowUs
             let recvElapsedMs = (Int64(nowUs) - Int64(header.tsUs) + (testRunner?.clockOffsetForProbe ?? 0)) / 1000
             if frameRecvCount <= 10 || frameRecvCount % 100 == 0 {
                 if testRunner?.clockOffsetCalibratedForLogging == true {

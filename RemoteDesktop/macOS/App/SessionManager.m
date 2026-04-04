@@ -74,6 +74,14 @@ static const int kWirelessAdaptiveMaxUpshiftFPSDelta = 2;
 static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 100000;
 static const int kWirelessAdaptiveMaxDownshiftFPSDelta = 6;
 static const int kWirelessAdaptiveMaxDownshiftBitrateDelta = 600000;
+/* Burst-density guardrails: oversized HEVC frames create long-tail TCP completion
+ * spikes and downstream starvation windows even with low average bitrate. */
+static const int32_t kWirelessBurstTailFrameBytes = 180 * 1024;
+static const int32_t kWirelessBurstSevereFrameBytes = 300 * 1024;
+static const double kWirelessBurstTailDensityRatio = 8.0;
+static const double kWirelessBurstSevereDensityRatio = 12.0;
+static const int32_t kWirelessBurstTailFrameCountThreshold = 3;
+static const int32_t kWirelessBurstSevereFrameCountThreshold = 1;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
 /* Keep wireless media on the established TLS/TCP stream. This removes the
@@ -231,6 +239,8 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfPreEncodeStaleMaxAgeMs;
 @property (nonatomic, assign) volatile int32_t wifiPerfPreEncodeAgeSamples;
 @property (nonatomic, assign) volatile int32_t wifiPerfPreEncodeAgeTotalMs;
+@property (nonatomic, assign) volatile int32_t wifiPerfBurstTailFrames;
+@property (nonatomic, assign) volatile int32_t wifiPerfBurstSevereFrames;
 @property (nonatomic, assign) int32_t wifiAdaptiveTargetFPS;
 @property (nonatomic, assign) int32_t wifiAdaptiveTargetBitrate;
 @property (nonatomic, assign) int32_t wifiAdaptiveAppliedFPS;
@@ -1195,6 +1205,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         if ((int32_t)len > strongSelf->_wifiPerfMaxFrameBytes) {
             strongSelf->_wifiPerfMaxFrameBytes = (int32_t)MIN(len, (size_t)INT32_MAX);
         }
+        int32_t frameBytes = (int32_t)MIN(len, (size_t)INT32_MAX);
+        if (frameBytes >= kWirelessBurstTailFrameBytes) {
+            OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfBurstTailFrames);
+        }
+        if (frameBytes >= kWirelessBurstSevereFrameBytes) {
+            OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfBurstSevereFrames);
+        }
 
         /* Pipeline latency probe: capture → TCP send */
         if (header.ts_us > 0) {
@@ -1507,6 +1524,8 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfPreEncodeStaleMaxAgeMs = 0;
     _wifiPerfPreEncodeAgeSamples = 0;
     _wifiPerfPreEncodeAgeTotalMs = 0;
+    _wifiPerfBurstTailFrames = 0;
+    _wifiPerfBurstSevereFrames = 0;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
@@ -1565,10 +1584,14 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t staleMaxAgeMs = strongSelf->_wifiPerfPreEncodeStaleMaxAgeMs;
         int32_t ageSamples = strongSelf->_wifiPerfPreEncodeAgeSamples;
         int32_t ageTotalMs = strongSelf->_wifiPerfPreEncodeAgeTotalMs;
+        int32_t burstTailFrames = strongSelf->_wifiPerfBurstTailFrames;
+        int32_t burstSevereFrames = strongSelf->_wifiPerfBurstSevereFrames;
         double avgPreEncodeAgeMs = ageSamples > 0 ? (double)ageTotalMs / (double)ageSamples : 0.0;
+        double burstDensityRatio = avgKB > 0.0 ? ((double)maxFrameBytes / 1024.0) / avgKB : 0.0;
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d stalePreDrop=%d preAgeAvg=%.1fms preAgeMax=%dms queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d tcpStallRec=%d adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d healthyStreak=%d mildStreak=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB burst[tail=%d severe=%d density=%.2fx] preDrop=%d stalePreDrop=%d preAgeAvg=%.1fms preAgeMax=%dms queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d tcpStallRec=%d adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d healthyStreak=%d mildStreak=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
+               burstTailFrames, burstSevereFrames, burstDensityRatio,
                preDrops, stalePreDrops, avgPreEncodeAgeMs, staleMaxAgeMs, queueDrops, tcpFallbacks, tcpSendDrops,
                tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
                tcpDropKeyReq, tcpDropKeySupp, tcpStallRecoveries,
@@ -1629,6 +1652,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     int32_t staleMaxAgeMs = _wifiPerfPreEncodeStaleMaxAgeMs;
     int32_t tcpSendDrops = _wifiPerfTCPSendDrops;
     int32_t queueDrops = _wifiPerfQueueDrops;
+    int32_t encodedFrames = _wifiPerfEncodedFrames;
+    int32_t encodedBytes = _wifiPerfEncodedBytes;
+    int32_t maxFrameBytes = _wifiPerfMaxFrameBytes;
+    int32_t burstTailFrames = _wifiPerfBurstTailFrames;
+    int32_t burstSevereFrames = _wifiPerfBurstSevereFrames;
+    double avgFrameBytes = encodedFrames > 0 ? (double)encodedBytes / (double)encodedFrames : 0.0;
+    double burstDensityRatio = avgFrameBytes > 0.0 ? (double)maxFrameBytes / avgFrameBytes : 0.0;
     uint64_t lastStallRecoveryUs = _wifiTCPLastStallRecoveryUs;
     uint64_t sinceStallRecoveryMs = (lastStallRecoveryUs > 0 && nowUs > lastStallRecoveryUs)
     ? (nowUs - lastStallRecoveryUs) / 1000 : UINT64_MAX;
@@ -1647,16 +1677,26 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                             (preDrops >= 3) ||
                             (staleDrops >= 4) ||
                             (staleMaxAgeMs >= 200);
+    BOOL burstTailRisk = (encodedFrames >= 24) &&
+                         ((burstTailFrames >= kWirelessBurstTailFrameCountThreshold) ||
+                          (burstDensityRatio >= kWirelessBurstTailDensityRatio && maxFrameBytes >= kWirelessBurstTailFrameBytes));
+    BOOL burstSevereRisk = (encodedFrames >= 24) &&
+                           ((burstSevereFrames >= kWirelessBurstSevereFrameCountThreshold) ||
+                            (burstDensityRatio >= kWirelessBurstSevereDensityRatio && maxFrameBytes >= kWirelessBurstTailFrameBytes));
+    if (burstSevereRisk && (tcpSlowCompletions >= 1 || tcpMaxCompletionMs >= 30)) {
+        severeCongestion = YES;
+    }
     BOOL mildCongestion = !severeCongestion &&
                           ((tcpSlowCompletions >= 1) ||
                            (tcpMaxCompletionMs >= 24) ||
-                             (preDrops > 0) ||
-                             (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi));
+                              (preDrops > 0) ||
+                              (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi));
     BOOL tailRiskCongestion = !severeCongestion &&
                               ((tcpSlowCompletions >= 2) ||
                                (tcpMaxCompletionMs >= 32) ||
                                (staleDrops > 0) ||
-                               (staleMaxAgeMs >= 105));
+                               (staleMaxAgeMs >= 105) ||
+                               burstTailRisk);
     BOOL healthy = !severeCongestion && !mildCongestion &&
                     tcpSendDrops == 0 && queueDrops == 0 && preDrops == 0 &&
                     staleDrops == 0 && staleMaxAgeMs < 55 &&
@@ -1671,21 +1711,26 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                                 (prevBitrate >= 4400000) &&
                                 ((tcpSlowCompletions >= 1) ||
                                  (tcpMaxCompletionMs >= 22) ||
-                                 (staleMaxAgeMs >= 70));
+                                 (staleMaxAgeMs >= 70) ||
+                                 burstTailRisk);
 
     static int wifiAdaptiveEvalCount = 0;
     wifiAdaptiveEvalCount++;
     if (wifiAdaptiveEvalCount <= 10 || wifiAdaptiveEvalCount % 30 == 0 ||
         severeCongestion || tailRiskCongestion || bitrateOvershootRisk || tcpSendDrops > 0) {
-        os_log(sLog, "WiFi adaptive eval: severe=%{public}s mild=%{public}s tailRisk=%{public}s overshootRisk=%{public}s healthy=%{public}s postStaleHold=%{public}s metrics[inFlight=%d slow=%d max=%dms preDrop=%d staleDrop=%d staleMaxAge=%dms sendDrop=%d queueDrop=%d prevTarget=%dfps/%dMbps] streaks[h=%d m=%d s=%d] sampled=%{public}s count=%d",
+        os_log(sLog, "WiFi adaptive eval: severe=%{public}s mild=%{public}s tailRisk=%{public}s overshootRisk=%{public}s burstTail=%{public}s burstSevere=%{public}s healthy=%{public}s postStaleHold=%{public}s metrics[inFlight=%d slow=%d max=%dms preDrop=%d staleDrop=%d staleMaxAge=%dms sendDrop=%d queueDrop=%d burstTailFrames=%d burstSevereFrames=%d burstDensity=%.2fx maxFrameKB=%d avgFrameKB=%.1f prevTarget=%dfps/%dMbps] streaks[h=%d m=%d s=%d] sampled=%{public}s count=%d",
                severeCongestion ? "yes" : "no",
                mildCongestion ? "yes" : "no",
                tailRiskCongestion ? "yes" : "no",
                bitrateOvershootRisk ? "yes" : "no",
+               burstTailRisk ? "yes" : "no",
+               burstSevereRisk ? "yes" : "no",
                healthy ? "yes" : "no",
                postStaleHold ? "yes" : "no",
                tcpInFlightNow, tcpSlowCompletions, tcpMaxCompletionMs,
                preDrops, staleDrops, staleMaxAgeMs, tcpSendDrops, queueDrops,
+               burstTailFrames, burstSevereFrames, burstDensityRatio,
+               maxFrameBytes / 1024, avgFrameBytes / 1024.0,
                prevFPS, prevBitrate / 1000000,
                _wifiAdaptiveHealthyStreak, _wifiAdaptiveMildCongestionStreak, _wifiAdaptiveSevereCongestionStreak,
                (severeCongestion || tailRiskCongestion || bitrateOvershootRisk || tcpSendDrops > 0) ? "forced" : "sampled",
@@ -1711,7 +1756,8 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             targetFPS = MAX(kWirelessAdaptiveMidFPS, prevFPS - kWirelessAdaptiveFPSStepDownSevereSoft);
             reason = @"downshift-severe-soft";
         }
-        targetBitrate = MAX(kWirelessAdaptiveMinBitrate, prevBitrate - kWirelessAdaptiveBitrateStepDown);
+        int32_t severeStepDown = kWirelessAdaptiveBitrateStepDown + (burstSevereRisk ? 150000 : 0);
+        targetBitrate = MAX(kWirelessAdaptiveMinBitrate, prevBitrate - severeStepDown);
         OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveDownshifts);
     } else if (tailRiskCongestion) {
         _wifiAdaptiveHealthyStreak = 0;
@@ -1731,7 +1777,8 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             return;
         }
         targetFPS = MIN(prevFPS, kWirelessAdaptiveMidFPS);
-        targetBitrate = MAX(kWirelessAdaptiveMinBitrate, prevBitrate - kWirelessAdaptiveBitrateStepDown);
+        int32_t tailStepDown = kWirelessAdaptiveBitrateStepDown + (burstTailRisk ? 125000 : 0);
+        targetBitrate = MAX(kWirelessAdaptiveMinBitrate, prevBitrate - tailStepDown);
         reason = @"downshift-tail-guard";
         OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveDownshifts);
     } else if (mildCongestion) {
