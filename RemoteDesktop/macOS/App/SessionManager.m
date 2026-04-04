@@ -1108,7 +1108,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
              * was the dominant source of burst loss, recovery freezes, and the
              * reconnect cascade near the end of the long-run test. */
             int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
-            if (inFlight <= 5 || inFlight % 20 == 0) {
+            static int wifiTCPSendQueuedLogCount = 0;
+            wifiTCPSendQueuedLogCount++;
+            if (wifiTCPSendQueuedLogCount <= 10 ||
+                wifiTCPSendQueuedLogCount % 500 == 0 ||
+                inFlight > 2) {
                 os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu",
                        originalHeader->seq, inFlight, payloadLen);
             }
@@ -1136,9 +1140,17 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                 SessionManager *strongSelf = weakSelf;
                 if (!strongSelf) return;
                 int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
-                if (!success || left < 2) {
+                if (!success) {
                     os_log(sLog, "WiFi TCP send completion: seq=%u success=%{public}s inFlightNow=%d",
                            originalHeader->seq, success ? "yes" : "no", left);
+                } else if (left == 0) {
+                    static int wifiTCPSendCompletionLogCount = 0;
+                    wifiTCPSendCompletionLogCount++;
+                    if (wifiTCPSendCompletionLogCount <= 10 ||
+                        wifiTCPSendCompletionLogCount % 500 == 0) {
+                        os_log(sLog, "WiFi TCP send completion: seq=%u success=yes inFlightNow=%d",
+                               originalHeader->seq, left);
+                    }
                 }
             }];
             return;
