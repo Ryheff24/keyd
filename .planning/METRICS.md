@@ -20,16 +20,16 @@ Rules:
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
 | FPS | `56.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.169` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `34 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `106 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `47 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `59 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `128 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `73 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `58.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `38 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `109 ms` | `8 ms` | `7 ms` | ❌ |
+| Frame pacing CV | `1.296` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `38 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `108 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `52 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `71 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `131 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `79 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.5 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `37 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `110 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -98,3 +98,4 @@ Rules:
 | 2026-04-04 | 16:43:20 EDT | `3e854b6` | `2752x1786` | `2496x1620` | `57.8 fps` | `1.172` | `34/106/48 ms` | `59/129/73 ms` | `59.2 fps, 39/110 ms` | `1` | `26/33` | wifi: validate renderer early catchup + cadence telemetry |
 | 2026-04-04 | 16:51:06 EDT | `5f524af` | `2752x1786` | `2496x1620` | `55.3 fps` | `1.263` | `30/146/50 ms` | `52/172/73 ms` | `58.0 fps, 27/136 ms` | `1` | `26/33` | wifi: decode handoff latency focus |
 | 2026-04-04 | 17:00:35 EDT | `a5d802c` | `2752x1786` | `2496x1620` | `56.8 fps` | `1.169` | `34/106/47 ms` | `59/128/73 ms` | `58.7 fps, 38/109 ms` | `1` | `26/33` | wifi: validate hevc handoff queue telemetry |
+| 2026-04-04 | 17:07:04 EDT | `c55fe1b` | `2752x1786` | `2496x1620` | `56.8 fps` | `1.296` | `38/108/52 ms` | `71/131/79 ms` | `59.5 fps, 37/110 ms` | `1` | `26/33` | wifi: baseline renderer dequeue oscillation confirm |
