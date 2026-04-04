@@ -99,6 +99,8 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 
     NSDictionary *importOptions = @{
         (__bridge id)kSecImportExportPassphrase: @"keydrd",
+        /* Prevent SecPKCS12Import from writing Imported Private Key items to login.keychain-db. */
+        (__bridge id)CFSTR("kSecImportToMemoryOnly"): @YES,
     };
     CFArrayRef items = NULL;
     OSStatus status = errSecInternalError;
@@ -132,7 +134,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
     _tlsIdentity = (SecIdentityRef)CFRetain(identity);
     CFRelease(items);
 
-    os_log(pairing_log(), "TLS identity loaded from PKCS12 (OpenSSL-generated)");
+    os_log(pairing_log(), "TLS identity loaded from PKCS12 (memory-only, no keychain write)");
 }
 
 /**

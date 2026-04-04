@@ -2,6 +2,7 @@ import Foundation
 import VideoToolbox
 import CoreMedia
 import CoreVideo
+import QuartzCore
 import os.log
 
 /// VideoToolbox HEVC hardware decoder for wireless/eco mode frames.
@@ -12,9 +13,10 @@ import os.log
 final class HEVCDecoder {
 
     private static let log = OSLog(subsystem: "com.keydrd.decode", category: "hevc")
+    private static let asyncWaitBudgetMs: Double = 4.0
 
-    /// Callback invoked with each decoded pixel buffer and its timestamp (microseconds).
-    var onDecodedFrame: ((CVPixelBuffer, UInt64) -> Void)?
+    /// Callback invoked when a frame is decoded asynchronously after decode() returned.
+    var onDecodedFrame: ((CVPixelBuffer, MediaFrameHeader, Int) -> Void)?
 
     private var decompressionSession: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
@@ -36,8 +38,50 @@ final class HEVCDecoder {
     ///   - header: Parsed MediaFrameHeader for this frame.
     /// - Returns: Decoded CVPixelBuffer in BGRA format, or nil on error.
     private var decodeLogCount = 0
+    private var deferredDecodeLogCount = 0
+    private var asyncLateFrameLogCount = 0
 
-    func decode(data: Data, header: MediaFrameHeader) -> CVPixelBuffer? {
+    enum DecodeResult {
+        case decoded(CVPixelBuffer)
+        case deferred
+        case failed
+    }
+
+    private final class DecodeInvocationState {
+        private let lock = NSLock()
+        private var decodeReturned = false
+        private var decodedPixelBuffer: CVPixelBuffer?
+
+        func storePixelBuffer(_ pixelBuffer: CVPixelBuffer) -> Bool {
+            lock.lock()
+            decodedPixelBuffer = pixelBuffer
+            let didReturn = decodeReturned
+            lock.unlock()
+            return didReturn
+        }
+
+        func markDecodeReturned() {
+            lock.lock()
+            decodeReturned = true
+            lock.unlock()
+        }
+
+        func hasImmediatePixelBuffer() -> Bool {
+            lock.lock()
+            let hasBuffer = (decodedPixelBuffer != nil)
+            lock.unlock()
+            return hasBuffer
+        }
+
+        func takePixelBuffer() -> CVPixelBuffer? {
+            lock.lock()
+            let outputBuffer = decodedPixelBuffer
+            lock.unlock()
+            return outputBuffer
+        }
+    }
+
+    func decode(data: Data, header: MediaFrameHeader) -> DecodeResult {
         return decode(frameData: data,
                       payloadOffset: 0,
                       payloadLength: data.count,
@@ -47,21 +91,21 @@ final class HEVCDecoder {
     func decode(frameData: Data,
                 payloadOffset: Int,
                 payloadLength: Int,
-                header: MediaFrameHeader) -> CVPixelBuffer? {
+                header: MediaFrameHeader) -> DecodeResult {
         guard payloadOffset >= 0,
               payloadLength >= 0,
               payloadOffset + payloadLength <= frameData.count else {
             os_log(.error, log: Self.log,
                    "Invalid HEVC payload bounds: offset=%d length=%d frame=%d",
-                   payloadOffset, payloadLength, frameData.count)
-            return nil
+                    payloadOffset, payloadLength, frameData.count)
+            return .failed
         }
 
         // If this is a keyframe, extract SPS/PPS and ensure session exists
         if header.isKeyframe {
             if !ensureSession(from: frameData, payloadOffset: payloadOffset, payloadLength: payloadLength) {
                 print("[CONSOLE] HEVCDecoder: ensureSession FAILED for keyframe (data=\(payloadLength) bytes)")
-                return nil
+                return .failed
             }
             if decodeLogCount < 3 {
                 print("[CONSOLE] HEVCDecoder: session ready after keyframe")
@@ -74,7 +118,7 @@ final class HEVCDecoder {
                 print("[CONSOLE] HEVCDecoder: no session (awaiting keyframe)")
             }
             decodeLogCount += 1
-            return nil
+            return .failed
         }
 
         // Create CMBlockBuffer from encoded data
@@ -98,7 +142,7 @@ final class HEVCDecoder {
 
         guard status == noErr, let block = blockBuffer else {
             os_log(.error, log: Self.log, "CMBlockBufferCreate failed: %d", status)
-            return nil
+            return .failed
         }
 
         // Create CMSampleBuffer
@@ -118,44 +162,71 @@ final class HEVCDecoder {
 
         guard status == noErr, let sample = sampleBuffer else {
             os_log(.error, log: Self.log, "CMSampleBufferCreate failed: %d", status)
-            return nil
+            return .failed
         }
 
         // Real-time decode path.
-        var pixelBuffer: CVPixelBuffer?
+        let decodeStartUs = keydrdHostTimeUs()
+        let decodeStartTime = CACurrentMediaTime()
+        let decodeState = DecodeInvocationState()
         var flagsOut: VTDecodeInfoFlags = []
+        let callbackSignal = DispatchSemaphore(value: 0)
 
         status = VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: sample,
             flags: [._1xRealTimePlayback],
             infoFlagsOut: &flagsOut,
-            outputHandler: { decodeStatus, _, imageBuffer, _, _ in
+            outputHandler: { [weak self] decodeStatus, _, imageBuffer, _, _ in
+                guard let self = self else { return }
                 if decodeStatus == noErr, let buf = imageBuffer {
-                    pixelBuffer = buf
+                    let didReturn = decodeState.storePixelBuffer(buf)
+                    if didReturn {
+                        let lateMs = Double(Int64(keydrdHostTimeUs()) - Int64(decodeStartUs)) / 1_000.0
+                        if lateMs >= 12.0 || self.asyncLateFrameLogCount < 8 || Int(header.seq) % 240 == 0 {
+                            print("[CONSOLE] HEVCDecoder: async-output seq=\(header.seq) payload=\(payloadLength)B lateMs=\(String(format: "%.2f", lateMs)) transportPath=shared")
+                            self.asyncLateFrameLogCount += 1
+                        }
+                        self.onDecodedFrame?(buf, header, payloadLength)
+                    }
                 } else {
                     os_log(.error, log: Self.log, "Decode frame error: %d", decodeStatus)
                 }
+                callbackSignal.signal()
             }
         )
 
         if status != noErr {
             os_log(.error, log: Self.log, "VTDecompressionSessionDecodeFrame failed: %d", status)
             handleSessionError(status)
-            return nil
+            return .failed
         }
 
-        // Avoid unconditional decoder drains. Only wait when this call actually
-        // returned asynchronously and we still need the output for this frame.
-        if flagsOut.contains(.asynchronous) && pixelBuffer == nil {
-            VTDecompressionSessionWaitForAsynchronousFrames(session)
+        // Avoid full decoder drains on the hot path. Wait only for a tiny budget;
+        // if output is still pending, keep pipeline moving and deliver async via callback.
+        let hadImmediatePixelBuffer = decodeState.hasImmediatePixelBuffer()
+        if flagsOut.contains(.asynchronous) && !hadImmediatePixelBuffer {
+            let waitDeadline = DispatchTime.now() + .milliseconds(Int(Self.asyncWaitBudgetMs))
+            let waitResult = callbackSignal.wait(timeout: waitDeadline)
+            if waitResult == .timedOut {
+                decodeState.markDecodeReturned()
+                let waitedMs = (CACurrentMediaTime() - decodeStartTime) * 1000.0
+                if waitedMs >= 6.0 || deferredDecodeLogCount < 8 || Int(header.seq) % 240 == 0 {
+                    print("[CONSOLE] HEVCDecoder: async-deferred seq=\(header.seq) payload=\(payloadLength)B waitedMs=\(String(format: "%.2f", waitedMs)) budgetMs=\(String(format: "%.1f", Self.asyncWaitBudgetMs))")
+                    deferredDecodeLogCount += 1
+                }
+                return .deferred
+            }
         }
 
-        if let pb = pixelBuffer {
-            onDecodedFrame?(pb, header.tsUs)
+        decodeState.markDecodeReturned()
+        let outputBuffer = decodeState.takePixelBuffer()
+        if let pb = outputBuffer {
+            return .decoded(pb)
         }
 
-        return pixelBuffer
+        os_log(.error, log: Self.log, "Decode produced no pixel buffer: seq=%d async=%{public}s", Int(header.seq), flagsOut.contains(.asynchronous) ? "true" : "false")
+        return .failed
     }
 
     /// Invalidate and release the decompression session.

@@ -331,10 +331,12 @@ final class WirelessTransport {
                         self.isConnected
                     if self.isConnected || self.connectedServiceName != nil {
                         if allowControlPathReplacement {
-                            print("[CONSOLE] Bonjour: .added accepted during control-path recovery decision=keep-session action=replace-control-path serviceLatch=\(self.connectedServiceName ?? "nil") mediaActive=\(self.mediaConnection != nil) inputActive=\(self.inputConnection != nil) isConnected=\(self.isConnected)")
-                            if self.inputConnection != nil {
-                                print("[CONSOLE] Bonjour: control-path replacement will cancel stale/pending input connection before reconnect")
+                            if let activeInput = self.inputConnection {
+                                print("[CONSOLE] Bonjour: ignoring control-path replacement duplicate while replacement already in-flight decision=preserve-current-attempt inputState=\(activeInput.state) serviceLatch=\(self.connectedServiceName ?? "nil") mediaActive=\(self.mediaConnection != nil) isConnected=\(self.isConnected)")
+                                self.log.info("Bonjour .added ignored during control recovery: replacement already in-flight")
+                                continue
                             }
+                            print("[CONSOLE] Bonjour: .added accepted during control-path recovery decision=keep-session action=replace-control-path serviceLatch=\(self.connectedServiceName ?? "nil") mediaActive=\(self.mediaConnection != nil) inputActive=\(self.inputConnection != nil) isConnected=\(self.isConnected)")
                             self.log.info("Bonjour .added accepted during control-path recovery")
                         } else {
                             print("[CONSOLE] Bonjour: ignoring duplicate .added (already connected/connecting to '\(self.connectedServiceName ?? "?")', recoveryActive=\(controlRecoveryActive), mediaActive=\(self.mediaConnection != nil), inputActive=\(self.inputConnection != nil), isConnected=\(self.isConnected))")

@@ -108,6 +108,13 @@ final class SessionManager {
     init() {
         Self.log.info("[SessionManager] init called, initial state=\(self.state.rawValue)")
         Self.log.info("[SessionManager] qrPairing.isPaired=\(self.qrPairing.isPaired)")
+        hevcDecoder.onDecodedFrame = { [weak self] pixelBuffer, header, payloadLength in
+            self?.handleDecodedHEVCFrame(pixelBuffer,
+                                         header: header,
+                                         payloadLength: payloadLength,
+                                         decodeMs: nil,
+                                         source: "async-callback")
+        }
         if isTestMode {
             print("[CONSOLE] SessionManager: TEST MODE enabled (wiredOnly=\(isWiredOnly), wirelessOnly=\(isWirelessOnly))")
             testRunner = DeviceTestRunner(sessionManager: self)
@@ -621,33 +628,33 @@ final class SessionManager {
         }
 
         // Route to decoder based on flags
-        var decompressedSize = 0
         let decodeStart = CACurrentMediaTime()
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
-            guard let pixelBuffer = hevcDecoder.decode(frameData: data,
-                                                       payloadOffset: payloadOffset,
-                                                       payloadLength: payloadLength,
-                                                       header: header) else {
+            let decodeResult = hevcDecoder.decode(frameData: data,
+                                                  payloadOffset: payloadOffset,
+                                                  payloadLength: payloadLength,
+                                                  header: header)
+            let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
+            switch decodeResult {
+            case .decoded(let pixelBuffer):
+                handleDecodedHEVCFrame(pixelBuffer,
+                                       header: header,
+                                       payloadLength: payloadLength,
+                                       decodeMs: decodeMs,
+                                       source: "decode-inline")
+            case .deferred:
+                if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
+                    print("[CONSOLE] USBTransport: frame-pipeline seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=true payload=\(payloadLength)B decodeMs=\(String(format: "%.2f", decodeMs)) recvCount=\(frameRecvCount) status=deferred")
+                }
+                return
+            case .failed:
                 testRunner?.noteHEVCDecodeFailure(seq: header.seq)
                 if frameRecvCount <= 5 {
                     print("[CONSOLE] handleReceivedFrame: HEVC decode FAILED for seq=\(header.seq)")
                 }
                 return
             }
-            decompressedSize = CVPixelBufferGetDataSize(pixelBuffer)
-            let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
-            if frameRecvCount <= 3 {
-                print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes, decode=\(String(format: "%.1f", decodeMs))ms")
-            }
-
-            // Report decoded dimensions for resolution test
-            let decodedW = CVPixelBufferGetWidth(pixelBuffer)
-            let decodedH = CVPixelBufferGetHeight(pixelBuffer)
-            testRunner?.reportDecodedFrameDimensions(width: decodedW, height: decodedH)
-
-            // Zero-copy: pass CVPixelBuffer directly to Metal via IOSurface
-            metalRenderer.updateFrameFromPixelBuffer(pixelBuffer, captureTimestampUs: header.tsUs)
         } else {
             // LZ4 decode path (wired mode)
             guard let decompressor = lz4Decompressor else {
@@ -675,16 +682,66 @@ final class SessionManager {
                 return
             }
 
-            decompressedSize = frameBytes
-
             // Report decoded dimensions for resolution test
             testRunner?.reportDecodedFrameDimensions(width: macDisplayWidth, height: macDisplayHeight)
 
             metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight, captureTimestampUs: header.tsUs)
+            let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
+            if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
+                print("[CONSOLE] USBTransport: frame-pipeline seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=false payload=\(payloadLength)B decodeMs=\(String(format: "%.2f", decodeMs)) recvCount=\(frameRecvCount)")
+            }
+            let decompressedSize = frameBytes
+            // Record frame timestamp for FPS calculation
+            recordFrameTimestamp()
+
+            if !hasRenderedFrameInCurrentSession {
+                DispatchQueue.main.async {
+                    self.hasRenderedFrameInCurrentSession = true
+                }
+            }
+
+            // E2E test: report frame received + decompressed
+            testRunner?.reportFrameReceived(header: header, decompressedSize: decompressedSize)
+
+            // Transition to streaming on first frame
+            if state == .connecting || state == .reconnecting {
+                DispatchQueue.main.async {
+                    self.state = .streaming
+                    self.reconnectAttempt = 0
+                    self.hudViewModel.show()
+                }
+            }
         }
-        let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
-        if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
-            print("[CONSOLE] USBTransport: frame-pipeline seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=\(header.isHEVC) payload=\(payloadLength)B decodeMs=\(String(format: "%.2f", decodeMs)) recvCount=\(frameRecvCount)")
+    }
+
+    private func handleDecodedHEVCFrame(_ pixelBuffer: CVPixelBuffer,
+                                        header: MediaFrameHeader,
+                                        payloadLength: Int,
+                                        decodeMs: Double?,
+                                        source: String) {
+        let decompressedSize = CVPixelBufferGetDataSize(pixelBuffer)
+        if frameRecvCount <= 3 {
+            if let decodeMs {
+                print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes, decode=\(String(format: "%.1f", decodeMs))ms source=\(source)")
+            } else {
+                print("[CONSOLE] handleReceivedFrame: HEVC decoded OK, \(decompressedSize) bytes, source=\(source)")
+            }
+        }
+
+        // Report decoded dimensions for resolution test
+        let decodedW = CVPixelBufferGetWidth(pixelBuffer)
+        let decodedH = CVPixelBufferGetHeight(pixelBuffer)
+        testRunner?.reportDecodedFrameDimensions(width: decodedW, height: decodedH)
+
+        // Zero-copy: pass CVPixelBuffer directly to Metal via IOSurface
+        metalRenderer.updateFrameFromPixelBuffer(pixelBuffer, captureTimestampUs: header.tsUs)
+
+        if let decodeMs {
+            if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
+                print("[CONSOLE] USBTransport: frame-pipeline seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=true payload=\(payloadLength)B decodeMs=\(String(format: "%.2f", decodeMs)) recvCount=\(frameRecvCount) status=decoded source=\(source)")
+            }
+        } else if frameRecvCount <= 10 || frameRecvCount % 240 == 0 {
+            print("[CONSOLE] USBTransport: frame-pipeline-async seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=true payload=\(payloadLength)B recvCount=\(frameRecvCount) source=\(source)")
         }
 
         // Record frame timestamp for FPS calculation

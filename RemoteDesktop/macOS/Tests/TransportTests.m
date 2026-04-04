@@ -96,7 +96,10 @@ static SecIdentityRef loadIdentityFromPKCS12(NSString *path) {
     NSData *p12Data = [NSData dataWithContentsOfFile:path];
     if (!p12Data) return NULL;
 
-    NSDictionary *options = @{(__bridge id)kSecImportExportPassphrase: @"keydrd"};
+    NSDictionary *options = @{
+        (__bridge id)kSecImportExportPassphrase: @"keydrd",
+        (__bridge id)CFSTR("kSecImportToMemoryOnly"): @YES,
+    };
     CFArrayRef items = NULL;
     OSStatus status = SecPKCS12Import((__bridge CFDataRef)p12Data,
                                       (__bridge CFDictionaryRef)options,

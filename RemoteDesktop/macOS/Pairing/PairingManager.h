@@ -9,7 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * Manages the macOS side of the QR pairing handshake for keyd-rd.
  *
- * Generates a self-signed P-256 TLS certificate (persisted in Keychain),
+ * Loads a self-signed P-256 TLS identity from an OpenSSL-generated PKCS12 file
+ * using memory-only import (no login Keychain writes),
  * computes its SHA-256 fingerprint for inclusion in the QR code payload,
  * performs ECDH key exchange over a cert-pinned TLS channel, and stores
  * the derived shared secret in Keychain.
@@ -26,13 +27,12 @@ NS_ASSUME_NONNULL_BEGIN
 /** The derived shared secret from ECDH key exchange (nil if not paired). */
 @property (nonatomic, readonly, nullable) NSData *sharedSecret;
 
-/** The Mac's self-signed TLS identity (SecIdentityRef), persisted in Keychain. */
+/** The Mac's TLS identity (SecIdentityRef), loaded in memory from PKCS12. */
 @property (nonatomic, readonly, nullable) SecIdentityRef tlsIdentity;
 
 /**
- * Ensure a TLS identity exists. On first run, generates a P-256 key pair,
- * creates a self-signed X.509 certificate, packages as SecIdentity, and
- * stores in Keychain. On subsequent runs, loads from Keychain.
+ * Ensure a TLS identity exists by loading /tmp/keydrd-tls/identity.p12
+ * with memory-only import.
  *
  * Must be called before generateQRPayload or startPairingListener.
  */

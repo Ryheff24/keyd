@@ -63,9 +63,10 @@ echo "=== Launching $SCHEME ==="
 pkill -f "RemoteDesktopAgent" 2>/dev/null || true
 sleep 1
 
-# Delete old keydrd TLS items from login keychain to avoid ACL prompts
-security delete-certificate -c "keydrd-agent" 2>/dev/null || true
-security delete-identity -c "keydrd-agent" 2>/dev/null || true
+# Delete all legacy keychain imports from older PKCS12 flows to avoid stale ACL prompts.
+while security delete-identity -c "keydrd-agent" 2>/dev/null; do :; done
+while security delete-certificate -c "keydrd-agent" 2>/dev/null; do :; done
+while security delete-certificate -c "keydrd-agent-tls" 2>/dev/null; do :; done
 
 # Reuse existing TLS identity if available (preserves pairing across rebuilds).
 # Only generate a new one if the file doesn't exist (first run or /tmp cleaned).
