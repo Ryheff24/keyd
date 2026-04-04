@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.995` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `27 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `39 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `28 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `47 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `61 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `49 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `24 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `34 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `53.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.072` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `31 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `108 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `45 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `51 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `129 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `64 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `56.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `26 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `95 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -80,3 +80,4 @@ Rules:
 | 2026-04-04 | 01:16:31 EDT | `d05d42e` | `2752x1548` | `2496x1404` | `53.3 fps` | `1.500` | `26/155/54 ms` | `49/179/74 ms` | `54.4 fps, 23/152 ms` | `1` | `26/33` | wifi iteration 7 lane-a2 lane-b2 lane-c2 integrated |
 | 2026-04-04 | 01:31:10 EDT | `5d1199e` | `2752x1548` | `2496x1404` | `50.6 fps` | `1.429` | `26/155/54 ms` | `46/178/68 ms` | `51.4 fps, 24/156 ms` | `1` | `26/33` | wifi iteration 8 lane-a3 lane-b3 lane-c3 integrated |
 | 2026-04-04 | 01:56:45 EDT | `395f105` | `2752x1786` | `2496x1620` | `57.7 fps` | `0.995` | `27/39/28 ms` | `47/61/49 ms` | `59.8 fps, 24/34 ms` | `1` | `26/33` | wifi iteration 9 lane-a4 lane-b4 lane-c4 integrated |
+| 2026-04-04 | 02:25:11 EDT | `a91358a` | `2752x1786` | `2496x1620` | `53.6 fps` | `1.072` | `31/108/45 ms` | `51/129/64 ms` | `56.1 fps, 26/95 ms` | `1` | `26/33` | wifi iteration 11 lane-a6 lane-b6 lane-c6 integrated |
