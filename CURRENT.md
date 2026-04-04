@@ -457,3 +457,37 @@
   - iPad: sustained/fps/frame-pacing/pipeline/glass metrics,
   - Mac: `WiFi TCP send*` and `WiFi perf 1s` TCP fields.
 - Confirm no reconnect/security regressions and that latency/FPS move in expected direction.
+
+## Lane C Iteration (HEVC decode→renderer handoff trace + queue decouple)
+
+- Timestamp: 2026-04-04 17:01:21 EDT
+- Baseline command (orchestrator): `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: decode handoff latency focus"`
+- Validation command: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate hevc handoff queue telemetry"`
+- Result: `26/33` passed, `7` failed (same fail count; perf metrics improved, security known vuln unchanged)
+- Baseline → Validation deltas (Wi‑Fi full profile):
+  - sustained avg FPS: `54.6 -> 56.0`
+  - sustained 1% low FPS: `6.7 -> 9.2`
+  - sustained pipeline p95: `145ms -> 107ms`
+  - sustained glass p95: `173ms -> 129ms`
+  - full pipeline-latency p95: `146ms -> 106ms`
+  - full glass-to-glass p95: `172ms -> 128ms`
+  - fps jitter stddev: `22.9ms -> 20.6ms`
+  - heavy-load pipeline p95: `136ms -> 109ms` (median regressed `27ms -> 38ms`)
+- Evidence from new instrumentation:
+  - `HEVCDecoder: decode-callback ... didReturn=false callbackMs≈5-6ms` (callbacks usually complete before decode returns; not a post-return async backlog).
+  - `SessionManager: hevc-handoff enqueue ... decodeToEnqueue p95≈0.10ms, enqueueCost p95≈0.09ms` (decode→renderer submit cost is tiny).
+  - `SessionManager: hevc-handoff dequeue ... decodeToDequeue median≈21.95ms, p95≈26.52ms` and `submitToPresent p95≈34.97ms` (tail is dominated by queueing before render present, not enqueue cost).
+  - Renderer catchup branch count dropped versus prior run context (`catchupTotal` finishing at `78` this run vs ~`235` prior), indicating reduced burst pressure.
+- Change set implemented:
+  - `RemoteDesktop/iPadOS/Decode/HEVCDecoder.swift`
+    - Added explicit decode submit/callback timing logs (`decode-submit`, `decode-callback`) with success/error branch fields.
+    - Extended async decode callback payload with `decodeSubmitUs` and `callbackUs`.
+  - `RemoteDesktop/iPadOS/Render/MetalRenderer.swift`
+    - Added dequeue and render-complete callback hooks for external correlation (`onFrameDequeuedForRender`, `onFrameRenderCompleted`).
+  - `RemoteDesktop/iPadOS/App/SessionManager.swift`
+    - Routed both inline and callback HEVC decoded frames through a dedicated serial handoff queue.
+    - Added decode→enqueue→dequeue→present correlated telemetry keyed by capture timestamp (seq/source/state/transport/timing).
+- Current hypothesis:
+  - dominant remaining blocker is renderer queue delay/cadence instability (dequeue delay + catchup behavior), not HEVC decode callback latency or decode->enqueue overhead.
+- Next move:
+  - keep this instrumentation and target MetalRenderer dequeue policy under sustained load (reduce `queueDelay`/`catchup` oscillation without lowering fidelity), then rerun canonical Wi‑Fi full profile.
