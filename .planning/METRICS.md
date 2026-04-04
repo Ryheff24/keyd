@@ -20,18 +20,18 @@ Rules:
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
 | FPS | `58.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.234` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `30 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `143 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `48 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `53 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `170 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `74 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `27 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `137 ms` | `8 ms` | `7 ms` | ❌ |
+| Frame pacing CV | `1.297` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `36 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `106 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `51 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `70 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `129 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `77 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `36 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `103 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `78.4%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -92,3 +92,4 @@ Rules:
 | 2026-04-04 | 14:01:04 EDT | `15e860e` | `2752x1786` | `2496x1620` | `57.8 fps` | `0.794` | `29/88/36 ms` | `50/98/56 ms` | `59.1 fps, 26/73 ms` | `1` | `29/37` | iter21 hotfix tcp-drain crash |
 | 2026-04-04 | 15:03:43 EDT | `967b103` | `2752x1786` | `2496x1620` | `58.6 fps` | `0.625` | `27/55/31 ms` | `48/95/54 ms` | `59.7 fps, 25/124 ms` | `1` | `29/37` | Validate keychain memory-only import |
 | 2026-04-04 | 16:18:12 EDT | `87b1813` | `2752x1786` | `2496x1620` | `58.4 fps` | `1.234` | `30/143/48 ms` | `53/170/74 ms` | `59.8 fps, 27/137 ms` | `1` | `29/37` | wifi: baseline stutter+bitrate drop to >=45fps no-res-loss |
+| 2026-04-04 | 16:24:19 EDT | `4cdd36c` | `2752x1786` | `2496x1620` | `58.4 fps` | `1.297` | `36/106/51 ms` | `70/129/77 ms` | `59.6 fps, 36/103 ms` | `1` | `26/33` | wifi: validate transient DTLS recv-gap backoff+rate-limited logging |
