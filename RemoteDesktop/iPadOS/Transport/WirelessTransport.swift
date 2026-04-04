@@ -663,8 +663,34 @@ final class WirelessTransport {
     // MARK: - Private: Receive Loops
 
     private var mediaRecvCount = 0
+    private var transientDTLSGapCount = 0
+    private var transientDTLSGapSuppressedLogs = 0
+    private var transientDTLSGapFirstAt: DispatchTime?
+    private var transientDTLSGapLastLogAt: DispatchTime?
+    private static let transientDTLSGapBaseBackoffMs: UInt64 = 1
+    private static let transientDTLSGapMaxBackoffMs: UInt64 = 4
+    private static let transientDTLSGapSummaryIntervalMs: UInt64 = 250
     private func isTransientDTLSGap(_ detail: String) -> Bool {
         detail.localizedCaseInsensitiveContains("No message available on STREAM")
+    }
+
+    private func transientDTLSGapBackoffMs(for streak: Int) -> UInt64 {
+        if streak >= 256 { return Self.transientDTLSGapMaxBackoffMs }
+        if streak >= 128 { return 3 }
+        if streak >= 32 { return 2 }
+        return Self.transientDTLSGapBaseBackoffMs
+    }
+
+    private func resetTransientDTLSGapTracking(reason: String) {
+        guard transientDTLSGapCount > 0 else { return }
+        let firstNs = transientDTLSGapFirstAt?.uptimeNanoseconds ?? DispatchTime.now().uptimeNanoseconds
+        let elapsedMs = (DispatchTime.now().uptimeNanoseconds - firstNs) / 1_000_000
+        print("[CONSOLE] WirelessTransport: transient-dtls-recv-gap recovered reason=\(reason) events=\(transientDTLSGapCount) suppressed=\(transientDTLSGapSuppressedLogs) windowMs=\(elapsedMs) pending=\(pendingMediaCallbacks) maxPending=\(maxPendingMediaCallbacks)")
+        log.info("Transient DTLS recv gap recovered reason=\(reason) events=\(self.transientDTLSGapCount) suppressed=\(self.transientDTLSGapSuppressedLogs) windowMs=\(elapsedMs)")
+        transientDTLSGapCount = 0
+        transientDTLSGapSuppressedLogs = 0
+        transientDTLSGapFirstAt = nil
+        transientDTLSGapLastLogAt = nil
     }
 
     private func scheduleMediaReceive(_ connection: NWConnection) {
@@ -687,6 +713,7 @@ final class WirelessTransport {
             }
 
             if let data = content, !data.isEmpty {
+                self.resetTransientDTLSGapTracking(reason: "media-data")
                 self.mediaRecvCount += 1
                 if self.mediaRecvCount <= 3 {
                     print("[CONSOLE] WirelessTransport: UDP media recv #\(self.mediaRecvCount) (\(data.count) bytes)")
@@ -722,11 +749,44 @@ final class WirelessTransport {
                 }
                 let controlPathHealthy = hasInputConnection && self.isConnected && inputReady
                 if controlPathHealthy && self.isTransientDTLSGap(detail) {
-                    print("[CONSOLE] WirelessTransport: media path loss decision=ignored reason=transient-dtls-recv-gap detail=\(detail) controlPathHealthy=\(controlPathHealthy)")
-                    self.log.info("Media path loss decision=ignored reason=transient-dtls-recv-gap detail=\(detail)")
-                    self.scheduleMediaReceive(connection)
+                    let now = DispatchTime.now()
+                    if self.transientDTLSGapFirstAt == nil {
+                        self.transientDTLSGapFirstAt = now
+                    }
+                    self.transientDTLSGapCount += 1
+                    let streak = self.transientDTLSGapCount
+                    let backoffMs = self.transientDTLSGapBackoffMs(for: streak)
+                    let shouldEmitDetail = streak <= 3
+                    var shouldEmitSummary = false
+                    if !shouldEmitDetail {
+                        let lastLogNs = self.transientDTLSGapLastLogAt?.uptimeNanoseconds ?? 0
+                        let sinceLastLogMs = lastLogNs == 0 ? Self.transientDTLSGapSummaryIntervalMs : (now.uptimeNanoseconds - lastLogNs) / 1_000_000
+                        if sinceLastLogMs >= Self.transientDTLSGapSummaryIntervalMs || streak % 128 == 0 {
+                            shouldEmitSummary = true
+                        }
+                    }
+                    if shouldEmitDetail {
+                        print("[CONSOLE] WirelessTransport: media path loss decision=ignored reason=transient-dtls-recv-gap detail=\(detail) controlPathHealthy=\(controlPathHealthy) streak=\(streak) backoffMs=\(backoffMs) pending=\(self.pendingMediaCallbacks)")
+                        self.log.info("Media path loss decision=ignored reason=transient-dtls-recv-gap streak=\(streak) backoffMs=\(backoffMs) detail=\(detail)")
+                        self.transientDTLSGapLastLogAt = now
+                    } else if shouldEmitSummary {
+                        let firstNs = self.transientDTLSGapFirstAt?.uptimeNanoseconds ?? now.uptimeNanoseconds
+                        let spanMs = (now.uptimeNanoseconds - firstNs) / 1_000_000
+                        self.transientDTLSGapSuppressedLogs += 1
+                        print("[CONSOLE] WirelessTransport: transient-dtls-recv-gap ongoing streak=\(streak) spanMs=\(spanMs) suppressed=\(self.transientDTLSGapSuppressedLogs) backoffMs=\(backoffMs) pending=\(self.pendingMediaCallbacks) maxPending=\(self.maxPendingMediaCallbacks)")
+                        self.log.info("Transient DTLS recv gap ongoing streak=\(streak) spanMs=\(spanMs) suppressed=\(self.transientDTLSGapSuppressedLogs) backoffMs=\(backoffMs)")
+                        self.transientDTLSGapLastLogAt = now
+                    } else {
+                        self.transientDTLSGapSuppressedLogs += 1
+                    }
+                    self.transportQueue.asyncAfter(deadline: .now() + .milliseconds(Int(backoffMs))) { [weak self] in
+                        guard let self = self else { return }
+                        guard self.mediaConnection === connection else { return }
+                        self.scheduleMediaReceive(connection)
+                    }
                     return
                 }
+                self.resetTransientDTLSGapTracking(reason: "non-transient-error")
                 print("[CONSOLE] WirelessTransport: UDP media recv error: \(error)")
                 return
             }
