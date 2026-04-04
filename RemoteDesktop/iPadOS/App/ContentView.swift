@@ -54,7 +54,7 @@ struct ContentView: View {
                 MetalRenderView(renderer: sessionManager.metalRenderer)
                     .ignoresSafeArea()
 
-                if sessionManager.state == .connecting {
+                if sessionManager.state == .connecting && !sessionManager.hasRenderedFrameInCurrentSession {
                     VStack(spacing: 16) {
                         ProgressView()
                             .scaleEffect(1.5)
@@ -76,6 +76,25 @@ struct ContentView: View {
                                 )
                         }
                         .padding(.top, 8)
+                    }
+                }
+
+                // Keep reset pairing reachable even if a stale connecting overlay state lingers.
+                // In test mode, show a top-center action whenever video has already started rendering.
+                if sessionManager.isTestMode && sessionManager.hasRenderedFrameInCurrentSession {
+                    VStack {
+                        Button {
+                            sessionManager.resetPairingAndShowQR()
+                        } label: {
+                            Text("Reset Pairing")
+                                .font(.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(.ultraThinMaterial))
+                        }
+                        .padding(.top, 8)
+                        Spacer()
                     }
                 }
 

@@ -5,25 +5,36 @@
 # Usage: ./RemoteDesktop/scripts/run-e2e-tests.sh [timeout_seconds] [options]
 #
 # Options:
-#   --transport usb|wifi|awdl     Assert the initial connected transport type
-#   --transports LIST             Comma-separated transport rotation set
+#   --expected-transport TYPE     Assert the initial connected transport type
+#                                  TYPE: usb|wifi|awdl
+#   --transport-rotation LIST     Comma-separated transport regression set
 #                                  (default: usb,wifi,awdl)
+#   --transport usb|wifi|awdl     Deprecated alias for --expected-transport
+#   --transports LIST             Deprecated alias for --transport-rotation
 #   --latency-target-ms N         Latency target for tiered test (median RTT)
 #   --expect-resolution WxH       Expected resolution (e.g. 2560x1600)
 #   --expect-fps N                Minimum expected FPS (e.g. 60)
 #   --notes TEXT                  Required; added to the report commit message and
 #                                  metrics changelog
 #   --capture-file PATH           Use a file-backed synthetic frame source on Mac
-#                                  If omitted, auto-uses /tmp/keydrd-capture-mimic.mov when present
+#                                  (default: ./RemoteDesktop/2026-04-02 10-55-42-prores.mov)
 #   --stress-capture              Force procedural full-frame stress source on Mac
 #   --real-capture                Use live ScreenCaptureKit desktop capture instead
 #   --sustained-stream-seconds N  Keep streaming for N seconds after heavy-load
-#                                  before security/rotation checks
+#                                  before security/rotation checks (default: 90, full profile)
+#   --profile NAME                full|targeted|connection|security
+#                                  full: sustained + perf + rotation + security
+#                                  targeted: short playback + rotation + security
+#                                  connection: connection + playback + rotation + security
+#                                  security: connection + playback + security
+#   --video-playback-window-seconds N  Override playback freeze-check window length
+#   --video-playback-offset-seconds N  Override playback freeze-check start offset
 #   --skip-transport-rotation     Skip reconnect/rotation checks after main stream tests
-#   --wired-only                  Shorthand for --transports usb
+#   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
 #
-# Default timeout: 180 seconds. Exit code 0 = all tests passed, 1 = failures.
+# Default timeout: 180 seconds (auto-extended for full sustained runs).
+# Exit code 0 = all tests passed, 1 = failures.
 #
 # Prerequisites:
 #   - iPad physically connected via USB or on same Wi-Fi network
@@ -45,7 +56,8 @@ source "$SCRIPT_DIR/async-index.sh"
 
 # ---- Parse arguments ----
 TIMEOUT="180"
-TRANSPORT=""
+TIMEOUT_SPECIFIED=false
+EXPECT_TRANSPORT=""
 ROTATION_TRANSPORTS=""
 LATENCY_TARGET=""
 EXPECT_RESOLUTION=""
@@ -53,24 +65,39 @@ EXPECT_FPS=""
 CAPTURE_FILE=""
 STRESS_CAPTURE=false
 REAL_CAPTURE=false
-SUSTAINED_STREAM_SECONDS=""
+SUSTAINED_STREAM_SECONDS="90"
 SKIP_TRANSPORT_ROTATION=false
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
+PROFILE="full"
+ROTATION_SPECIFIED=false
+EXPECT_TRANSPORT_SPECIFIED=false
+SUSTAINED_SPECIFIED=false
+DEPRECATED_TRANSPORT_FLAG=false
+DEPRECATED_TRANSPORTS_FLAG=false
+VIDEO_PLAYBACK_WINDOW_SECONDS=""
+VIDEO_PLAYBACK_OFFSET_SECONDS=""
+VIDEO_WINDOW_SPECIFIED=false
+VIDEO_OFFSET_SPECIFIED=false
 
 # First positional arg can be timeout
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
   TIMEOUT="$1"
+  TIMEOUT_SPECIFIED=true
   shift
 fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --expected-transport)
+      EXPECT_TRANSPORT="$2"; EXPECT_TRANSPORT_SPECIFIED=true; shift 2 ;;
     --transport)
-      TRANSPORT="$2"; shift 2 ;;
+      EXPECT_TRANSPORT="$2"; EXPECT_TRANSPORT_SPECIFIED=true; DEPRECATED_TRANSPORT_FLAG=true; shift 2 ;;
+    --transport-rotation)
+      ROTATION_TRANSPORTS="$2"; ROTATION_SPECIFIED=true; shift 2 ;;
     --transports)
-      ROTATION_TRANSPORTS="$2"; shift 2 ;;
+      ROTATION_TRANSPORTS="$2"; ROTATION_SPECIFIED=true; DEPRECATED_TRANSPORTS_FLAG=true; shift 2 ;;
     --latency-target-ms)
       LATENCY_TARGET="$2"; shift 2 ;;
     --expect-resolution)
@@ -86,17 +113,24 @@ while [[ $# -gt 0 ]]; do
     --real-capture)
       REAL_CAPTURE=true; shift ;;
     --sustained-stream-seconds)
-      SUSTAINED_STREAM_SECONDS="$2"; shift 2 ;;
+      SUSTAINED_STREAM_SECONDS="$2"; SUSTAINED_SPECIFIED=true; shift 2 ;;
+    --profile)
+      PROFILE="$2"; shift 2 ;;
+    --video-playback-window-seconds)
+      VIDEO_PLAYBACK_WINDOW_SECONDS="$2"; VIDEO_WINDOW_SPECIFIED=true; shift 2 ;;
+    --video-playback-offset-seconds)
+      VIDEO_PLAYBACK_OFFSET_SECONDS="$2"; VIDEO_OFFSET_SPECIFIED=true; shift 2 ;;
     --skip-transport-rotation)
       SKIP_TRANSPORT_ROTATION=true; shift ;;
     --full-suite)
       FULL_SUITE=true; shift ;;
     --wired-only)
-      WIRED_ONLY=true; shift ;;
+      WIRED_ONLY=true; ROTATION_SPECIFIED=true; shift ;;
     *)
       # Unknown arg -- treat as timeout if numeric
       if [[ "$1" =~ ^[0-9]+$ ]]; then
         TIMEOUT="$1"
+        TIMEOUT_SPECIFIED=true
       else
         echo "Unknown option: $1"
         exit 1
@@ -112,6 +146,25 @@ fi
 if [ "$FULL_SUITE" = true ]; then
   echo "ERROR: --full-suite is not compatible with required reporting yet"
   exit 1
+fi
+
+if [ "$DEPRECATED_TRANSPORT_FLAG" = true ]; then
+  echo "WARNING: --transport is deprecated; use --expected-transport"
+fi
+if [ "$DEPRECATED_TRANSPORTS_FLAG" = true ]; then
+  echo "WARNING: --transports is deprecated; use --transport-rotation"
+fi
+
+case "$PROFILE" in
+  full|targeted|connection|security) ;;
+  *)
+    echo "ERROR: invalid --profile '$PROFILE' (expected full|targeted|connection|security)"
+    exit 1
+    ;;
+esac
+
+if [ "$PROFILE" != "full" ] && [ "$SUSTAINED_SPECIFIED" = false ]; then
+  SUSTAINED_STREAM_SECONDS="0"
 fi
 
 normalize_transport_list() {
@@ -147,14 +200,14 @@ normalize_transport_list() {
       "")
         ;;
       *)
-        echo "ERROR: invalid transport '$item' in --transports (expected usb,wifi,awdl)"
+        echo "ERROR: invalid transport '$item' in transport rotation set (expected usb,wifi,awdl)"
         return 1
         ;;
     esac
   done
 
   if [ "${#normalized[@]}" -eq 0 ]; then
-    echo "ERROR: --transports must include at least one of usb,wifi,awdl"
+    echo "ERROR: transport rotation set must include at least one of usb,wifi,awdl"
     return 1
   fi
 
@@ -166,6 +219,91 @@ normalize_transport_list() {
     result+="$item"
   done
   printf "%s" "$result"
+}
+
+auto_detect_rotation_transports() {
+  local requested="$1"
+
+  if [ "$ROTATION_SPECIFIED" = true ] || [ "$WIRED_ONLY" = true ]; then
+    printf "%s" "$requested"
+    return
+  fi
+
+  # Keep full requested set; DeviceTestRunner skips unavailable transports at runtime.
+  printf "%s" "$requested"
+}
+
+derive_video_playback_window() {
+  if [ -n "$VIDEO_PLAYBACK_WINDOW_SECONDS" ] || [ -n "$VIDEO_PLAYBACK_OFFSET_SECONDS" ]; then
+    if [ -z "$VIDEO_PLAYBACK_WINDOW_SECONDS" ]; then
+      VIDEO_PLAYBACK_WINDOW_SECONDS="12"
+    fi
+    if [ -z "$VIDEO_PLAYBACK_OFFSET_SECONDS" ]; then
+      VIDEO_PLAYBACK_OFFSET_SECONDS="34"
+    fi
+    echo "INFO: video playback freeze-check window override offset=${VIDEO_PLAYBACK_OFFSET_SECONDS}s duration=${VIDEO_PLAYBACK_WINDOW_SECONDS}s"
+    return
+  fi
+  local default_window="12"
+  local default_offset="34"
+  VIDEO_PLAYBACK_WINDOW_SECONDS="$default_window"
+  VIDEO_PLAYBACK_OFFSET_SECONDS="$default_offset"
+  echo "INFO: video playback freeze-check window offset=${VIDEO_PLAYBACK_OFFSET_SECONDS}s duration=${VIDEO_PLAYBACK_WINDOW_SECONDS}s (deterministic default; refine from future telemetry)"
+}
+
+configure_profile_defaults() {
+  case "$PROFILE" in
+    full)
+      ;;
+    targeted)
+      SKIP_TRANSPORT_ROTATION=false
+      if [ "$SUSTAINED_SPECIFIED" = false ]; then
+        SUSTAINED_STREAM_SECONDS="0"
+      fi
+      if [ "$VIDEO_WINDOW_SPECIFIED" = false ]; then
+        VIDEO_PLAYBACK_WINDOW_SECONDS="12"
+      fi
+      if [ "$VIDEO_OFFSET_SPECIFIED" = false ]; then
+        VIDEO_PLAYBACK_OFFSET_SECONDS="2"
+      fi
+      ;;
+    connection)
+      SKIP_TRANSPORT_ROTATION=false
+      if [ "$SUSTAINED_SPECIFIED" = false ]; then
+        SUSTAINED_STREAM_SECONDS="0"
+      fi
+      if [ "$VIDEO_WINDOW_SPECIFIED" = false ]; then
+        VIDEO_PLAYBACK_WINDOW_SECONDS="10"
+      fi
+      if [ "$VIDEO_OFFSET_SPECIFIED" = false ]; then
+        VIDEO_PLAYBACK_OFFSET_SECONDS="2"
+      fi
+      ;;
+    security)
+      SKIP_TRANSPORT_ROTATION=true
+      if [ "$SUSTAINED_SPECIFIED" = false ]; then
+        SUSTAINED_STREAM_SECONDS="0"
+      fi
+      if [ "$VIDEO_WINDOW_SPECIFIED" = false ]; then
+        VIDEO_PLAYBACK_WINDOW_SECONDS="10"
+      fi
+      if [ "$VIDEO_OFFSET_SPECIFIED" = false ]; then
+        VIDEO_PLAYBACK_OFFSET_SECONDS="2"
+      fi
+      ;;
+  esac
+}
+
+configure_default_timeout() {
+  local sustained="${SUSTAINED_STREAM_SECONDS:-0}"
+  if ! [[ "$sustained" =~ ^[0-9]+$ ]]; then
+    sustained=0
+  fi
+
+  if [ "$TIMEOUT_SPECIFIED" = false ] && [ "$PROFILE" = "full" ] && [ "$sustained" -gt 0 ]; then
+    # Full profile includes sustained stream + security + rotation, so extend timeout.
+    TIMEOUT=$((180 + sustained + 90))
+  fi
 }
 
 # ---- Configuration ----
@@ -189,7 +327,7 @@ IPAD_INSTALL_LOG="/tmp/keyd-e2e-install-ipad.log"
 QR_PAYLOAD_FILE="/tmp/keydrd-test-qr.json"
 QR_READY_LOG="Test mode: QR payload written to /tmp/keydrd-test-qr.json"
 QR_SHOWN_LOG="Test mode: auto-showing QR"
-DEFAULT_CAPTURE_FILE="/tmp/keydrd-capture-desktop.png"
+DEFAULT_CAPTURE_FILE="./RemoteDesktop/2026-04-02 10-55-42-prores.mov"
 # The .mov stress video produces incompressible frames (~19.7MB) that tank FPS.
 # A static desktop screenshot gives realistic LZ4 deltas (~1-50KB per frame),
 # representing actual desktop usage (idle, text editing, cursor movement).
@@ -198,11 +336,13 @@ WIRELESS_ONLY=false
 
 if [ "$WIRED_ONLY" = true ]; then
   ROTATION_TRANSPORTS="usb"
+  ROTATION_SPECIFIED=true
 fi
 if [ -z "$ROTATION_TRANSPORTS" ]; then
   ROTATION_TRANSPORTS="usb,wifi,awdl"
 fi
 ROTATION_TRANSPORTS="$(normalize_transport_list "$ROTATION_TRANSPORTS")"
+ROTATION_TRANSPORTS="$(auto_detect_rotation_transports "$ROTATION_TRANSPORTS")"
 
 case ",$ROTATION_TRANSPORTS," in
   *,usb,*)
@@ -217,13 +357,11 @@ if [ "$ROTATION_TRANSPORTS" = "usb" ]; then
   WIRELESS_ONLY=false
 fi
 
+derive_video_playback_window
+configure_profile_defaults
+configure_default_timeout
+
 if [ -z "$CAPTURE_FILE" ] && [ "$STRESS_CAPTURE" = false ] && [ "$REAL_CAPTURE" = false ]; then
-  # Generate a desktop screenshot PNG for realistic LZ4 delta testing.
-  # Static desktop content produces tiny deltas (~1-50KB) vs the stress video
-  # which produces incompressible 19.7MB frames after ~12 seconds.
-  if [ ! -f "$DEFAULT_CAPTURE_FILE" ]; then
-    screencapture -x "$DEFAULT_CAPTURE_FILE" 2>/dev/null || true
-  fi
   if [ -f "$DEFAULT_CAPTURE_FILE" ]; then
     CAPTURE_FILE="$DEFAULT_CAPTURE_FILE"
   elif [ -f "$LEGACY_CAPTURE_FILE" ]; then
@@ -373,6 +511,8 @@ log_progress "  iPad log:     $IPAD_LOG_FILE"
 log_progress "  Mac log:      $MAC_LOG_FILE"
 log_progress "  Build logs:   $MAC_BUILD_LOG, $IPAD_BUILD_LOG"
 log_progress "  Transport rotation set: $ROTATION_TRANSPORTS"
+log_progress "  Profile: $PROFILE"
+log_progress "  Sustained stream seconds: $SUSTAINED_STREAM_SECONDS"
 log_progress ""
 
 # ---- Reporting helpers ----
@@ -384,6 +524,24 @@ extract_metric_value() {
     return 1
   fi
   printf "%s" "$value"
+}
+
+extract_metric_with_patterns() {
+  local label="$1"
+  local line="$2"
+  shift 2
+  local pattern value
+
+  for pattern in "$@"; do
+    value="$(echo "$line" | sed -nE "$pattern")"
+    if [ -n "$value" ]; then
+      printf "%s" "$value"
+      return 0
+    fi
+  done
+
+  echo "ERROR: could not parse $label from test log"
+  return 1
 }
 
 collect_report_metrics() {
@@ -398,12 +556,20 @@ collect_report_metrics() {
 
   REPORT_VIEWPORT_RESOLUTION=$(extract_metric_value "viewport resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*viewport=([0-9]+x[0-9]+).*/\1/p')")
   REPORT_FRAME_RESOLUTION=$(extract_metric_value "frame resolution" "$(echo "$REPORT_RESOLUTION_LINE" | sed -nE 's/.*frame=([0-9]+x[0-9]+).*/\1/p')")
-  REPORT_FPS=$(extract_metric_value "FPS" "$(echo "$REPORT_FPS_LINE" | sed -nE 's/.*\(([0-9]+(\.[0-9]+)?) fps.*/\1/p')")
+  REPORT_FPS=$(extract_metric_with_patterns "FPS" "$REPORT_FPS_LINE" \
+    's/.*avgFPS=([0-9.]+).*/\1/p' \
+    's/.*\(([0-9.]+) fps.*/\1/p')
   REPORT_FRAME_PACING_CV=$(extract_metric_value "frame pacing CV" "$(echo "$REPORT_FRAME_PACING_LINE" | sed -nE 's/.*cv=([0-9]+(\.[0-9]+)?).*/\1/p')")
 
-  read -r REPORT_PIPELINE_MEDIAN REPORT_PIPELINE_P95 REPORT_PIPELINE_AVG <<<"$(extract_metric_value "pipeline latency" "$(echo "$REPORT_PIPELINE_LINE" | sed -nE 's/.*median=([0-9]+(\.[0-9]+)?)ms, p95=([0-9]+(\.[0-9]+)?)ms, avg=([0-9]+(\.[0-9]+)?)ms.*/\1 \3 \5/p')")"
-  read -r REPORT_G2G_MEDIAN REPORT_G2G_P95 REPORT_G2G_AVG <<<"$(extract_metric_value "glass-to-glass latency" "$(echo "$REPORT_G2G_LINE" | sed -nE 's/.*median=([0-9]+(\.[0-9]+)?)ms, p95=([0-9]+(\.[0-9]+)?)ms, avg=([0-9]+(\.[0-9]+)?)ms.*/\1 \3 \5/p')")"
-  read -r REPORT_HEAVY_LOAD_FPS REPORT_HEAVY_LOAD_MEDIAN REPORT_HEAVY_LOAD_P95 <<<"$(extract_metric_value "heavy-load metrics" "$(echo "$REPORT_HEAVY_LOAD_LINE" | sed -nE 's/.*fps=([0-9]+(\.[0-9]+)?), pipeline: median=([0-9]+(\.[0-9]+)?)ms p95=([0-9]+(\.[0-9]+)?)ms.*/\1 \3 \5/p')")"
+  read -r REPORT_PIPELINE_MEDIAN REPORT_PIPELINE_P95 REPORT_PIPELINE_AVG <<<"$(extract_metric_with_patterns "pipeline latency" "$REPORT_PIPELINE_LINE" \
+    's/.*latency\[min\/med\/avg\/p95\/max\]=([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)ms.*/\2 \4 \3/p' \
+    's/.*median=([0-9.]+)ms, p95=([0-9.]+)ms, avg=([0-9.]+)ms.*/\1 \2 \3/p')"
+  read -r REPORT_G2G_MEDIAN REPORT_G2G_P95 REPORT_G2G_AVG <<<"$(extract_metric_with_patterns "glass-to-glass latency" "$REPORT_G2G_LINE" \
+    's/.*latency\[min\/med\/avg\/p95\/max\]=([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)ms.*/\2 \4 \3/p' \
+    's/.*median=([0-9.]+)ms, p95=([0-9.]+)ms, avg=([0-9.]+)ms.*/\1 \2 \3/p')"
+  read -r REPORT_HEAVY_LOAD_FPS REPORT_HEAVY_LOAD_MEDIAN REPORT_HEAVY_LOAD_P95 <<<"$(extract_metric_with_patterns "heavy-load metrics" "$REPORT_HEAVY_LOAD_LINE" \
+    's/.*fps=([0-9.]+).*pipe\[min\/med\/avg\/p95\/max\]=([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)ms.*/\1 \3 \5/p' \
+    's/.*fps=([0-9.]+), pipeline: median=([0-9.]+)ms p95=([0-9.]+)ms.*/\1 \2 \3/p')"
   read -r REPORT_OVERALL_PASSED REPORT_OVERALL_TOTAL <<<"$(extract_metric_value "overall result" "$(echo "$REPORT_COMPLETE_LINE" | sed -nE 's/.*COMPLETE: ([0-9]+)\/([0-9]+) passed.*/\1 \2/p')")"
 
   if echo "$REPORT_SECURITY_LINE" | grep -q '\[TEST\] PASS:'; then
@@ -469,7 +635,11 @@ commit_metrics_to_branch() {
 }
 
 run_reporting() {
-  collect_report_metrics
+  log_progress "=== Reporting: parsing test metrics ==="
+  if ! collect_report_metrics; then
+    log_progress "ERROR: reporting parser could not extract required metrics from test output"
+    return 1
+  fi
 
   log_progress "=== Reporting: creating tested snapshot commit ==="
   create_report_commit
@@ -692,11 +862,19 @@ echo ""
 log_progress "=== [6/6] Launching iPad in test mode ==="
 # Build launch arguments array
 IPAD_LAUNCH_ARGS=(--test-mode --qr-payload "$QR_PAYLOAD_B64")
+IPAD_LAUNCH_ARGS+=(--transport-rotation "$ROTATION_TRANSPORTS")
 IPAD_LAUNCH_ARGS+=(--transports "$ROTATION_TRANSPORTS")
-
+IPAD_LAUNCH_ARGS+=(--profile "$PROFILE")
+if [ -n "$VIDEO_PLAYBACK_WINDOW_SECONDS" ]; then
+  IPAD_LAUNCH_ARGS+=(--video-playback-window-seconds "$VIDEO_PLAYBACK_WINDOW_SECONDS")
+fi
+if [ -n "$VIDEO_PLAYBACK_OFFSET_SECONDS" ]; then
+  IPAD_LAUNCH_ARGS+=(--video-playback-offset-seconds "$VIDEO_PLAYBACK_OFFSET_SECONDS")
+fi
 # Append optional flags
-if [ -n "$TRANSPORT" ]; then
-  IPAD_LAUNCH_ARGS+=(--expect-transport "$TRANSPORT")
+if [ -n "$EXPECT_TRANSPORT" ]; then
+  IPAD_LAUNCH_ARGS+=(--expected-transport "$EXPECT_TRANSPORT")
+  IPAD_LAUNCH_ARGS+=(--expect-transport "$EXPECT_TRANSPORT")
 fi
 if [ -n "$LATENCY_TARGET" ]; then
   IPAD_LAUNCH_ARGS+=(--latency-target-ms "$LATENCY_TARGET")
@@ -807,6 +985,7 @@ wait_and_parse_results() {
 
     case "$1" in
       *"latency-probe"*|*"clock-sync"*|*"pipeline-latency"*|*"glass-to-glass-latency"*|*"latency-tiered"*|*"throughput"*|*"fps"*|*"frame-pacing"*|*"frame-loss"*|*"resolution"*|*"heavy-load"*|*"transport-detected"*|*"session-handshake"*|*"keepalive"*|*"multi-transport"*|*"transport-assertion"*|*"wifi-"*|*"transport-usb"*|*"transport-wifi"*|*"transport-awdl"*) return 0 ;;
+      *"video-playback"*) return 0 ;;
     esac
 
     return 1
@@ -940,8 +1119,9 @@ if [ "$FULL_SUITE" = true ]; then
     rm -f "$LOG_FILE" "$IPAD_LOG_FILE"
 
     TIER_ARGS=(--test-mode --qr-payload "$QR_PAYLOAD_B64" --latency-target-ms "$TIER")
-    if [ -n "$TRANSPORT" ]; then
-      TIER_ARGS+=(--expect-transport "$TRANSPORT")
+    if [ -n "$EXPECT_TRANSPORT" ]; then
+      TIER_ARGS+=(--expected-transport "$EXPECT_TRANSPORT")
+      TIER_ARGS+=(--expect-transport "$EXPECT_TRANSPORT")
     fi
 
     xcrun devicectl device process launch \
@@ -990,9 +1170,17 @@ wait_and_parse_results ""
 RESULT=$?
 set -e
 
+set +e
 run_reporting
+REPORT_RESULT=$?
+set -e
 
 echo ""
+if [ "$REPORT_RESULT" -ne 0 ]; then
+  log_progress "Reporting failed before commit/metrics update."
+  exit 1
+fi
+
 if [ "$RESULT" -ne 0 ]; then
   echo "Test run completed with failures."
   exit 1

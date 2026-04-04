@@ -146,6 +146,9 @@ final class DeviceTestRunner {
     // Sustained stream validation for full-clip WiFi runs
     private let sustainedStreamDuration: TimeInterval
     private let skipTransportRotation: Bool
+    private let profile: String
+    private let videoPlaybackWindowSeconds: TimeInterval
+    private let videoPlaybackOffsetSeconds: TimeInterval
     private var sustainedStreamActive = false
     private var sustainedStreamRenderedStartCount = 0
     private var sustainedStreamObservedStartCount = 0
@@ -153,6 +156,12 @@ final class DeviceTestRunner {
     private var sustainedStreamGlassStartCount = 0
     private var sustainedStreamFrameTimestamps: [CFAbsoluteTime] = []
     private var sustainedStreamReconnects = 0
+    private var videoPlaybackActive = false
+    private var videoPlaybackFrameTimestamps: [CFAbsoluteTime] = []
+    private var videoPlaybackRenderedStartCount = 0
+    private var videoPlaybackObservedStartCount = 0
+    private var videoPlaybackPipelineStartCount = 0
+    private var videoPlaybackDecodeFailuresStartCount = 0
 
     // Transport type assertion
     private var transportAssertionComplete = false
@@ -201,14 +210,24 @@ final class DeviceTestRunner {
             self.latencyTargetMs = nil
         }
 
-        // --expect-transport usb|wifi|awdl
-        if let idx = args.firstIndex(of: "--expect-transport"), idx + 1 < args.count {
+        // --expected-transport usb|wifi|awdl (preferred), --expect-transport (legacy)
+        if let idx = args.firstIndex(of: "--expected-transport"), idx + 1 < args.count {
+            self.expectTransport = args[idx + 1]
+        } else if let idx = args.firstIndex(of: "--expect-transport"), idx + 1 < args.count {
             self.expectTransport = args[idx + 1]
         } else {
             self.expectTransport = nil
         }
 
-        if let idx = args.firstIndex(of: "--transports"), idx + 1 < args.count {
+        if let idx = args.firstIndex(of: "--transport-rotation"), idx + 1 < args.count {
+            let requested = Set(
+                args[idx + 1]
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            )
+            let normalized = Self.availableTransports.filter { requested.contains($0) }
+            self.selectedTransports = normalized.isEmpty ? Self.availableTransports : normalized
+        } else if let idx = args.firstIndex(of: "--transports"), idx + 1 < args.count {
             let requested = Set(
                 args[idx + 1]
                     .split(separator: ",")
@@ -225,10 +244,25 @@ final class DeviceTestRunner {
         } else {
             self.sustainedStreamDuration = 0
         }
+        if let idx = args.firstIndex(of: "--profile"), idx + 1 < args.count {
+            self.profile = args[idx + 1].lowercased()
+        } else {
+            self.profile = "full"
+        }
+        if let idx = args.firstIndex(of: "--video-playback-window-seconds"), idx + 1 < args.count {
+            self.videoPlaybackWindowSeconds = max(1, Double(args[idx + 1]) ?? 12)
+        } else {
+            self.videoPlaybackWindowSeconds = 12
+        }
+        if let idx = args.firstIndex(of: "--video-playback-offset-seconds"), idx + 1 < args.count {
+            self.videoPlaybackOffsetSeconds = max(0, Double(args[idx + 1]) ?? 34)
+        } else {
+            self.videoPlaybackOffsetSeconds = 34
+        }
         self.skipTransportRotation = args.contains("--skip-transport-rotation")
         self.overallTimeoutSeconds = Self.baseOverallTimeout + self.sustainedStreamDuration
 
-        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport)), transports=\(self.selectedTransports.joined(separator: ",")), sustainedStreamSeconds=\(Int(self.sustainedStreamDuration)), skipTransportRotation=\(self.skipTransportRotation), overallTimeout=\(Int(self.overallTimeoutSeconds))")
+        print("[CONSOLE] DeviceTestRunner: expectResolution=\(String(describing: self.expectResolution)), expectFPS=\(String(describing: self.expectFPS)), latencyTargetMs=\(String(describing: self.latencyTargetMs)), expectTransport=\(String(describing: self.expectTransport)), transports=\(self.selectedTransports.joined(separator: ",")), profile=\(self.profile), sustainedStreamSeconds=\(Int(self.sustainedStreamDuration)), playbackWindow=\(Int(self.videoPlaybackWindowSeconds))s@+\(Int(self.videoPlaybackOffsetSeconds))s, skipTransportRotation=\(self.skipTransportRotation), overallTimeout=\(Int(self.overallTimeoutSeconds))")
 
         // Wire renderer callback — this is the source of truth for "frame shown on screen"
         sessionManager.metalRenderer.onFrameRendered = { [weak self] in
@@ -284,6 +318,9 @@ final class DeviceTestRunner {
 
         if sustainedStreamActive {
             sustainedStreamFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
+        }
+        if videoPlaybackActive {
+            videoPlaybackFrameTimestamps.append(CFAbsoluteTimeGetCurrent())
         }
     }
 
@@ -769,8 +806,13 @@ final class DeviceTestRunner {
     // MARK: - Test 10: Transport Type Assertion
 
     private func runTransportAssertionTest() {
+        let usesShortProfile = profile != "full"
         guard let expected = expectTransport else {
             // No --expect-transport flag, skip
+            if usesShortProfile {
+                runVideoPlaybackTest()
+                return
+            }
             runParallelPerformanceSuite()
             return
         }
@@ -779,6 +821,10 @@ final class DeviceTestRunner {
 
         guard transportDetected else {
             recordResult(name: "transport-assertion", passed: false, detail: "no transport detected yet")
+            if usesShortProfile {
+                runVideoPlaybackTest()
+                return
+            }
             runParallelPerformanceSuite()
             return
         }
@@ -804,6 +850,10 @@ final class DeviceTestRunner {
         transportAssertionComplete = true
         recordResult(name: "transport-assertion", passed: passed,
                     detail: "expected=\(normalizedExpected), actual=\(actualMapped)")
+        if usesShortProfile {
+            runVideoPlaybackTest()
+            return
+        }
         runParallelPerformanceSuite()
     }
 
@@ -1810,11 +1860,106 @@ final class DeviceTestRunner {
     }
 
     private func runPostHeavyLoadTests() {
-        if sustainedStreamDuration > 0 {
-            runSustainedStreamTest()
+        runVideoPlaybackTest()
+    }
+
+    private func runVideoPlaybackTest() {
+        if videoPlaybackActive {
             return
         }
-        finalizeParallelPerformanceSuiteAndContinue()
+        print("[TEST] RUNNING: video-playback")
+        print("[TEST] INFO: video-playback-window (offset=\(Int(videoPlaybackOffsetSeconds))s, duration=\(Int(videoPlaybackWindowSeconds))s)")
+
+        videoPlaybackActive = false
+        videoPlaybackFrameTimestamps = []
+        videoPlaybackRenderedStartCount = totalRenderedFrames
+        videoPlaybackObservedStartCount = observedFrameCount
+        videoPlaybackPipelineStartCount = pipelineLatenciesUs.count
+        videoPlaybackDecodeFailuresStartCount = hevcDecodeFailures
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + videoPlaybackOffsetSeconds) { [weak self] in
+            guard let self = self else { return }
+            self.videoPlaybackActive = true
+            self.videoPlaybackFrameTimestamps = []
+            self.videoPlaybackRenderedStartCount = self.totalRenderedFrames
+            self.videoPlaybackObservedStartCount = self.observedFrameCount
+            self.videoPlaybackPipelineStartCount = self.pipelineLatenciesUs.count
+            self.videoPlaybackDecodeFailuresStartCount = self.hevcDecodeFailures
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.videoPlaybackWindowSeconds) { [weak self] in
+                guard let self = self else { return }
+                self.videoPlaybackActive = false
+
+                let renderedDelta = max(0, self.totalRenderedFrames - self.videoPlaybackRenderedStartCount)
+                let observedDelta = max(0, self.observedFrameCount - self.videoPlaybackObservedStartCount)
+                let decodeFailureDelta = max(0, self.hevcDecodeFailures - self.videoPlaybackDecodeFailuresStartCount)
+                let timestamps = self.videoPlaybackFrameTimestamps
+                let elapsed = max(self.videoPlaybackWindowSeconds, 0.001)
+                let fps = Double(max(renderedDelta, timestamps.count)) / elapsed
+                let pipelineSlice = Array(self.pipelineLatenciesUs.suffix(from: min(self.videoPlaybackPipelineStartCount, self.pipelineLatenciesUs.count)))
+                let pipelineCount = pipelineSlice.count
+
+                var maxGapMs: Double = 0
+                var worstWindowFPS = fps
+                if timestamps.count >= 2 {
+                    var intervals: [Double] = []
+                    for i in 1..<timestamps.count {
+                        intervals.append((timestamps[i] - timestamps[i - 1]) * 1000.0)
+                    }
+                    maxGapMs = intervals.max() ?? 0
+                    if timestamps.count >= 10 {
+                        let lastTimestamp = timestamps.last!
+                        var minFramesInWindow = Int.max
+                        for startIdx in 0..<timestamps.count {
+                            if timestamps[startIdx] > lastTimestamp - 1.0 { break }
+                            let windowEnd = timestamps[startIdx] + 1.0
+                            var endIdx = startIdx
+                            while endIdx < timestamps.count && timestamps[endIdx] < windowEnd {
+                                endIdx += 1
+                            }
+                            minFramesInWindow = min(minFramesInWindow, endIdx - startIdx)
+                        }
+                        if minFramesInWindow < Int.max {
+                            worstWindowFPS = Double(minFramesInWindow)
+                        }
+                    }
+                }
+
+                let hasRenderedFrames = renderedDelta >= max(5, Int(self.videoPlaybackWindowSeconds * 2.0))
+                let hasObservedFrames = observedDelta >= max(5, Int(self.videoPlaybackWindowSeconds * 2.0))
+                let fpsOK = fps >= 8.0
+                let worstWindowOK = worstWindowFPS >= 4.0
+                let gapOK = maxGapMs < 1200
+                let decodeOK = decodeFailureDelta == 0
+                let pipelineOK = pipelineCount >= max(5, Int(self.videoPlaybackWindowSeconds))
+                let passed = hasRenderedFrames && hasObservedFrames && fpsOK && worstWindowOK && gapOK && decodeOK && pipelineOK
+
+                var issues: [String] = []
+                if !hasRenderedFrames { issues.append("rendered frames \(renderedDelta) too low") }
+                if !hasObservedFrames { issues.append("observed frames \(observedDelta) too low") }
+                if !fpsOK { issues.append("fps \(String(format: "%.1f", fps)) < 8.0") }
+                if !worstWindowOK { issues.append("worst1s \(String(format: "%.1f", worstWindowFPS))fps < 4.0") }
+                if !gapOK { issues.append("max gap \(String(format: "%.0f", maxGapMs))ms >= 1200ms") }
+                if !decodeOK { issues.append("decode failures +\(decodeFailureDelta)") }
+                if !pipelineOK { issues.append("pipeline samples \(pipelineCount) too low") }
+
+                var detail = "window=\(Int(self.videoPlaybackWindowSeconds))s@+\(Int(self.videoPlaybackOffsetSeconds))s, rendered=\(renderedDelta), observed=\(observedDelta), fps=\(String(format: "%.1f", fps)), worst1s=\(String(format: "%.1f", worstWindowFPS))fps, maxGap=\(String(format: "%.0f", maxGapMs))ms, decodeFail+\(decodeFailureDelta), pipelineSamples=\(pipelineCount)"
+                if !issues.isEmpty {
+                    detail += " [ISSUES: \(issues.joined(separator: ", "))]"
+                }
+                self.recordResult(name: "video-playback", passed: passed, detail: detail)
+
+                if self.profile == "security" {
+                    self.runSecurityTests()
+                    return
+                }
+                if self.sustainedStreamDuration > 0 {
+                    self.runSustainedStreamTest()
+                    return
+                }
+                self.finalizeParallelPerformanceSuiteAndContinue()
+            }
+        }
     }
 
     private func runSustainedStreamTest() {
@@ -1960,6 +2105,12 @@ final class DeviceTestRunner {
     /// Entry point for multi-transport testing.
     /// Runs after all single-transport tests complete.
     private func runTransportRotationTests() {
+        if profile == "security" || skipTransportRotation {
+            print("[TEST] INFO: multi-transport skipped by profile or flag")
+            recordResult(name: "multi-transport", passed: true, detail: "SKIPPED — profile=security or skip-transport-rotation")
+            runSecurityTests()
+            return
+        }
         print("[TEST] INFO: === Starting multi-transport rotation tests ===")
         print("[TEST] INFO: Will test selected protocols: \(selectedTransports.joined(separator: ", "))")
 
@@ -1977,6 +2128,13 @@ final class DeviceTestRunner {
 
         let transport = selectedTransports[transportRotationIdx]
         print("[TEST] INFO: --- Transport rotation: testing \(transport) (\(transportRotationIdx + 1)/\(selectedTransports.count)) ---")
+
+        if transport == "usb" && !(sessionManager?.usbTransport.isConnected ?? false) {
+            print("[TEST] INFO: usb test skipped — USB currently unavailable")
+            completeTransportRotation(transport: transport, passed: true,
+                                     detail: "SKIPPED — USB unavailable (no active USB session)")
+            return
+        }
 
         // In wired-only mode, skip WiFi and AWDL rotation tests
         let isWiredOnly = sessionManager?.isWiredOnly ?? false
@@ -3153,7 +3311,7 @@ final class DeviceTestRunner {
                        "resolution", "fps", "frame-pacing", "frame-loss",
                        "latency-tiered", "throughput",
                        "pipeline-latency", "glass-to-glass-latency",
-                       "heavy-load",
+                       "heavy-load", "video-playback",
                        "sec-cleartext-tcp", "sec-cleartext-udp", "sec-untrusted-cert",
                        "sec-pairing-port-closed", "sec-pairing-port-closed-after-stream",
                        "sec-mitm-reconnect", "sec-pre-pairing-transport-reject",

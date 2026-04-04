@@ -35,6 +35,10 @@ final class SessionManager {
         }
     }
 
+    /// Tracks whether at least one frame has been rendered since the current session started.
+    /// Used by ContentView to avoid leaving the "Connecting..." overlay on top of active video.
+    private(set) var hasRenderedFrameInCurrentSession: Bool = false
+
     // MARK: - Owned Components
 
     let qrPairing = QRPairing()
@@ -116,6 +120,7 @@ final class SessionManager {
     func start() {
         Self.log.info("[SessionManager] start() called, current state=\(self.state.rawValue)")
         print("[CONSOLE] start(): isPaired=\(qrPairing.isPaired)")
+        hasRenderedFrameInCurrentSession = false
 
         // Set up HUD callbacks
         hudViewModel.onEcoModeChanged = { [weak self] isEco in
@@ -251,6 +256,7 @@ final class SessionManager {
         qrPairing.resetPairing()
         let transition = TransportFSM.transition(from: currentTransport, on: .disconnected)
         currentTransport = transition.state
+        hasRenderedFrameInCurrentSession = false
         state = .awaitingPairing
     }
 
@@ -642,6 +648,12 @@ final class SessionManager {
 
         // Record frame timestamp for FPS calculation
         recordFrameTimestamp()
+
+        if !hasRenderedFrameInCurrentSession {
+            DispatchQueue.main.async {
+                self.hasRenderedFrameInCurrentSession = true
+            }
+        }
 
         // E2E test: report frame received + decompressed
         testRunner?.reportFrameReceived(header: header, decompressedSize: decompressedSize)

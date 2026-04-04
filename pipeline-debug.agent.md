@@ -17,9 +17,10 @@ model: GPT-5.3-Codex (copilot)
 1. Do not modify tests, thresholds, test parsing, assertions, or reporting flow to manufacture passes. If test files are touched, changes must be logging-only.
 2. Do not reduce quality/fidelity as a shortcut (resolution, cadence, transport integrity, decoder correctness).
 3. Every E2E run must include `--notes`.
-4. WiFi performance runs must include both:
-	- `--capture-file './RemoteDesktop/2026-04-02 10-55-42-prores.mov'`
-	- `--sustained-stream-seconds 90`
+4. WiFi performance runs must use full profile defaults:
+	- `--profile full`
+	- the harness default capture file (`RemoteDesktop/2026-04-02 10-55-42-prores.mov`)
+	- the harness default sustained stream (`90s`)
 5. Use measured evidence only: `[TEST]` results, `/tmp/keyd-e2e-ipad.log`, `/tmp/keyd-e2e-mac.log`, `/tmp/e2e-results.log`.
 6. Before asking for any physical action, add/verify logging on both success and failure branches in touched code paths.
 7. Do not stop at "barely passes" on conservative paths; optimize for robust headroom on aggressive workload.
@@ -101,9 +102,8 @@ All commands are run from repo root.
 
 ```bash
 ./RemoteDesktop/scripts/run-e2e-tests.sh \
-  --transports wifi \
-  --capture-file './RemoteDesktop/2026-04-02 10-55-42-prores.mov' \
-  --sustained-stream-seconds 90 \
+  --transport-rotation wifi \
+  --profile full \
   --notes "wifi: <short hypothesis or change summary>"
 ```
 
@@ -111,10 +111,9 @@ All commands are run from repo root.
 
 ```bash
 ./RemoteDesktop/scripts/run-e2e-tests.sh \
-  --transports wifi \
+  --transport-rotation wifi \
+  --profile full \
   --skip-transport-rotation \
-  --capture-file './RemoteDesktop/2026-04-02 10-55-42-prores.mov' \
-  --sustained-stream-seconds 90 \
   --notes "wifi-no-rotation: <short hypothesis or change summary>"
 ```
 
@@ -123,8 +122,7 @@ All commands are run from repo root.
 ```bash
 ./RemoteDesktop/scripts/run-e2e-tests.sh \
   --wired-only \
-  --capture-file './RemoteDesktop/2026-04-02 10-55-42-prores.mov' \
-  --sustained-stream-seconds 90 \
+  --profile full \
   --notes "usb-validation: <short hypothesis or change summary>"
 ```
 
@@ -132,16 +130,16 @@ All commands are run from repo root.
 
 ```bash
 ./RemoteDesktop/scripts/run-e2e-tests.sh \
-  --transports usb,wifi,awdl \
-  --capture-file './RemoteDesktop/2026-04-02 10-55-42-prores.mov' \
-  --sustained-stream-seconds 90 \
+  --transport-rotation usb,wifi,awdl \
+  --profile full \
   --notes "rotation-validation: <short hypothesis or change summary>"
 ```
 
 ### Guardrails
 
 - `--full-suite` is incompatible with required reporting in current harness.
-- Do not drop the required capture file or sustained-stream duration for WiFi objective runs.
+- Legacy `--transports` is still accepted but deprecated in favor of `--transport-rotation`.
+- Keep `[TEST] video-playback` mandatory in interpretation; treat failures there as blocker-level regressions.
 
 ## 7) Instrumentation Mandate
 
