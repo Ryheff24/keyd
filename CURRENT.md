@@ -663,3 +663,37 @@
     - Extended retry trigger to include watchdog stall/timeout failures (still bounded to one retry).
 - Next move:
   - Re-run canonical WiFi command after device readiness is restored; use new watchdog logs to disambiguate destination-timeout vs stall-timeout failure paths before any media-pipeline behavior change.
+
+## WiFi Iteration 4 (launch-retry diagnostics run analysis + adaptive guard fix)
+
+- Timestamp: 2026-04-04 18:47:18 EDT
+- Command: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration4 launch-retry diagnostics"`
+- Result: tests executed (launch blocker cleared), but WiFi performance regressions persist.
+- Pass/fail signals (high impact):
+  - `FAIL heavy-load`: `58.6fps`, pipeline `avg=42ms p95=135ms`
+  - `FAIL sustained-stream`: `avg=55.9fps`, `1% low=13.3fps`, pipeline `29/38/100ms`, glass `52/59/133ms`
+  - `FAIL fps`: `56.9fps`, `1% low=13.3fps`, `maxGap=200ms`
+  - `FAIL frame-pacing`: `cv=0.865`
+  - `FAIL pipeline-latency`: `19/28/37/101/223ms`
+  - `FAIL glass-to-glass-latency`: `37/50/58/134/245ms`
+  - `PASS transport/session`: launch + handshake + transport detection + frame-loss all passed
+- Root-cause hypothesis for this iteration:
+  - Launch path is no longer the blocker; highest-impact blocker is false-positive WiFi adaptive severe downshift during bursty but non-congested windows.
+  - Evidence from `/tmp/keyd-e2e-mac.log`:
+    - `WiFi adaptive apply: reason=downshift-severe-soft requested=54fps... prev=60fps...`
+    - Triggering eval had no drops and low in-flight pressure (`sendDrop=0 queueDrop=0 preDrop=0 staleDrop=0 inFlight=0`) with only `slow=1 max=26ms`, but burst-density heuristics forced severe classification.
+  - This unnecessarily pulled target FPS below 60 and likely amplified sustained/fps failures.
+- Change implemented (one coherent fix + branch-complete logging):
+  - File: `RemoteDesktop/macOS/App/SessionManager.m`
+  - Tightened burst-severe escalation gate:
+    - old: escalate on `burstSevereRisk && (slow>=1 || max>=30ms)`
+    - new: escalate only when burst-severe risk coincides with real pressure (`inFlight>=limit` or `slow>=2` or `max>=32ms` or send/queue/pre/stale drops)
+  - Added explicit branch telemetry:
+    - `WiFi adaptive burst escalation: branch=trigger|hold ... metrics[...] thresholds[...]`
+    - Covers both success and non-escalation branches for next-run causality.
+- Instrumentation added this iteration:
+  - New adaptive branch decision log at the exact severe-escalation decision point with full correlation metrics.
+- Next move:
+  - Run canonical WiFi command (same profile/notes style) and verify:
+    - reduced/absent `downshift-severe-soft` events under low-pressure bursts,
+    - improved `avg FPS`, `1% low`, and p95 pipeline/glass tails without transport regressions.

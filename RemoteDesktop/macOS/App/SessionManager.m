@@ -1778,8 +1778,25 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     BOOL burstSevereRisk = (encodedFrames >= 24) &&
                            ((burstSevereFrames >= kWirelessBurstSevereFrameCountThreshold) ||
                             (burstDensityRatio >= kWirelessBurstSevereDensityRatio && maxFrameBytes >= kWirelessBurstTailFrameBytes));
-    if (burstSevereRisk && (tcpSlowCompletions >= 1 || tcpMaxCompletionMs >= 30)) {
-        severeCongestion = YES;
+    if (burstSevereRisk) {
+        BOOL burstEscalationTriggered =
+        (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi) ||
+        (tcpSlowCompletions >= 2) ||
+        (tcpMaxCompletionMs >= 32) ||
+        (tcpSendDrops > 0) ||
+        (queueDrops > 0) ||
+        (preDrops > 0) ||
+        (staleDrops > 0);
+        os_log(sLog, "WiFi adaptive burst escalation: branch=%{public}s severeRisk=%{public}s metrics[inFlight=%d slow=%d max=%dms sendDrop=%d queueDrop=%d preDrop=%d staleDrop=%d burstDensity=%.2fx maxFrameKB=%d] thresholds[inFlight>=%d slow>=%d max>=%dms]",
+               burstEscalationTriggered ? "trigger" : "hold",
+               burstSevereRisk ? "yes" : "no",
+               tcpInFlightNow, tcpSlowCompletions, tcpMaxCompletionMs,
+               tcpSendDrops, queueDrops, preDrops, staleDrops,
+               burstDensityRatio, maxFrameBytes / 1024,
+               kMaxMediaSendsInFlightWiFi, 2, 32);
+        if (burstEscalationTriggered) {
+            severeCongestion = YES;
+        }
     }
     BOOL mildCongestion = !severeCongestion &&
                           ((tcpSlowCompletions >= 1) ||
