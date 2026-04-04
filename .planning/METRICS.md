@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1548 px` | `1786 px` | `1786 px` | ❌ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1404 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `42.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `3.543` | `0.011` | `0.007` | ❌ |
+| FPS | `48.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.415` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `26 ms` | `7 ms` | `6 ms` | ❌ |
 | Pipeline latency p95 | `156 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `54 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `46 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `169 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `66 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `49.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Pipeline latency avg | `55 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `47 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `170 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `67 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `50.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
 | Heavy-load pipeline median | `23 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `154 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load pipeline p95 | `155 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `75.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -76,3 +76,4 @@ Rules:
 | 2026-04-04 | 00:03:29 EDT | `49dc8e9` | `2752x1786` | `2496x1620` | `52.5 fps` | `1.499` | `32/166/63 ms` | `54/189/80 ms` | `52.8 fps, 30/166 ms` | `1` | `26/33` | wifi: iteration 2 stale-conn-replace + tcp-media + renderer-queue2 |
 | 2026-04-04 | 00:31:25 EDT | `c1ead37` | `2752x1786` | `2496x1620` | `49.7 fps` | `1.474` | `32/165/63 ms` | `51/181/75 ms` | `51.0 fps, 29/162 ms` | `1` | `26/33` | wifi: iteration 3 lane A/B/C patches (pairedHost reconnect + usb chunk all + newest-frame render) |
 | 2026-04-04 | 00:53:00 EDT | `1067215` | `2752x1548` | `2496x1404` | `42.4 fps` | `3.543` | `26/156/54 ms` | `46/169/66 ms` | `49.3 fps, 23/154 ms` | `1` | `25/33` | wifi: iteration 5 throttle wifi tcp completion logs to remove instrumentation overhead |
+| 2026-04-04 | 01:00:58 EDT | `5b89c85` | `2752x1548` | `2496x1404` | `48.8 fps` | `1.415` | `26/156/55 ms` | `47/170/67 ms` | `50.0 fps, 23/155 ms` | `1` | `26/33` | wifi: iteration 6 remove wifi tcp in-flight drop gate (restore contiguous seq delivery) |
