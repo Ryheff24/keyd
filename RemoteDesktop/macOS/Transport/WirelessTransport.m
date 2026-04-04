@@ -469,9 +469,18 @@ static const char *kInputPortStr = "14568";
      * was tearing down long-running Wi-Fi tests near completion. A genuine
      * reconnect will arrive after the old connection has already ended. */
     if (_inputConnection) {
-        os_log(wireless_log(), "Ignoring duplicate wireless candidate while an existing session is active");
-        nw_connection_cancel(connection);
-        return;
+        os_log(wireless_log(),
+               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d",
+               _inputConnection, _isConnected, _isAWDL);
+        if (!_isConnected) {
+            os_log(wireless_log(), "Existing input connection appears stale -- replacing with new candidate");
+            nw_connection_cancel(_inputConnection);
+            _inputConnection = nil;
+        } else {
+            os_log(wireless_log(), "Ignoring duplicate wireless candidate while an existing session is active");
+            nw_connection_cancel(connection);
+            return;
+        }
     }
     _inputConnection = connection;
 

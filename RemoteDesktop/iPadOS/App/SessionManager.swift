@@ -153,9 +153,15 @@ final class SessionManager {
         if qrPairing.isPaired {
             Self.log.info("[SessionManager] start(): already paired -- setting state to .connecting and starting transport monitoring")
             print("[CONSOLE] start(): restoring pairing, pairedHost=\(qrPairing.pairedHost ?? "nil")")
-            if let macHost = qrPairing.pairedHost {
-                usbTransport.setPeerAddress(macHost)
+            guard let macHost = qrPairing.pairedHost, !macHost.isEmpty else {
+                print("[CONSOLE] start(): stale pairing detected (pairedHost missing) -- resetting pairing now")
+                Self.log.error("[SessionManager] stale pairing: isPaired=true but pairedHost missing; forcing re-pair")
+                qrPairing.resetPairing()
+                state = .awaitingPairing
+                return
             }
+            print("[CONSOLE] start(): restoring pairing success, peer host=\(macHost)")
+            usbTransport.setPeerAddress(macHost)
             state = .connecting
             startTransportMonitoring()
             // If Mac's cert changed or pairing is stale, we'll never connect.
@@ -763,7 +769,10 @@ final class SessionManager {
         // sequencing path.
         if data.count >= MediaFrameHeader.size,
            let mediaHeader = MediaFrameHeader.parse(from: data) {
-            if mediaHeader.isHEVC {
+            if mediaHeader.chunkTotal > 1 || mediaHeader.isHEVC {
+                if mediaHeader.chunkTotal > 1 && !mediaHeader.isHEVC {
+                    print("[CONSOLE] handleInputReceived: routing chunked non-HEVC frame via reassembler seq=\(mediaHeader.seq) chunk=\(mediaHeader.chunkIdx + 1)/\(mediaHeader.chunkTotal)")
+                }
                 udpReassembler.processChunk(data)
             } else {
                 handleReceivedFrame(data)
@@ -1014,6 +1023,7 @@ final class SessionManager {
         if lastKeyframeRequestUs > 0,
            timestamp > lastKeyframeRequestUs,
            timestamp - lastKeyframeRequestUs < Self.keyframeRequestCooldownUs {
+            print("[CONSOLE] SessionManager: keyframe request suppressed (cooldown \(timestamp - lastKeyframeRequestUs)us < \(Self.keyframeRequestCooldownUs)us)")
             return
         }
         lastKeyframeRequestUs = timestamp
@@ -1022,7 +1032,7 @@ final class SessionManager {
         var data = header.serialize()
         var subtype = ModeChangeSubtype.requestKeyframe.rawValue
         data.append(Data(bytes: &subtype, count: 1))
-        print("[CONSOLE] SessionManager: requesting immediate HEVC keyframe for recovery")
+        print("[CONSOLE] SessionManager: requesting immediate HEVC keyframe for recovery (ts_us=\(timestamp))")
         sendInputEventToMac(data)
     }
 

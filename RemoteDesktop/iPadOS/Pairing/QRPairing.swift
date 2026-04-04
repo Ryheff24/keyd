@@ -162,6 +162,7 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     private let clientIdentityPKCS12Account = "client-identity-p12"
     private let clientCertificateDERAccount = "client-cert-der"
     private let clientPrivateKeyRepresentationAccount = "client-private-key"
+    private let pairedHostAccount = "paired-host"
     private let provisionedClientIdentityPassphrase = "keydrd-client"
 
     /// Guard against re-entrant metadataOutput calls while pairing is in progress.
@@ -172,6 +173,18 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     // MARK: - Notification Observers
 
     private var notificationObservers: [NSObjectProtocol] = []
+
+    override init() {
+        super.init()
+        if let hostData = loadFromKeychain(account: pairedHostAccount),
+           let host = String(data: hostData, encoding: .utf8),
+           !host.isEmpty {
+            pairedHost = host
+            print("[CONSOLE] QRPairing init: restored pairedHost=\(host)")
+        } else {
+            print("[CONSOLE] QRPairing init: no persisted pairedHost")
+        }
+    }
 
     /// Register observers for all AVCaptureSession notifications on a given session.
     private func registerSessionNotificationObservers(for session: AVCaptureSession) {
@@ -421,6 +434,8 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             self.displayHeight = qrPayload.displayHeight
             self.scaleFactor = qrPayload.scaleFactor
             self.pairedHost = qrPayload.host
+            self.saveToKeychain(data: Data(qrPayload.host.utf8), account: self.pairedHostAccount)
+            print("[CONSOLE] autoPairViaBonjourForTestMode: persisted pairedHost=\(qrPayload.host)")
 
             // Connect with TLS, accepting any cert (TEST MODE ONLY)
             self.completePairingTestMode(qrPayload: qrPayload,
@@ -593,6 +608,12 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 // Store in Keychain
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
+                if let host = self.pairedHost, !host.isEmpty {
+                    self.saveToKeychain(data: Data(host.utf8), account: self.pairedHostAccount)
+                    print("[CONSOLE] TEST MODE: persisted pairedHost=\(host)")
+                } else {
+                    print("[CONSOLE] TEST MODE: pairedHost missing at persistence point")
+                }
                 if let certDER = response.clientCertificateDER,
                    let privateKey = response.clientPrivateKeyRepresentation,
                    let fingerprint = response.clientCertFingerprint {
@@ -758,6 +779,8 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         displayHeight = payload.displayHeight
         scaleFactor = payload.scaleFactor
         pairedHost = payload.host
+        saveToKeychain(data: Data(payload.host.utf8), account: pairedHostAccount)
+        print("[CONSOLE] QRPairing: persisted pairedHost=\(payload.host)")
 
         /* Stop scanning -- only one pairing at a time.
          * Must dispatch off main thread: stopRunning() blocks, and we're inside
@@ -1003,6 +1026,12 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
                 /* Step 5: Store shared secret + Mac cert fingerprint in Keychain */
                 self.saveToKeychain(data: derivedKey, account: "pairing")
                 self.saveToKeychain(data: macCertFingerprint, account: "peer-cert-fingerprint")
+                if let host = self.pairedHost, !host.isEmpty {
+                    self.saveToKeychain(data: Data(host.utf8), account: self.pairedHostAccount)
+                    print("[CONSOLE] PAIRING COMPLETE -- persisted pairedHost=\(host)")
+                } else {
+                    print("[CONSOLE] PAIRING COMPLETE -- pairedHost missing at persistence point")
+                }
                 if let certDER = response.clientCertificateDER,
                    let privateKey = response.clientPrivateKeyRepresentation,
                    let fingerprint = response.clientCertFingerprint {
@@ -1049,6 +1078,9 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         deleteFromKeychain(account: clientIdentityPKCS12Account)
         deleteFromKeychain(account: clientCertificateDERAccount)
         deleteFromKeychain(account: clientPrivateKeyRepresentationAccount)
+        deleteFromKeychain(account: pairedHostAccount)
+        pairedHost = nil
+        print("[CONSOLE] QRPairing reset: cleared pairedHost")
         log.info("Pairing state cleared from Keychain")
     }
 

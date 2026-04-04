@@ -492,16 +492,29 @@ static const char *kInputPortStr = "14568";
 - (void)sendMediaViaTCP:(const void *)data length:(size_t)len completion:(void (^)(BOOL success))completion {
     nw_connection_t conn = _inputConnection;
     if (!conn) {
+        os_log_error(transport_log(), "USB media send skipped: no TCP input connection");
         if (completion) completion(NO);
         return;
     }
 
+    const MediaFrameHeader *originalHeader = NULL;
+    uint16_t frameSeq = 0;
+    BOOL hasFrameSeq = NO;
+    BOOL isHEVC = NO;
     if (len >= sizeof(MediaFrameHeader)) {
+        originalHeader = (const MediaFrameHeader *)data;
+        frameSeq = originalHeader->seq;
+        hasFrameSeq = YES;
+        isHEVC = (originalHeader->flags & KEYDRD_FLAG_HEVC) != 0;
+        os_log(transport_log(), "USB media send entry: seq=%u bytes=%zu hevc=%{public}s",
+               frameSeq, len, isHEVC ? "yes" : "no");
+    }
+
+    if (isHEVC && len >= sizeof(MediaFrameHeader)) {
         /* USB media still uses reliable TCP, but frame-level writes make the iPad
          * wait for multi-megabyte blobs before it can parse anything. Reframe them
          * into chunked MediaFrameHeader packets so the existing reassembler can
          * consume them incrementally over TCP. */
-        const MediaFrameHeader *originalHeader = (const MediaFrameHeader *)data;
         const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
         size_t payloadLen = len - sizeof(MediaFrameHeader);
         const size_t tcpChunkMTU = 64 * 1024;
@@ -513,12 +526,18 @@ static const char *kInputPortStr = "14568";
         });
 
         if (chunks.count > 0) {
+            os_log(transport_log(), "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu",
+                   frameSeq, tcpChunkMTU, (unsigned long)chunks.count);
             [self _sendTCPFramedChunkAtIndex:0
                                    fromChunks:chunks
                                    connection:conn
                                    completion:completion];
             return;
         }
+    }
+    if (hasFrameSeq && !isHEVC) {
+        os_log(transport_log(), "USB media sending unchunked LZ4 frame: seq=%u bytes=%zu",
+               frameSeq, len);
     }
 
     /* Copy data — caller may free immediately after return */
@@ -541,6 +560,9 @@ static const char *kInputPortStr = "14568";
                        true, ^(nw_error_t _Nullable error) {
         if (completion) {
             completion(error == nil);
+        }
+        if (!error && hasFrameSeq) {
+            os_log(transport_log(), "USB media send success: seq=%u bytes=%zu", frameSeq, len);
         }
         if (error) {
             os_log_error(transport_log(), "Media TCP send error: %{public}@", error);

@@ -61,8 +61,10 @@ static const uint32_t kWirelessMaxEncodeHeight = 1620;
 static const BOOL kWirelessUseTCPMedia = NO;
 static const NSUInteger kWirelessLargeFrameChunkThreshold = 320;
 static const NSUInteger kWirelessMaxQueuedChunks = 384;
-static const NSUInteger kWirelessCongestionChunkThreshold = 224;
-static const uint64_t kWirelessCongestedFrameIntervalUs = 12000; /* smooth bursty capture without capping 60fps */
+static const NSUInteger kWirelessMildCongestionChunkThreshold = 128;
+static const NSUInteger kWirelessSevereCongestionChunkThreshold = 224;
+static const uint64_t kWirelessMildCongestedFrameIntervalUs = 16667;  /* ~60fps cadence */
+static const uint64_t kWirelessSevereCongestedFrameIntervalUs = 20000;/* stronger smoothing */
 static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate source timestamp jitter around cadence */
 
 static uint64_t keydrd_host_time_us(void) {
@@ -953,8 +955,16 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                 !strongSelf->_usbTransport.isConnected &&
                 !kWirelessUseTCPMedia) {
                 NSUInteger queuedChunks = strongSelf->_wirelessTransport.queuedMediaChunkCount;
-                if (queuedChunks > kWirelessCongestionChunkThreshold) {
-                    uint64_t minIntervalUs = kWirelessCongestedFrameIntervalUs;
+                uint64_t minIntervalUs = 0;
+                const char *congestionReason = "none";
+                if (queuedChunks > kWirelessSevereCongestionChunkThreshold) {
+                    minIntervalUs = kWirelessSevereCongestedFrameIntervalUs;
+                    congestionReason = "severe";
+                } else if (queuedChunks > kWirelessMildCongestionChunkThreshold) {
+                    minIntervalUs = kWirelessMildCongestedFrameIntervalUs;
+                    congestionReason = "mild";
+                }
+                if (minIntervalUs > 0) {
                     uint64_t submitTimeUs = captureTimestampUs > 0 ? captureTimestampUs : keydrd_host_time_us();
                     uint64_t nextSubmitUs = strongSelf.wirelessLastEncodeSubmitUs;
                     if (nextSubmitUs > 0 &&
@@ -963,8 +973,8 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                         static int wifiPreEncodeDropCount = 0;
                         wifiPreEncodeDropCount++;
                         if (wifiPreEncodeDropCount <= 10 || wifiPreEncodeDropCount % 100 == 0) {
-                            os_log(sLog, "WiFi congested pre-encode drop: queued=%lu minInterval=%lluus delta=%lluus totalDropped=%d",
-                                   (unsigned long)queuedChunks, minIntervalUs,
+                            os_log(sLog, "WiFi pre-encode drop: reason=%{public}s queued=%lu minInterval=%lluus delta=%lluus totalDropped=%d",
+                                   congestionReason, (unsigned long)queuedChunks, minIntervalUs,
                                    nextSubmitUs > submitTimeUs ? nextSubmitUs - submitTimeUs : 0,
                                    wifiPreEncodeDropCount);
                         }
@@ -972,6 +982,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                     }
                     uint64_t scheduledSubmitUs = nextSubmitUs > submitTimeUs ? nextSubmitUs : submitTimeUs;
                     strongSelf.wirelessLastEncodeSubmitUs = scheduledSubmitUs + minIntervalUs;
+                    static int wifiPreEncodeAdmitCount = 0;
+                    wifiPreEncodeAdmitCount++;
+                    if (wifiPreEncodeAdmitCount <= 10 || wifiPreEncodeAdmitCount % 200 == 0) {
+                        os_log(sLog, "WiFi pre-encode admit: reason=%{public}s queued=%lu scheduleDelay=%lluus",
+                               congestionReason, (unsigned long)queuedChunks,
+                               scheduledSubmitUs > submitTimeUs ? scheduledSubmitUs - submitTimeUs : 0);
+                    }
                 } else {
                     strongSelf.wirelessLastEncodeSubmitUs = 0;
                 }
@@ -1052,6 +1069,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
          * fresher content anyway. This prevents multi-second queue buildup
          * that causes stale-timestamp latency inflation. */
         int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
+        if (inFlight <= 5 || inFlight % 10 == 0) {
+            os_log(sLog, "USB send queued: seq=%u inFlight=%d bytes=%zu", originalHeader->seq, inFlight, len);
+        }
         if (inFlight > kMaxMediaSendsInFlightUSB) {
             OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
             static int dropCount = 0;
@@ -1067,7 +1087,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         [_usbTransport sendMediaViaTCP:data length:len completion:^(BOOL success) {
             SessionManager *strongSelf = weakSelf;
             if (strongSelf) {
-                OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
+                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
+                if (!success || left < 2) {
+                    os_log(sLog, "USB send completion: seq=%u success=%{public}s inFlightNow=%d",
+                           originalHeader->seq, success ? "yes" : "no", left);
+                }
             }
         }];
     } else if (_wirelessTransport.isConnected) {

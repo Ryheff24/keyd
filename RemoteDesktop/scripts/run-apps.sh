@@ -7,6 +7,7 @@
 # Options:
 #   --transport usb|wifi|awdl     Optional transport hint for Mac agent
 #   --wired-only                  Disable WiFi/AWDL, USB only
+#   --fresh-pairing               Clear pairing state/certs before launch
 #   --help                        Show usage
 
 set -euo pipefail
@@ -17,6 +18,7 @@ source "$SCRIPT_DIR/async-index.sh"
 # ---- Parse arguments ----
 TRANSPORT=""
 WIRED_ONLY=false
+FRESH_PAIRING=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,6 +26,8 @@ while [[ $# -gt 0 ]]; do
       TRANSPORT="$2"; shift 2 ;;
     --wired-only)
       WIRED_ONLY=true; shift ;;
+    --fresh-pairing)
+      FRESH_PAIRING=true; shift ;;
     --help)
       grep '^#' "$0" | sed -e 's/^# \{0,1\}//'
       exit 0 ;;
@@ -186,9 +190,13 @@ echo "=== [3/5] Preparing Mac agent ==="
 pkill -f "RemoteDesktopAgent" 2>/dev/null || true
 sleep 1
 
-# Delete old keydrd TLS items from login keychain to avoid ACL prompts
-security delete-certificate -c "keydrd-agent" 2>/dev/null || true
-security delete-identity -c "keydrd-agent" 2>/dev/null || true
+if [ "$FRESH_PAIRING" = true ]; then
+  echo "Fresh pairing requested: clearing keychain pairing identities"
+  security delete-certificate -c "keydrd-agent" 2>/dev/null || true
+  security delete-identity -c "keydrd-agent" 2>/dev/null || true
+else
+  echo "Preserving existing pairing identities (default)"
+fi
 
 # Reuse existing TLS identity if available (preserves pairing across rebuilds).
 CERT_DIR="/tmp/keydrd-tls"

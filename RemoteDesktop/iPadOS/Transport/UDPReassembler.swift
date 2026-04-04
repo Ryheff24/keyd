@@ -8,8 +8,8 @@ import os.log
 /// delivered via callback. Handles out-of-order arrival, stale frame timeout,
 /// and max-concurrent-sequence eviction.
 final class UDPReassembler {
-    private static let maxForwardGapBeforeSkip: UInt16 = 32
-    private static let maxOutOfOrderFrames = 32
+    private static let maxForwardGapBeforeSkip: UInt16 = 96
+    private static let maxOutOfOrderFrames = 96
 
     struct StatsSnapshot {
         let framesDelivered: Int
@@ -88,6 +88,8 @@ final class UDPReassembler {
     private var outOfOrderBuffer: [UInt16: Data] = [:]
     private var awaitingKeyframeAfterLoss = false
     private var droppedUntilKeyframeCount = 0
+    private var recoveryEnterCount = 0
+    private var recoveryExitCount = 0
 
     /// Stats logging interval counter (counts purge timer ticks).
     private var statsTickCount = 0
@@ -301,7 +303,9 @@ final class UDPReassembler {
             hasDeliveredFirstFrame = true
             lastDeliveredSeq = seq
             framesDelivered += 1
+            recoveryExitCount += 1
             print("[CONSOLE] UDPReassembler: recovered on keyframe seq=\(seq)")
+            print("[CONSOLE] UDPReassembler: recovery-exit count=\(recoveryExitCount) enter=\(recoveryEnterCount)")
             enqueueReassembledFrame(frameData)
             return
         }
@@ -317,7 +321,10 @@ final class UDPReassembler {
             lastDeliveredSeq = seq
             framesDelivered += 1
             enqueueReassembledFrame(frameData)
-            drainOutOfOrderBuffer()
+            let drained = drainOutOfOrderBuffer()
+            if drained > 0 {
+                print("[CONSOLE] UDPReassembler: resumed in-order delivery seq=\(seq) drained=\(drained) ooo_remaining=\(outOfOrderBuffer.count)")
+            }
             return
         }
 
@@ -331,11 +338,17 @@ final class UDPReassembler {
             lastDeliveredSeq = seq
             framesDelivered += 1
             enqueueReassembledFrame(frameData)
-            drainOutOfOrderBuffer()
+            let drained = drainOutOfOrderBuffer()
+            if drained > 0 {
+                print("[CONSOLE] UDPReassembler: drained buffered frames=\(drained) newLast=\(lastDeliveredSeq) ooo_remaining=\(outOfOrderBuffer.count)")
+            }
         } else if distance <= Self.maxForwardGapBeforeSkip {
             // Slightly ahead — buffer and wait for the missing frames rather than
             // skipping forward and poisoning the HEVC reference chain.
             outOfOrderBuffer[seq] = frameData
+            if outOfOrderBuffer.count <= 10 || outOfOrderBuffer.count % 25 == 0 {
+                print("[CONSOLE] UDPReassembler: buffered out-of-order seq=\(seq) distance=\(distance) ooo=\(outOfOrderBuffer.count) threshold=\(Self.maxForwardGapBeforeSkip)")
+            }
             if outOfOrderBuffer.count > Self.maxOutOfOrderFrames {
                 enterRecoveryMode(reason: "out-of-order buffer overflow", missingSeq: lastDeliveredSeq &+ 1)
             }
@@ -356,20 +369,26 @@ final class UDPReassembler {
     }
 
     /// Deliver consecutive frames from the out-of-order buffer.
-    private func drainOutOfOrderBuffer() {
+    @discardableResult
+    private func drainOutOfOrderBuffer() -> Int {
+        var drained = 0
         while true {
             let nextSeq = lastDeliveredSeq &+ 1
             guard let frameData = outOfOrderBuffer.removeValue(forKey: nextSeq) else { break }
             lastDeliveredSeq = nextSeq
             framesDelivered += 1
             enqueueReassembledFrame(frameData)
+            drained += 1
         }
+        return drained
     }
 
     private func enterRecoveryMode(reason: String, missingSeq: UInt16) {
         let shouldNotifyRecovery = !awaitingKeyframeAfterLoss
         if shouldNotifyRecovery {
+            recoveryEnterCount += 1
             print("[CONSOLE] UDPReassembler: entering recovery, waiting for keyframe (\(reason), missing seq=\(missingSeq), buffered=\(outOfOrderBuffer.count), pending=\(pendingFrames.count))")
+            print("[CONSOLE] UDPReassembler: recovery-enter count=\(recoveryEnterCount) delivered=\(framesDelivered) purged=\(framesPurged) evicted=\(framesEvicted)")
         }
         awaitingKeyframeAfterLoss = true
         droppedUntilKeyframeCount = 0

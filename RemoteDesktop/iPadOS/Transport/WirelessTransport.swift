@@ -351,7 +351,12 @@ final class WirelessTransport {
     // MARK: - Private: Connection Setup
 
     private func connectToService(endpoint: NWEndpoint) {
-        tearDownConnections()
+        if case .service(let serviceName, _, _, _) = endpoint {
+            print("[CONSOLE] WirelessTransport: connectToService entry service=\(serviceName), connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected)")
+        } else {
+            print("[CONSOLE] WirelessTransport: connectToService entry endpoint=\(endpoint.debugDescription), connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected)")
+        }
+        tearDownConnections(clearServiceName: false, reason: "connectToService")
 
         print("[CONSOLE] WirelessTransport: connecting to \(endpoint.debugDescription)")
         log.info("Connecting with TLS to discovered Mac service: \(endpoint.debugDescription)")
@@ -386,11 +391,15 @@ final class WirelessTransport {
                 print("[CONSOLE] WirelessTransport: TLS TCP connection FAILED: \(error)")
                 self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
+                print("[CONSOLE] WirelessTransport: clearing connectedServiceName after failure (\(self.connectedServiceName ?? "nil"))")
+                self.connectedServiceName = nil
                 self.isConnected = false
                 self.onConnectionChanged?(false, self.isAWDL)
 
             case .cancelled:
+                print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED, clearing service latch (\(self.connectedServiceName ?? "nil"))")
                 self.inputConnection = nil
+                self.connectedServiceName = nil
                 if self.mediaConnection == nil {
                     self.isConnected = false
                 }
@@ -586,12 +595,15 @@ final class WirelessTransport {
 
     // MARK: - Private: Teardown
 
-    private func tearDownConnections() {
+    private func tearDownConnections(clearServiceName: Bool = true, reason: String = "unspecified") {
+        print("[CONSOLE] WirelessTransport: tearDownConnections reason=\(reason) clearServiceName=\(clearServiceName) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
         mediaConnection?.cancel()
         mediaConnection = nil
         inputConnection?.cancel()
         inputConnection = nil
-        connectedServiceName = nil
+        if clearServiceName {
+            connectedServiceName = nil
+        }
         tcpBuffer.removeAll()
         isConnected = false
         isAWDL = false
