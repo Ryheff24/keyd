@@ -144,21 +144,27 @@ actor AWDLTransport {
             await startReceiving(conn)
         case .waiting(let error):
             logger.warning("Connection waiting: \(error)")
+            let wasAttemptingOrReady = awdlState.isConnecting || awdlState.isReady
             let didLoseReadyConnection = clearConnection(for: conn)
-            if didLoseReadyConnection {
+            if didLoseReadyConnection || (pairingModeEnabled && wasAttemptingOrReady) {
+                logger.info("AWDL state update on waiting: pairingMode=\(self.pairingModeEnabled), wasAttemptingOrReady=\(wasAttemptingOrReady), didLoseReady=\(didLoseReadyConnection)")
                 onDisconnect?()
             }
             await scheduleReconnectIfNeeded()
         case .failed(let error):
             logger.error("Connection failed: \(error)")
+            let wasAttemptingOrReady = awdlState.isConnecting || awdlState.isReady
             let didLoseReadyConnection = clearConnection(for: conn)
-            if didLoseReadyConnection {
+            if didLoseReadyConnection || (pairingModeEnabled && wasAttemptingOrReady) {
+                logger.info("AWDL state update on failure: pairingMode=\(self.pairingModeEnabled), wasAttemptingOrReady=\(wasAttemptingOrReady), didLoseReady=\(didLoseReadyConnection)")
                 onDisconnect?()
             }
             await scheduleReconnectIfNeeded()
         case .cancelled:
+            let wasAttemptingOrReady = awdlState.isConnecting || awdlState.isReady
             let didLoseReadyConnection = clearConnection(for: conn)
-            if didLoseReadyConnection {
+            if didLoseReadyConnection || (pairingModeEnabled && wasAttemptingOrReady) {
+                logger.info("AWDL state update on cancel: pairingMode=\(self.pairingModeEnabled), wasAttemptingOrReady=\(wasAttemptingOrReady), didLoseReady=\(didLoseReadyConnection)")
                 onDisconnect?()
             }
             await scheduleReconnectIfNeeded()

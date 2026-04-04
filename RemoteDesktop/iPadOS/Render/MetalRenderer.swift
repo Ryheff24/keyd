@@ -26,6 +26,7 @@ final class MetalRenderer: NSObject {
         let texture: MTLTexture
         let cvTextureRef: CVMetalTexture?
         let captureTimestampUs: UInt64
+        let enqueuedAtUs: UInt64
     }
 
     struct StatsSnapshot {
@@ -33,7 +34,7 @@ final class MetalRenderer: NSObject {
         let hasPendingFrame: Bool
     }
 
-    private static let maxPendingFrames = 2
+    private static let maxPendingFrames = 3
 
     // MARK: - Properties
 
@@ -81,6 +82,7 @@ final class MetalRenderer: NSObject {
     /// available immediately. Used to detect render-side backpressure without
     /// blocking the main run loop.
     private var inflightSkipCount = 0
+    private var renderQueueDelayLogCount = 0
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -275,19 +277,25 @@ final class MetalRenderer: NSObject {
         textureLock.lock()
         defer { textureLock.unlock() }
 
+        let pendingBefore = pendingFrames.count
         if pendingFrames.count >= Self.maxPendingFrames {
-            pendingFrames.removeFirst()
+            let dropped = pendingFrames.removeFirst()
             overwrittenFrameCount += 1
             if overwrittenFrameCount <= 5 || overwrittenFrameCount % 100 == 0 {
-                print("[CONSOLE] MetalRenderer: overwrote pending frame before display (total=\(overwrittenFrameCount))")
+                print("[CONSOLE] MetalRenderer: enqueue overflow drop oldest (pendingBefore=\(pendingBefore), droppedCaptureTs=\(dropped.captureTimestampUs), overwrittenTotal=\(overwrittenFrameCount))")
             }
         }
 
         pendingFrames.append(PendingRenderFrame(
             texture: texture,
             cvTextureRef: cvTextureRef,
-            captureTimestampUs: captureTimestampUs
+            captureTimestampUs: captureTimestampUs,
+            enqueuedAtUs: UInt64(CACurrentMediaTime() * 1_000_000.0)
         ))
+        let pendingAfter = pendingFrames.count
+        if pendingAfter >= 2 && (pendingAfter == Self.maxPendingFrames || pendingAfter % 2 == 0) {
+            print("[CONSOLE] MetalRenderer: enqueue success pending=\(pendingAfter) captureTsUs=\(captureTimestampUs)")
+        }
     }
 
     /// Set the Mac display dimensions (called during session handshake).
@@ -408,7 +416,10 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         if inflightSemaphore.wait(timeout: .now()) == .timedOut {
             inflightSkipCount += 1
             if inflightSkipCount <= 5 || inflightSkipCount % 100 == 0 {
-                print("[CONSOLE] MetalRenderer: skipped render tick waiting for inflight slot (total=\(inflightSkipCount))")
+                textureLock.lock()
+                let pending = pendingFrames.count
+                textureLock.unlock()
+                print("[CONSOLE] MetalRenderer: skipped render tick waiting for inflight slot (pending=\(pending), total=\(inflightSkipCount))")
             }
             return
         }
@@ -442,9 +453,9 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         // Pop one queued frame atomically so latency samples always pair the
         // presented texture with its original capture timestamp.
         //
-        // Always present the NEWEST decoded frame to minimize end-to-end tail
-        // latency under load. Any older queued frames are already stale by the
-        // time we have a drawable and only add queueing delay/jitter if shown.
+        // Present frames in FIFO order to preserve cadence continuity.
+        // Dropping already-decoded pending frames at render tick can cause
+        // visible stutter and low rendered-FPS under bursty arrivals.
         textureLock.lock()
         guard !pendingFrames.isEmpty else {
             textureLock.unlock()
@@ -452,16 +463,16 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             inflightSemaphore.signal()
             return
         }
-        let frame = pendingFrames.removeLast()
-        let staleQueued = pendingFrames.count
-        if staleQueued > 0 {
-            pendingFrames.removeAll(keepingCapacity: true)
-            overwrittenFrameCount += staleQueued
-            if staleQueued >= 2 || overwrittenFrameCount <= 5 || overwrittenFrameCount % 100 == 0 {
-                print("[CONSOLE] MetalRenderer: coalesced \(staleQueued) stale queued frame(s) at render tick (overwrittenTotal=\(overwrittenFrameCount))")
-            }
-        }
+        let frame = pendingFrames.removeFirst()
+        let pendingAfterPop = pendingFrames.count
         textureLock.unlock()
+
+        let dequeueNowUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
+        let queueDelayMs = Double(dequeueNowUs &- frame.enqueuedAtUs) / 1000.0
+        renderQueueDelayLogCount += 1
+        if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= 20.0 {
+            print("[CONSOLE] MetalRenderer: render dequeue pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms captureTsUs=\(frame.captureTimestampUs)")
+        }
 
         // Step 6: Set pipeline state and resources
         encoder.setRenderPipelineState(pipelineState)

@@ -516,6 +516,7 @@ static const char *kInputPortStr = "14568";
     uint16_t frameSeq = 0;
     BOOL hasFrameSeq = NO;
     BOOL isHEVC = NO;
+    uint64_t sendStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
     if (len >= sizeof(MediaFrameHeader)) {
         originalHeader = (const MediaFrameHeader *)data;
         frameSeq = originalHeader->seq;
@@ -525,11 +526,13 @@ static const char *kInputPortStr = "14568";
                frameSeq, len, isHEVC ? "yes" : "no");
     }
 
-    if (len >= sizeof(MediaFrameHeader)) {
+    if (len >= sizeof(MediaFrameHeader) && isHEVC) {
         /* USB media still uses reliable TCP, but frame-level writes make the iPad
          * wait for large blobs before it can parse anything. Reframe all media
-         * packets (HEVC and LZ4) into chunked MediaFrameHeader packets so the
-         * existing reassembler/decoder path can consume them incrementally over TCP. */
+         * HEVC packets into chunked MediaFrameHeader packets so the existing
+         * reassembler/decoder path can consume them incrementally over TCP.
+         * Keep LZ4 frames unchunked to avoid extra per-chunk framing overhead and
+         * receiver-side reassembly churn on the USB fast path. */
         const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
         size_t payloadLen = len - sizeof(MediaFrameHeader);
         const size_t tcpChunkMTU = 64 * 1024;
@@ -554,7 +557,7 @@ static const char *kInputPortStr = "14568";
     }
     if (hasFrameSeq) {
         os_log(transport_log(),
-               "USB media sending unchunked frame (chunk fallback): seq=%u bytes=%zu hevc=%{public}s",
+               "USB media sending unchunked frame: seq=%u bytes=%zu hevc=%{public}s",
                frameSeq, len, isHEVC ? "yes" : "no");
     }
 
@@ -588,10 +591,14 @@ static const char *kInputPortStr = "14568";
             completion(error == nil);
         }
         if (!error && hasFrameSeq) {
-            os_log(transport_log(), "USB media send success: seq=%u bytes=%zu", frameSeq, len);
+            uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
+            os_log(transport_log(), "USB media send success: seq=%u bytes=%zu elapsed=%llums",
+                   frameSeq, len, elapsedMs);
         }
         if (error) {
-            os_log_error(transport_log(), "Media TCP send error: %{public}@", error);
+            uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
+            os_log_error(transport_log(), "Media TCP send error: %{public}@ (seq=%u bytes=%zu elapsed=%llums)",
+                         error, frameSeq, len, elapsedMs);
         }
     });
 }

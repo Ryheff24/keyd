@@ -328,7 +328,8 @@ final class TransportManager: ObservableObject {
                 guard let self else { return }
                 if self.suppressAWDLStatusUntilPaired {
                     if case .usbConnected = self.fsmState { } else {
-                        self.logConnectionEvent("AWDL pairing channel disconnected")
+                        self.logConnectionEvent("AWDL pairing channel disconnected (state=\(self.fsmState), suppress=\(self.suppressAWDLStatusUntilPaired)); dispatching awdlDisconnected")
+                        self.handleEvent(.awdlDisconnected)
                     }
                     return
                 }

@@ -44,6 +44,8 @@ final class USBNetworkTransport {
 
     /// TCP reassembly buffer for length-prefixed messages.
     private var tcpBuffer = Data()
+    /// Read cursor into tcpBuffer to avoid O(n) front-removal on every frame.
+    private var tcpBufferReadOffset = 0
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
@@ -701,25 +703,35 @@ final class USBNetworkTransport {
 
     /// Extract complete length-prefixed messages from the USB TCP reassembly buffer.
     private func drainUSBTCPBuffer() {
-        while tcpBuffer.count >= 4 {
+        while (tcpBuffer.count - tcpBufferReadOffset) >= 4 {
             let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
                 guard let base = buf.baseAddress else { return 0 }
                 var raw: UInt32 = 0
-                memcpy(&raw, base, 4)
+                memcpy(&raw, base.advanced(by: tcpBufferReadOffset), 4)
                 return Int(UInt32(bigEndian: raw))
             }
 
             guard msgLen > 0, msgLen < 4_000_000 else {
                 print("[CONSOLE] USBTransport: invalid TCP frame length \(msgLen), clearing buffer")
                 tcpBuffer.removeAll()
+                tcpBufferReadOffset = 0
                 return
             }
 
-            guard tcpBuffer.count >= 4 + msgLen else { return }
+            guard (tcpBuffer.count - tcpBufferReadOffset) >= 4 + msgLen else { return }
 
-            let message = tcpBuffer.subdata(in: 4..<(4 + msgLen))
-            tcpBuffer.removeSubrange(0..<(4 + msgLen))
+            let msgStart = tcpBufferReadOffset + 4
+            let msgEnd = msgStart + msgLen
+            let message = tcpBuffer.subdata(in: msgStart..<msgEnd)
+            tcpBufferReadOffset = msgEnd
             onInputReceived?(message)
+        }
+
+        // Compact occasionally to keep memory bounded while avoiding repeated memmove cost.
+        if tcpBufferReadOffset > 0 &&
+            (tcpBufferReadOffset >= (1 << 20) || tcpBufferReadOffset >= (tcpBuffer.count / 2)) {
+            tcpBuffer.removeSubrange(0..<tcpBufferReadOffset)
+            tcpBufferReadOffset = 0
         }
     }
 
@@ -734,6 +746,7 @@ final class USBNetworkTransport {
         // drainUSBTCPBuffer running on the same queue from receive callbacks.
         transportQueue.async { [weak self] in
             self?.tcpBuffer.removeAll()
+            self?.tcpBufferReadOffset = 0
         }
     }
 
