@@ -510,11 +510,11 @@ static const char *kInputPortStr = "14568";
                frameSeq, len, isHEVC ? "yes" : "no");
     }
 
-    if (isHEVC && len >= sizeof(MediaFrameHeader)) {
+    if (len >= sizeof(MediaFrameHeader)) {
         /* USB media still uses reliable TCP, but frame-level writes make the iPad
-         * wait for multi-megabyte blobs before it can parse anything. Reframe them
-         * into chunked MediaFrameHeader packets so the existing reassembler can
-         * consume them incrementally over TCP. */
+         * wait for large blobs before it can parse anything. Reframe all media
+         * packets (HEVC and LZ4) into chunked MediaFrameHeader packets so the
+         * existing reassembler/decoder path can consume them incrementally over TCP. */
         const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
         size_t payloadLen = len - sizeof(MediaFrameHeader);
         const size_t tcpChunkMTU = 64 * 1024;
@@ -526,8 +526,10 @@ static const char *kInputPortStr = "14568";
         });
 
         if (chunks.count > 0) {
-            os_log(transport_log(), "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu",
-                   frameSeq, tcpChunkMTU, (unsigned long)chunks.count);
+            os_log(transport_log(),
+                   "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu hevc=%{public}s",
+                   frameSeq, tcpChunkMTU, (unsigned long)chunks.count,
+                   isHEVC ? "yes" : "no");
             [self _sendTCPFramedChunkAtIndex:0
                                    fromChunks:chunks
                                    connection:conn
@@ -535,9 +537,10 @@ static const char *kInputPortStr = "14568";
             return;
         }
     }
-    if (hasFrameSeq && !isHEVC) {
-        os_log(transport_log(), "USB media sending unchunked LZ4 frame: seq=%u bytes=%zu",
-               frameSeq, len);
+    if (hasFrameSeq) {
+        os_log(transport_log(),
+               "USB media sending unchunked frame (chunk fallback): seq=%u bytes=%zu hevc=%{public}s",
+               frameSeq, len, isHEVC ? "yes" : "no");
     }
 
     /* Copy data — caller may free immediately after return */

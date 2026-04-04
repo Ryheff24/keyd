@@ -441,6 +441,10 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
 
         // Pop one queued frame atomically so latency samples always pair the
         // presented texture with its original capture timestamp.
+        //
+        // Always present the NEWEST decoded frame to minimize end-to-end tail
+        // latency under load. Any older queued frames are already stale by the
+        // time we have a drawable and only add queueing delay/jitter if shown.
         textureLock.lock()
         guard !pendingFrames.isEmpty else {
             textureLock.unlock()
@@ -448,7 +452,15 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             inflightSemaphore.signal()
             return
         }
-        let frame = pendingFrames.removeFirst()
+        let frame = pendingFrames.removeLast()
+        let staleQueued = pendingFrames.count
+        if staleQueued > 0 {
+            pendingFrames.removeAll(keepingCapacity: true)
+            overwrittenFrameCount += staleQueued
+            if staleQueued >= 2 || overwrittenFrameCount <= 5 || overwrittenFrameCount % 100 == 0 {
+                print("[CONSOLE] MetalRenderer: coalesced \(staleQueued) stale queued frame(s) at render tick (overwrittenTotal=\(overwrittenFrameCount))")
+            }
+        }
         textureLock.unlock()
 
         // Step 6: Set pipeline state and resources

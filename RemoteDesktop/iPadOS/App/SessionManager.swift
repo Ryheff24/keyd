@@ -153,15 +153,17 @@ final class SessionManager {
         if qrPairing.isPaired {
             Self.log.info("[SessionManager] start(): already paired -- setting state to .connecting and starting transport monitoring")
             print("[CONSOLE] start(): restoring pairing, pairedHost=\(qrPairing.pairedHost ?? "nil")")
-            guard let macHost = qrPairing.pairedHost, !macHost.isEmpty else {
-                print("[CONSOLE] start(): stale pairing detected (pairedHost missing) -- resetting pairing now")
-                Self.log.error("[SessionManager] stale pairing: isPaired=true but pairedHost missing; forcing re-pair")
-                qrPairing.resetPairing()
-                state = .awaitingPairing
-                return
+            if let macHost = qrPairing.pairedHost?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !macHost.isEmpty {
+                print("[CONSOLE] start(): restoring pairing success, peer host=\(macHost)")
+                usbTransport.setPeerAddress(macHost)
+            } else {
+                // pairedHost is only required for USB direct-dial.
+                // Keep pairing and continue with Bonjour wireless reconnect instead of
+                // forcing a QR re-pair when host metadata is missing.
+                print("[CONSOLE] start(): pairedHost missing -- continuing with wireless reconnect path")
+                Self.log.info("[SessionManager] pairedHost missing for restored pairing; continuing without USB peer preseed")
             }
-            print("[CONSOLE] start(): restoring pairing success, peer host=\(macHost)")
-            usbTransport.setPeerAddress(macHost)
             state = .connecting
             startTransportMonitoring()
             // If Mac's cert changed or pairing is stale, we'll never connect.
@@ -231,9 +233,12 @@ final class SessionManager {
                 startLatencyProbeTimer()
             }
         case .connecting:
-            // Already trying to connect, restart transport monitoring
+            // Avoid re-arming transport monitoring while a connect attempt is already in
+            // flight (common on initial app launch when scenePhase also emits .active).
+            // Re-starting here can duplicate timers/browse attempts and increase churn.
+            print("[CONSOLE] resumeFromBackground: already connecting -- leaving existing transport monitoring in place")
+            Self.log.info("[SessionManager] resumeFromBackground(): already connecting; no monitoring restart")
             reconnectAttempt = 0
-            startTransportMonitoring()
         default:
             break
         }
@@ -273,8 +278,8 @@ final class SessionManager {
         connectingTimeoutTimer?.invalidate()
         connectingTimeoutTimer = Timer.scheduledTimer(withTimeInterval: Self.connectingTimeout, repeats: false) { [weak self] _ in
             guard let self = self, self.state == .connecting else { return }
-            print("[CONSOLE] Connecting timeout -- pairing likely stale, falling back to QR")
-            Self.log.info("Connecting timeout expired -- resetting stale pairing")
+            print("[CONSOLE] Connecting timeout -- pairing likely stale, falling back to QR (usb=\(self.usbTransport.isConnected), wifi=\(self.wirelessTransport.isConnected), pairedHost=\(self.qrPairing.pairedHost ?? "nil"))")
+            Self.log.info("Connecting timeout expired -- resetting stale pairing (usb=\(self.usbTransport.isConnected), wifi=\(self.wirelessTransport.isConnected), pairedHostPresent=\((self.qrPairing.pairedHost?.isEmpty == false)))")
             self.usbTransport.stopMonitoring()
             self.wirelessTransport.stopBrowsing()
             self.qrPairing.resetPairing()
