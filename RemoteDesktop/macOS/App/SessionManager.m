@@ -69,9 +69,6 @@ static const NSUInteger kWirelessSevereCongestionChunkThreshold = 224;
 static const uint64_t kWirelessMildCongestedFrameIntervalUs = 16667;  /* ~60fps cadence */
 static const uint64_t kWirelessSevereCongestedFrameIntervalUs = 20000;/* stronger smoothing */
 static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate source timestamp jitter around cadence */
-/* Bound Wi-Fi TCP media write depth. Prevents kernel/TLS queue buildup from
- * inflating p95/p99 when stream pressure exceeds link capacity. */
-static const int32_t kMaxMediaSendsInFlightWiFiTCP = 3;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -1107,52 +1104,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
              * The paced DTLS chunk path still works, but on this workload it
              * was the dominant source of burst loss, recovery freezes, and the
              * reconnect cascade near the end of the long-run test. */
-            int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
-            static int wifiTCPSendQueuedLogCount = 0;
-            wifiTCPSendQueuedLogCount++;
-            if (wifiTCPSendQueuedLogCount <= 10 ||
-                wifiTCPSendQueuedLogCount % 500 == 0 ||
-                inFlight > 2) {
-                os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu",
-                       originalHeader->seq, inFlight, payloadLen);
-            }
-            if (inFlight > kMaxMediaSendsInFlightWiFiTCP) {
-                OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
-                OSAtomicIncrement32Barrier(&_wifiPerfTCPSendDrops);
-                static int wifiTCPSendDropCount = 0;
-                wifiTCPSendDropCount++;
-                if (wifiTCPSendDropCount <= 10 || wifiTCPSendDropCount % 100 == 0) {
-                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d totalDropped=%d",
-                           originalHeader->seq, inFlight - 1, wifiTCPSendDropCount);
-                }
-                [_hevcEncoder requestKeyframe];
-                return;
-            }
-
             static int wifiTCPMediaLogCount = 0;
             if (wifiTCPMediaLogCount < 10 || wifiTCPMediaLogCount % 200 == 0) {
                 os_log(sLog, "WiFi media via TCP: seq=%u bytes=%zu",
                        originalHeader->seq, payloadLen);
             }
             wifiTCPMediaLogCount++;
-            __weak SessionManager *weakSelf = self;
-            [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
-                SessionManager *strongSelf = weakSelf;
-                if (!strongSelf) return;
-                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
-                if (!success) {
-                    os_log(sLog, "WiFi TCP send completion: seq=%u success=%{public}s inFlightNow=%d",
-                           originalHeader->seq, success ? "yes" : "no", left);
-                } else if (left == 0) {
-                    static int wifiTCPSendCompletionLogCount = 0;
-                    wifiTCPSendCompletionLogCount++;
-                    if (wifiTCPSendCompletionLogCount <= 10 ||
-                        wifiTCPSendCompletionLogCount % 500 == 0) {
-                        os_log(sLog, "WiFi TCP send completion: seq=%u success=yes inFlightNow=%d",
-                               originalHeader->seq, left);
-                    }
-                }
-            }];
+            [_wirelessTransport sendMediaFrameViaTCP:data length:len];
             return;
         }
 
