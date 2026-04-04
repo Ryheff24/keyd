@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.794` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `29 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `88 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `36 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `50 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `98 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `56 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `26 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `73 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `58.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.625` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `27 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `55 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `31 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `48 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `95 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `54 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `25 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `124 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.4%` | `100.0%` | `100.0%` | ❌ |
 
@@ -90,3 +90,4 @@ Rules:
 | 2026-04-04 | 13:25:19 EDT | `3855de7` | `2752x1786` | `2496x1620` | `53.9 fps` | `0.603` | `28/53/32 ms` | `49/78/54 ms` | `54.9 fps, 25/36 ms` | `1` | `29/37` | iter19 rerun with unlocked ipad |
 | 2026-04-04 | 13:36:49 EDT | `0707bce` | `2752x1786` | `2496x1620` | `57.5 fps` | `0.964` | `29/121/40 ms` | `51/150/62 ms` | `59.6 fps, 28/89 ms` | `1` | `29/37` | iter20 integrated A+B+C after bitrate-stutter focus |
 | 2026-04-04 | 14:01:04 EDT | `15e860e` | `2752x1786` | `2496x1620` | `57.8 fps` | `0.794` | `29/88/36 ms` | `50/98/56 ms` | `59.1 fps, 26/73 ms` | `1` | `29/37` | iter21 hotfix tcp-drain crash |
+| 2026-04-04 | 15:03:43 EDT | `967b103` | `2752x1786` | `2496x1620` | `58.6 fps` | `0.625` | `27/55/31 ms` | `48/95/54 ms` | `59.7 fps, 25/124 ms` | `1` | `29/37` | Validate keychain memory-only import |
