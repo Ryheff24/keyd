@@ -709,8 +709,8 @@ final class USBNetworkTransport {
                 return Int(UInt32(bigEndian: raw))
             }
 
-            guard msgLen > 0, msgLen < 20_000_000 else {
-                print("[CONSOLE] USBTransport: TCP message too large or invalid: \(msgLen) bytes, dropping buffer")
+            guard msgLen > 0, msgLen < 4_000_000 else {
+                print("[CONSOLE] USBTransport: invalid TCP frame length \(msgLen), clearing buffer")
                 tcpBuffer.removeAll()
                 return
             }

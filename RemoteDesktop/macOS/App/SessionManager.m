@@ -69,6 +69,9 @@ static const NSUInteger kWirelessSevereCongestionChunkThreshold = 224;
 static const uint64_t kWirelessMildCongestedFrameIntervalUs = 16667;  /* ~60fps cadence */
 static const uint64_t kWirelessSevereCongestedFrameIntervalUs = 20000;/* stronger smoothing */
 static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate source timestamp jitter around cadence */
+/* Bound Wi-Fi TCP media write depth. Prevents kernel/TLS queue buildup from
+ * inflating p95/p99 when stream pressure exceeds link capacity. */
+static const int32_t kMaxMediaSendsInFlightWiFiTCP = 3;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -167,6 +170,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfQueueDrops;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPFallbacks;
 @property (nonatomic, assign) volatile int32_t wifiPerfPeakQueuedChunks;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSendDrops;
 
 /* QR code display window */
 @property (nonatomic, strong, nullable) NSWindow *qrWindow;
@@ -1103,13 +1107,40 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
              * The paced DTLS chunk path still works, but on this workload it
              * was the dominant source of burst loss, recovery freezes, and the
              * reconnect cascade near the end of the long-run test. */
+            int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
+            if (inFlight <= 5 || inFlight % 20 == 0) {
+                os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu",
+                       originalHeader->seq, inFlight, payloadLen);
+            }
+            if (inFlight > kMaxMediaSendsInFlightWiFiTCP) {
+                OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
+                OSAtomicIncrement32Barrier(&_wifiPerfTCPSendDrops);
+                static int wifiTCPSendDropCount = 0;
+                wifiTCPSendDropCount++;
+                if (wifiTCPSendDropCount <= 10 || wifiTCPSendDropCount % 100 == 0) {
+                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d totalDropped=%d",
+                           originalHeader->seq, inFlight - 1, wifiTCPSendDropCount);
+                }
+                [_hevcEncoder requestKeyframe];
+                return;
+            }
+
             static int wifiTCPMediaLogCount = 0;
             if (wifiTCPMediaLogCount < 10 || wifiTCPMediaLogCount % 200 == 0) {
                 os_log(sLog, "WiFi media via TCP: seq=%u bytes=%zu",
                        originalHeader->seq, payloadLen);
             }
             wifiTCPMediaLogCount++;
-            [_wirelessTransport sendMediaFrameViaTCP:data length:len];
+            __weak SessionManager *weakSelf = self;
+            [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
+                SessionManager *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
+                if (!success || left < 2) {
+                    os_log(sLog, "WiFi TCP send completion: seq=%u success=%{public}s inFlightNow=%d",
+                           originalHeader->seq, success ? "yes" : "no", left);
+                }
+            }];
             return;
         }
 
@@ -1175,6 +1206,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfQueueDrops = 0;
     _wifiPerfTCPFallbacks = 0;
     _wifiPerfPeakQueuedChunks = 0;
+    _wifiPerfTCPSendDrops = 0;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
@@ -1202,14 +1234,15 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t preDrops = strongSelf->_wifiPerfPreEncodeDrops;
         int32_t queueDrops = strongSelf->_wifiPerfQueueDrops;
         int32_t tcpFallbacks = strongSelf->_wifiPerfTCPFallbacks;
+        int32_t tcpSendDrops = strongSelf->_wifiPerfTCPSendDrops;
         int32_t peakQueued = strongSelf->_wifiPerfPeakQueuedChunks;
         NSUInteger queuedNow = strongSelf->_wirelessTransport.queuedMediaChunkCount;
         double avgKB = encodedFrames > 0 ? ((double)encodedBytes / (double)encodedFrames) / 1024.0 : 0.0;
         const char *pacingMode = queuedNow >= 320 ? "congested" : (queuedNow <= 96 ? "fast" : "default");
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
-               preDrops, queueDrops, tcpFallbacks,
+               preDrops, queueDrops, tcpFallbacks, tcpSendDrops,
                (unsigned long)queuedNow, peakQueued, pacingMode);
 
         [strongSelf resetWirelessPerformanceWindow];

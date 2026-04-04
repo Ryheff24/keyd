@@ -190,6 +190,9 @@ final class SessionManager {
         print("[CONSOLE] starting transport monitoring")
         startTransportMonitoring()
         print("[CONSOLE] transport monitoring started")
+        print("[CONSOLE] onPairingComplete: arming connecting timeout")
+        Self.log.info("[SessionManager] onPairingComplete(): connecting timeout armed")
+        startConnectingTimeout()
 
         // E2E test: now that pairing is done and Mac is advertising, test Bonjour discovery
         testRunner?.runBonjourDiscoveryTestAfterPairing()
@@ -201,6 +204,9 @@ final class SessionManager {
         reconnectTimer?.invalidate()
         reconnectAttempt = 0
         startTransportMonitoring()
+        print("[CONSOLE] retryNow: arming connecting timeout")
+        Self.log.info("[SessionManager] retryNow(): connecting timeout armed")
+        startConnectingTimeout()
     }
 
     /// Resume session after app returns to foreground.
@@ -218,6 +224,9 @@ final class SessionManager {
             state = .connecting
             reconnectAttempt = 0
             startTransportMonitoring()
+            print("[CONSOLE] resumeFromBackground: reconnect path -- armed connecting timeout")
+            Self.log.info("[SessionManager] resumeFromBackground(): reconnect path, connecting timeout armed")
+            startConnectingTimeout()
         case .streaming:
             // App was suspended — transports may have died while we weren't running.
             // Check if any transport is still alive; if not, trigger reconnect.
@@ -239,6 +248,11 @@ final class SessionManager {
             print("[CONSOLE] resumeFromBackground: already connecting -- leaving existing transport monitoring in place")
             Self.log.info("[SessionManager] resumeFromBackground(): already connecting; no monitoring restart")
             reconnectAttempt = 0
+            // pauseForBackground() invalidates connectingTimeoutTimer. Re-arm it on
+            // foreground so we don't get stuck in .connecting forever after app/shell churn.
+            print("[CONSOLE] resumeFromBackground: already connecting -- rearming connecting timeout")
+            Self.log.info("[SessionManager] resumeFromBackground(): already connecting; connecting timeout re-armed")
+            startConnectingTimeout()
         default:
             break
         }

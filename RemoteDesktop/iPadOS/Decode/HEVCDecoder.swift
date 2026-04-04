@@ -101,7 +101,7 @@ final class HEVCDecoder {
             return nil
         }
 
-        // Synchronous decode (low latency -- no frame reordering)
+        // Real-time decode path.
         var pixelBuffer: CVPixelBuffer?
         var flagsOut: VTDecodeInfoFlags = []
 
@@ -125,8 +125,11 @@ final class HEVCDecoder {
             return nil
         }
 
-        // Wait for synchronous completion
-        VTDecompressionSessionWaitForAsynchronousFrames(session)
+        // Avoid unconditional decoder drains. Only wait when this call actually
+        // returned asynchronously and we still need the output for this frame.
+        if flagsOut.contains(.asynchronous) && pixelBuffer == nil {
+            VTDecompressionSessionWaitForAsynchronousFrames(session)
+        }
 
         if let pb = pixelBuffer {
             onDecodedFrame?(pb, header.tsUs)
@@ -193,6 +196,7 @@ final class HEVCDecoder {
         }
 
         decompressionSession = newSession
+        VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         os_log(.info, log: Self.log, "Decompression session created")
         return true
     }

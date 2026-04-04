@@ -104,6 +104,15 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)sendMediaFrameViaTCP:(const void *)data length:(size_t)len;
 
+/**
+ * Send a media frame over TCP (with 4-byte length prefix framing) and report
+ * send completion. completion(success=YES) means Network.framework accepted
+ * the payload; success=NO means send failed.
+ */
+- (void)sendMediaFrameViaTCP:(const void *)data
+                      length:(size_t)len
+                  completion:(void (^ _Nullable)(BOOL success))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

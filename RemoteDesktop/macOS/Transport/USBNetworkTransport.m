@@ -434,8 +434,14 @@ static const char *kInputPortStr = "14568";
 
     /* Prepend 4-byte big-endian length prefix for TCP message framing */
     uint32_t netLen = htonl((uint32_t)len);
-    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
-                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    uint32_t *lenCopy = malloc(sizeof(uint32_t));
+    if (!lenCopy) {
+        os_log_error(transport_log(), "Input send skipped: failed to allocate length prefix");
+        return;
+    }
+    *lenCopy = netLen;
+    dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
+                                                   DISPATCH_DATA_DESTRUCTOR_FREE);
     dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
                                                        DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
@@ -460,8 +466,17 @@ static const char *kInputPortStr = "14568";
 
     NSData *chunk = chunks[idx];
     uint32_t netLen = htonl((uint32_t)chunk.length);
-    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
-                                                   DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    uint32_t *lenCopy = malloc(sizeof(uint32_t));
+    if (!lenCopy) {
+        os_log_error(transport_log(),
+                     "Media TCP chunk %lu/%lu send skipped: failed to allocate length prefix",
+                     (unsigned long)idx, (unsigned long)chunks.count);
+        if (completion) completion(NO);
+        return;
+    }
+    *lenCopy = netLen;
+    dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
+                                                   DISPATCH_DATA_DESTRUCTOR_FREE);
     dispatch_data_t payloadData = dispatch_data_create(chunk.bytes, chunk.length,
                                                        _transportQueue,
                                                        DISPATCH_DATA_DESTRUCTOR_DEFAULT);
@@ -553,8 +568,16 @@ static const char *kInputPortStr = "14568";
 
     /* Prepend 4-byte big-endian length prefix for TCP message framing */
     uint32_t netLen = htonl((uint32_t)len);
-    dispatch_data_t lenData = dispatch_data_create(&netLen, 4, _transportQueue,
-                                                    DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    uint32_t *lenCopy = malloc(sizeof(uint32_t));
+    if (!lenCopy) {
+        os_log_error(transport_log(), "Media TCP send skipped: failed to allocate length prefix");
+        free(copy);
+        if (completion) completion(NO);
+        return;
+    }
+    *lenCopy = netLen;
+    dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
+                                                   DISPATCH_DATA_DESTRUCTOR_FREE);
     dispatch_data_t payloadData = dispatch_data_create(copy, len, _transportQueue,
                                                        DISPATCH_DATA_DESTRUCTOR_FREE);
     dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);

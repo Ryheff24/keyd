@@ -414,8 +414,17 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
 }
 
 - (void)sendMediaFrameViaTCP:(const void *)data length:(size_t)len {
+    [self sendMediaFrameViaTCP:data length:len completion:nil];
+}
+
+- (void)sendMediaFrameViaTCP:(const void *)data
+                      length:(size_t)len
+                  completion:(void (^ _Nullable)(BOOL success))completion {
     nw_connection_t conn = _inputConnection;
-    if (!conn) return;
+    if (!conn) {
+        if (completion) completion(NO);
+        return;
+    }
 
     /* Copy the framed payload so nw_connection_send owns stable bytes until
      * the completion handler fires. The previous stack/borrowed-buffer path
@@ -423,7 +432,10 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
      * contract we should rely on for large media frames. */
     size_t framedLen = 4 + len;
     uint8_t *framedBytes = malloc(framedLen);
-    if (!framedBytes) return;
+    if (!framedBytes) {
+        if (completion) completion(NO);
+        return;
+    }
 
     uint32_t netLen = htonl((uint32_t)len);
     memcpy(framedBytes, &netLen, 4);
@@ -436,6 +448,9 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                        true, ^(nw_error_t _Nullable error) {
         if (error) {
             os_log_error(wireless_log(), "TCP media frame send error: %{public}@", error);
+            if (completion) completion(NO);
+        } else if (completion) {
+            completion(YES);
         }
     });
 }
