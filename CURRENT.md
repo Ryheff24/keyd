@@ -1,5 +1,30 @@
 # CURRENT
 
+## Lane WiFi Iteration 22 (renderer early-catchup + present telemetry)
+
+- Timestamp: 2026-04-04 16:45:46 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate renderer early catchup + cadence telemetry"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+- Key metrics (vs iteration 21 baseline run):
+  - sustained-stream: `pipe[med/avg/p95] 37/54/113ms -> 33/45/105ms`, `glass[med/avg/p95] 66/80/134ms -> 58/70/127ms`
+  - fps tails: `maxGap 392ms -> 225ms`, `p95 frame 92ms -> 67ms`, `jitter 22.4ms -> 20.3ms`
+  - fps avg unchanged: `57.9 -> 57.8` (still below 60 target)
+  - glass overhead vs decode: `30ms -> 25ms`
+- Hypothesis tested:
+  - iPad render queue was carrying persistent 2-5 frame backlog (~26-35ms queue delay) without triggering catchup, inflating present/display-link tails.
+- Instrumentation/behavior added (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added branch/error/success timing logs for render tick skip, commandBuffer/encoder abort, dequeue with `displayLead`, and render completion (`gpuRoundtrip`, `submitLag`).
+  - Lowered adaptive catchup activation thresholds for depth+delay backlog to purge stale queued frames earlier.
+- Evidence:
+  - Renderer telemetry now shows catchup activation (`catchupBranchLogs=70`, `modes=fifo:742, catchup-hard-depth:46, catchup-soft-single:24`).
+  - Dequeue queueDelay dropped to `median=20.26ms` (from prior `~26.04ms`) and `p95=26.70ms` (from prior `~34.87ms`).
+- Outcome:
+  - Improving but incomplete; commit-worthy improvement retained for next loop.
+- Next move:
+  - Remaining dominant bottleneck is capture->decode latency tail (`pipeline p95 105-106ms`) plus sub-60 avg fps. Next hypothesis: instrument decode submit→callback + session handoff timing in `SessionManager`/`HEVCDecoder` to isolate decode queue stalls vs upstream delivery jitter.
+
 ## Lane WiFi Iteration 21 (adaptive severe-threshold probe, reverted)
 
 - Timestamp: 2026-04-04 16:31:41 EDT
