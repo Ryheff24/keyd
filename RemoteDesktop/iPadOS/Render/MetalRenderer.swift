@@ -88,6 +88,22 @@ final class MetalRenderer: NSObject {
     /// Parameters: (captureTimestampUs: UInt64, presentedHostTimeUs: Int64)
     /// Both values are on the Core Animation host-time timeline.
     var onFramePresented: ((_ captureTimestampUs: UInt64, _ presentedHostTimeUs: Int64) -> Void)?
+    /// Callback fired when a frame leaves the renderer queue for a render pass.
+    /// Parameters: captureTsUs, enqueuedAtUs, dequeuedAtUs, queueDelayMs, pendingBefore, pendingAfter, mode
+    var onFrameDequeuedForRender: ((_ captureTimestampUs: UInt64,
+                                    _ enqueuedAtUs: UInt64,
+                                    _ dequeuedAtUs: UInt64,
+                                    _ queueDelayMs: Double,
+                                    _ pendingBefore: Int,
+                                    _ pendingAfter: Int,
+                                    _ mode: String) -> Void)?
+    /// Callback fired when GPU work for a rendered frame completes.
+    /// Parameters: captureTsUs, completionUs, queueDelayMs, gpuRoundtripMs, mode
+    var onFrameRenderCompleted: ((_ captureTimestampUs: UInt64,
+                                  _ completionUs: UInt64,
+                                  _ queueDelayMs: Double,
+                                  _ gpuRoundtripMs: Double,
+                                  _ mode: String) -> Void)?
 
     /// Count of decoded frames that replaced a previous frame before the display
     /// link consumed it. This quantifies render-path coalescing under load.
@@ -589,6 +605,13 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= Self.softCatchupQueueDelayThresholdMs || droppedStaleFrames > 0 || pendingBefore >= Self.hardDepthCatchupPendingThreshold {
             print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms displayLead=\(String(format: "%.2f", displayLeadMs))ms softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthTriggered=\(hardDepthTriggered) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) captureTsUs=\(frame.captureTimestampUs)")
         }
+        onFrameDequeuedForRender?(frame.captureTimestampUs,
+                                  frame.enqueuedAtUs,
+                                  dequeueNowUs,
+                                  queueDelayMs,
+                                  pendingBefore,
+                                  pendingAfterPop,
+                                  dequeueMode)
 
         // Step 6: Set pipeline state and resources
         encoder.setRenderPipelineState(pipelineState)
@@ -636,6 +659,11 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
                 if self.presentCompletionLogCount <= 10 || self.presentCompletionLogCount % 240 == 0 || gpuRoundtripMs >= 12.0 {
                     print("[CONSOLE] MetalRenderer: render complete mode=\(dequeueMode) queueDelay=\(String(format: "%.2f", queueDelayMs))ms gpuRoundtrip=\(String(format: "%.2f", gpuRoundtripMs))ms pendingAfter=\(pendingAfterPop) submitLag=\(String(format: "%.2f", Double(submitToGPUStartUs &- commandBufferCreateStartUs) / 1000.0))ms")
                 }
+                self.onFrameRenderCompleted?(frame.captureTimestampUs,
+                                             completionUs,
+                                             queueDelayMs,
+                                             gpuRoundtripMs,
+                                             dequeueMode)
             }
             self?.inflightSemaphore.signal()
         }

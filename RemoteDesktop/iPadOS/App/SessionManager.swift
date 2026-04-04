@@ -68,6 +68,20 @@ final class SessionManager {
     private var frameTimestamps: [CFAbsoluteTime] = []
     private static let fpsWindowSize = 60
     private var fpsUpdateTimer: Timer?
+    private struct HEVCHandoffTrace {
+        let seq: UInt16
+        let source: String
+        let transport: String
+        let decodeSubmitUs: UInt64
+        let decodeDoneUs: UInt64
+        let enqueueUs: UInt64
+        let decodeMs: Double?
+        let stateAtDecode: String
+    }
+    private let hevcHandoffTraceLock = NSLock()
+    private var hevcHandoffTraceByCaptureTs: [UInt64: HEVCHandoffTrace] = [:]
+    private let hevcHandoffQueue = DispatchQueue(label: "com.ryheff.keyd.session.hevc-handoff", qos: .userInteractive)
+    private var hevcHandoffLogCount: Int = 0
 
     // MARK: - Latency Probe
 
@@ -108,12 +122,30 @@ final class SessionManager {
     init() {
         Self.log.info("[SessionManager] init called, initial state=\(self.state.rawValue)")
         Self.log.info("[SessionManager] qrPairing.isPaired=\(self.qrPairing.isPaired)")
-        hevcDecoder.onDecodedFrame = { [weak self] pixelBuffer, header, payloadLength in
-            self?.handleDecodedHEVCFrame(pixelBuffer,
-                                         header: header,
-                                         payloadLength: payloadLength,
-                                         decodeMs: nil,
-                                         source: "async-callback")
+        hevcDecoder.onDecodedFrame = { [weak self] pixelBuffer, header, payloadLength, decodeSubmitUs, callbackUs in
+            self?.scheduleDecodedHEVCFrame(pixelBuffer,
+                                           header: header,
+                                           payloadLength: payloadLength,
+                                           decodeMs: nil,
+                                           source: "async-callback",
+                                           decodeSubmitUs: decodeSubmitUs,
+                                           decodeDoneUs: callbackUs)
+        }
+        metalRenderer.onFrameDequeuedForRender = { [weak self] captureTsUs, enqueuedAtUs, dequeuedAtUs, queueDelayMs, pendingBefore, pendingAfter, mode in
+            self?.logHEVCHandoffDequeue(captureTsUs: captureTsUs,
+                                        enqueuedAtUs: enqueuedAtUs,
+                                        dequeuedAtUs: dequeuedAtUs,
+                                        queueDelayMs: queueDelayMs,
+                                        pendingBefore: pendingBefore,
+                                        pendingAfter: pendingAfter,
+                                        mode: mode)
+        }
+        metalRenderer.onFrameRenderCompleted = { [weak self] captureTsUs, completionUs, queueDelayMs, gpuRoundtripMs, mode in
+            self?.logHEVCHandoffPresent(captureTsUs: captureTsUs,
+                                        completionUs: completionUs,
+                                        queueDelayMs: queueDelayMs,
+                                        gpuRoundtripMs: gpuRoundtripMs,
+                                        mode: mode)
         }
         if isTestMode {
             print("[CONSOLE] SessionManager: TEST MODE enabled (wiredOnly=\(isWiredOnly), wirelessOnly=\(isWirelessOnly))")
@@ -631,6 +663,7 @@ final class SessionManager {
         let decodeStart = CACurrentMediaTime()
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
+            let decodeSubmitUs = keydrdHostTimeUs()
             let decodeResult = hevcDecoder.decode(frameData: data,
                                                   payloadOffset: payloadOffset,
                                                   payloadLength: payloadLength,
@@ -638,11 +671,13 @@ final class SessionManager {
             let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
             switch decodeResult {
             case .decoded(let pixelBuffer):
-                handleDecodedHEVCFrame(pixelBuffer,
-                                       header: header,
-                                       payloadLength: payloadLength,
-                                       decodeMs: decodeMs,
-                                       source: "decode-inline")
+                scheduleDecodedHEVCFrame(pixelBuffer,
+                                         header: header,
+                                         payloadLength: payloadLength,
+                                         decodeMs: decodeMs,
+                                         source: "decode-inline",
+                                         decodeSubmitUs: decodeSubmitUs,
+                                         decodeDoneUs: keydrdHostTimeUs())
             case .deferred:
                 if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
                     print("[CONSOLE] USBTransport: frame-pipeline seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=true payload=\(payloadLength)B decodeMs=\(String(format: "%.2f", decodeMs)) recvCount=\(frameRecvCount) status=deferred")
@@ -714,11 +749,37 @@ final class SessionManager {
         }
     }
 
+    private func scheduleDecodedHEVCFrame(_ pixelBuffer: CVPixelBuffer,
+                                          header: MediaFrameHeader,
+                                          payloadLength: Int,
+                                          decodeMs: Double?,
+                                          source: String,
+                                          decodeSubmitUs: UInt64,
+                                          decodeDoneUs: UInt64) {
+        let scheduleUs = keydrdHostTimeUs()
+        hevcHandoffQueue.async { [weak self] in
+            guard let self else { return }
+            let queueWaitMs = Double(Int64(keydrdHostTimeUs()) - Int64(scheduleUs)) / 1_000.0
+            if queueWaitMs >= 10.0 || self.frameRecvCount <= 10 || self.frameRecvCount % 240 == 0 {
+                print("[CONSOLE] SessionManager: hevc-handoff queue-enter seq=\(header.seq) source=\(source) queueWait=\(String(format: "%.2f", queueWaitMs))ms state=\(self.state.rawValue)")
+            }
+            self.handleDecodedHEVCFrame(pixelBuffer,
+                                        header: header,
+                                        payloadLength: payloadLength,
+                                        decodeMs: decodeMs,
+                                        source: source,
+                                        decodeSubmitUs: decodeSubmitUs,
+                                        decodeDoneUs: decodeDoneUs)
+        }
+    }
+
     private func handleDecodedHEVCFrame(_ pixelBuffer: CVPixelBuffer,
                                         header: MediaFrameHeader,
                                         payloadLength: Int,
                                         decodeMs: Double?,
-                                        source: String) {
+                                        source: String,
+                                        decodeSubmitUs: UInt64,
+                                        decodeDoneUs: UInt64) {
         let decompressedSize = CVPixelBufferGetDataSize(pixelBuffer)
         if frameRecvCount <= 3 {
             if let decodeMs {
@@ -733,8 +794,33 @@ final class SessionManager {
         let decodedH = CVPixelBufferGetHeight(pixelBuffer)
         testRunner?.reportDecodedFrameDimensions(width: decodedW, height: decodedH)
 
+        let enqueueStartUs = keydrdHostTimeUs()
+        hevcHandoffTraceLock.lock()
+        hevcHandoffTraceByCaptureTs[header.tsUs] = HEVCHandoffTrace(seq: header.seq,
+                                                                    source: source,
+                                                                    transport: currentTransport.rawValue,
+                                                                    decodeSubmitUs: decodeSubmitUs,
+                                                                    decodeDoneUs: decodeDoneUs,
+                                                                    enqueueUs: enqueueStartUs,
+                                                                    decodeMs: decodeMs,
+                                                                    stateAtDecode: state.rawValue)
+        if hevcHandoffTraceByCaptureTs.count > 256 {
+            let oldestKeys = hevcHandoffTraceByCaptureTs.keys.sorted().prefix(64)
+            for key in oldestKeys {
+                hevcHandoffTraceByCaptureTs.removeValue(forKey: key)
+            }
+        }
+        hevcHandoffTraceLock.unlock()
+
         // Zero-copy: pass CVPixelBuffer directly to Metal via IOSurface
         metalRenderer.updateFrameFromPixelBuffer(pixelBuffer, captureTimestampUs: header.tsUs)
+        let enqueueDoneUs = keydrdHostTimeUs()
+        hevcHandoffLogCount += 1
+        let enqueueMs = Double(Int64(enqueueDoneUs) - Int64(enqueueStartUs)) / 1_000.0
+        let decodeMsLabel = decodeMs.map { String(format: "%.2f", $0) } ?? "n/a"
+        if enqueueMs >= 4.0 || hevcHandoffLogCount <= 10 || hevcHandoffLogCount % 240 == 0 {
+            print("[CONSOLE] SessionManager: hevc-handoff enqueue seq=\(header.seq) source=\(source) state=\(state.rawValue) transport=\(currentTransport.rawValue) decodeToEnqueue=\(String(format: "%.2f", Double(Int64(enqueueStartUs) - Int64(decodeDoneUs)) / 1_000.0))ms enqueueCost=\(String(format: "%.2f", enqueueMs))ms decodeMs=\(decodeMsLabel)")
+        }
 
         if let decodeMs {
             if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
@@ -763,6 +849,45 @@ final class SessionManager {
                 self.reconnectAttempt = 0
                 self.hudViewModel.show()
             }
+        }
+    }
+
+    private func logHEVCHandoffDequeue(captureTsUs: UInt64,
+                                       enqueuedAtUs: UInt64,
+                                       dequeuedAtUs: UInt64,
+                                       queueDelayMs: Double,
+                                       pendingBefore: Int,
+                                       pendingAfter: Int,
+                                       mode: String) {
+        hevcHandoffTraceLock.lock()
+        guard let trace = hevcHandoffTraceByCaptureTs[captureTsUs] else {
+            hevcHandoffTraceLock.unlock()
+            return
+        }
+        hevcHandoffTraceLock.unlock()
+        let submitToDequeueMs = Double(Int64(dequeuedAtUs) - Int64(trace.decodeSubmitUs)) / 1_000.0
+        let decodeToDequeueMs = Double(Int64(dequeuedAtUs) - Int64(trace.decodeDoneUs)) / 1_000.0
+        if queueDelayMs >= 20.0 || pendingBefore >= 4 || trace.seq % 240 == 0 {
+            print("[CONSOLE] SessionManager: hevc-handoff dequeue seq=\(trace.seq) source=\(trace.source) mode=\(mode) state=\(state.rawValue) stateAtDecode=\(trace.stateAtDecode) transport=\(trace.transport) pending=\(pendingBefore)->\(pendingAfter) queueDelay=\(String(format: "%.2f", queueDelayMs))ms decodeToDequeue=\(String(format: "%.2f", decodeToDequeueMs))ms submitToDequeue=\(String(format: "%.2f", submitToDequeueMs))ms")
+        }
+    }
+
+    private func logHEVCHandoffPresent(captureTsUs: UInt64,
+                                       completionUs: UInt64,
+                                       queueDelayMs: Double,
+                                       gpuRoundtripMs: Double,
+                                       mode: String) {
+        hevcHandoffTraceLock.lock()
+        guard let trace = hevcHandoffTraceByCaptureTs.removeValue(forKey: captureTsUs) else {
+            hevcHandoffTraceLock.unlock()
+            return
+        }
+        hevcHandoffTraceLock.unlock()
+        let submitToPresentMs = Double(Int64(completionUs) - Int64(trace.decodeSubmitUs)) / 1_000.0
+        let decodeToPresentMs = Double(Int64(completionUs) - Int64(trace.decodeDoneUs)) / 1_000.0
+        let enqueueToPresentMs = Double(Int64(completionUs) - Int64(trace.enqueueUs)) / 1_000.0
+        if submitToPresentMs >= 40.0 || queueDelayMs >= 20.0 || trace.seq % 240 == 0 {
+            print("[CONSOLE] SessionManager: hevc-handoff present seq=\(trace.seq) source=\(trace.source) mode=\(mode) state=\(state.rawValue) submitToPresent=\(String(format: "%.2f", submitToPresentMs))ms decodeToPresent=\(String(format: "%.2f", decodeToPresentMs))ms enqueueToPresent=\(String(format: "%.2f", enqueueToPresentMs))ms queueDelay=\(String(format: "%.2f", queueDelayMs))ms gpuRoundtrip=\(String(format: "%.2f", gpuRoundtripMs))ms")
         }
     }
 

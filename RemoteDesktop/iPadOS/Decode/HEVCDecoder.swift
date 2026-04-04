@@ -16,7 +16,8 @@ final class HEVCDecoder {
     private static let asyncWaitBudgetMs: Double = 4.0
 
     /// Callback invoked when a frame is decoded asynchronously after decode() returned.
-    var onDecodedFrame: ((CVPixelBuffer, MediaFrameHeader, Int) -> Void)?
+    /// Parameters: pixelBuffer, header, payloadLength, decodeSubmitUs, callbackUs
+    var onDecodedFrame: ((CVPixelBuffer, MediaFrameHeader, Int, UInt64, UInt64) -> Void)?
 
     private var decompressionSession: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
@@ -40,6 +41,8 @@ final class HEVCDecoder {
     private var decodeLogCount = 0
     private var deferredDecodeLogCount = 0
     private var asyncLateFrameLogCount = 0
+    private var decodeSubmitLogCount = 0
+    private var decodeCallbackLogCount = 0
 
     enum DecodeResult {
         case decoded(CVPixelBuffer)
@@ -171,6 +174,10 @@ final class HEVCDecoder {
         let decodeState = DecodeInvocationState()
         var flagsOut: VTDecodeInfoFlags = []
         let callbackSignal = DispatchSemaphore(value: 0)
+        decodeSubmitLogCount += 1
+        if decodeSubmitLogCount <= 10 || decodeSubmitLogCount % 240 == 0 || header.isKeyframe {
+            print("[CONSOLE] HEVCDecoder: decode-submit seq=\(header.seq) key=\(header.isKeyframe) payload=\(payloadLength)B sessionReady=true")
+        }
 
         status = VTDecompressionSessionDecodeFrame(
             session,
@@ -179,18 +186,28 @@ final class HEVCDecoder {
             infoFlagsOut: &flagsOut,
             outputHandler: { [weak self] decodeStatus, _, imageBuffer, _, _ in
                 guard let self = self else { return }
+                let callbackUs = keydrdHostTimeUs()
+                let callbackElapsedMs = Double(Int64(callbackUs) - Int64(decodeStartUs)) / 1_000.0
                 if decodeStatus == noErr, let buf = imageBuffer {
                     let didReturn = decodeState.storePixelBuffer(buf)
+                    self.decodeCallbackLogCount += 1
+                    if self.decodeCallbackLogCount <= 10 || self.decodeCallbackLogCount % 240 == 0 || callbackElapsedMs >= 8.0 {
+                        print("[CONSOLE] HEVCDecoder: decode-callback seq=\(header.seq) status=success didReturn=\(didReturn) callbackMs=\(String(format: "%.2f", callbackElapsedMs)) payload=\(payloadLength)B")
+                    }
                     if didReturn {
-                        let lateMs = Double(Int64(keydrdHostTimeUs()) - Int64(decodeStartUs)) / 1_000.0
+                        let lateMs = Double(Int64(callbackUs) - Int64(decodeStartUs)) / 1_000.0
                         if lateMs >= 12.0 || self.asyncLateFrameLogCount < 8 || Int(header.seq) % 240 == 0 {
                             print("[CONSOLE] HEVCDecoder: async-output seq=\(header.seq) payload=\(payloadLength)B lateMs=\(String(format: "%.2f", lateMs)) transportPath=shared")
                             self.asyncLateFrameLogCount += 1
                         }
-                        self.onDecodedFrame?(buf, header, payloadLength)
+                        self.onDecodedFrame?(buf, header, payloadLength, decodeStartUs, callbackUs)
                     }
                 } else {
                     os_log(.error, log: Self.log, "Decode frame error: %d", decodeStatus)
+                    self.decodeCallbackLogCount += 1
+                    if self.decodeCallbackLogCount <= 10 || self.decodeCallbackLogCount % 120 == 0 || callbackElapsedMs >= 8.0 {
+                        print("[CONSOLE] HEVCDecoder: decode-callback seq=\(header.seq) status=error code=\(decodeStatus) callbackMs=\(String(format: "%.2f", callbackElapsedMs)) payload=\(payloadLength)B")
+                    }
                 }
                 callbackSignal.signal()
             }
