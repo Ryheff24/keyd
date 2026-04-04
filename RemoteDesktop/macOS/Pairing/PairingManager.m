@@ -824,7 +824,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
         (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecValueData: data,
-
+        (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
     SecItemAdd((__bridge CFDictionaryRef)query, NULL);

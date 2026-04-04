@@ -148,6 +148,15 @@ struct HUDView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            // Reset Pairing button — clears credentials, returns to QR scanner
+            Button(role: .destructive) {
+                viewModel.resetPairing()
+            } label: {
+                Label("Reset Pairing", systemImage: "qrcode")
+                    .font(.system(.callout))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             // Disconnect button (destructive)
             Button(role: .destructive) {
                 viewModel.disconnect()

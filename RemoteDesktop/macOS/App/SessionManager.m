@@ -342,7 +342,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _usbTransport.tlsIdentity = _pairing.tlsIdentity;
     _wirelessTransport.tlsIdentity = _pairing.tlsIdentity;
 
-    if (_pairing.isPaired) {
+    if (_testMode) {
+        /* Test mode always re-pairs: iPad auto-pair needs the pairing listener. */
+        os_log(sLog, "Test mode -- forcing fresh pairing");
+        [_pairing resetPairing];
+        [self transitionTo:SESSION_AWAITING_PAIRING];
+    } else if (_pairing.isPaired) {
         os_log(sLog, "Already paired -- proceeding to connect");
         [_qrWindow close];
         _qrWindow = nil;

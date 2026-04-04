@@ -190,16 +190,22 @@ sleep 1
 security delete-certificate -c "keydrd-agent" 2>/dev/null || true
 security delete-identity -c "keydrd-agent" 2>/dev/null || true
 
-# Generate fresh TLS identity (PKCS12) for pairing handshake
+# Reuse existing TLS identity if available (preserves pairing across rebuilds).
 CERT_DIR="/tmp/keydrd-tls"
 mkdir -p "$CERT_DIR"
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-  -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
-  -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
-openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
-  -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd -legacy 2>/dev/null
-rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
-echo "TLS identity generated"
+chmod 700 "$CERT_DIR"
+if [ ! -f "$CERT_DIR/identity.p12" ]; then
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
+    -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
+  openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
+    -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd -legacy 2>/dev/null
+  chmod 600 "$CERT_DIR/identity.p12"
+  rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
+  echo "TLS identity generated (new)"
+else
+  echo "TLS identity reused (existing)"
+fi
 echo ""
 
 # ---- Step 4: Launch Mac agent ----

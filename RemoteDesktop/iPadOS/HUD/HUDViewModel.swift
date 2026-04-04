@@ -56,6 +56,9 @@ final class HUDViewModel {
     /// Called when user requests resolution match. SessionManager sets this.
     var onResolutionMatch: (() -> Void)?
 
+    /// Called when user requests pairing reset. SessionManager sets this.
+    var onResetPairing: (() -> Void)?
+
     // MARK: - Private
 
     private static let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "HUD")
@@ -144,6 +147,11 @@ final class HUDViewModel {
     func requestResolutionMatch() {
         onResolutionMatch?()
         resetAutoHideTimer()
+    }
+
+    /// Request pairing reset — clears credentials and returns to QR scanner.
+    func resetPairing() {
+        onResetPairing?()
     }
 
     /// Flash the transport color when the transport changes.

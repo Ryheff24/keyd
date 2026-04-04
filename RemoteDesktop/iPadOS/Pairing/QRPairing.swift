@@ -1064,6 +1064,7 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             kSecAttrService: keychainService,
             kSecAttrAccount: account,
             kSecValueData: data,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)

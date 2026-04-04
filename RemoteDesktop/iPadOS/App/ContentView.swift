@@ -62,6 +62,20 @@ struct ContentView: View {
                         Text("Connecting...")
                             .font(.headline)
                             .foregroundStyle(.white)
+                        Button {
+                            sessionManager.resetPairingAndShowQR()
+                        } label: {
+                            Text("Reset Pairing")
+                                .font(.callout.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Capsule()
+                                        .fill(.ultraThinMaterial)
+                                )
+                        }
+                        .padding(.top, 8)
                     }
                 }
 

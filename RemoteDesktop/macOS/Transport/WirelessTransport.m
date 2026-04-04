@@ -150,14 +150,12 @@ static const char *kInputPortStr = "14568";
 - (nw_parameters_t)createSecureTCPParameters {
     __weak WirelessTransport *weakSelf = self;
     SecIdentityRef identity = _tlsIdentity;
-    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
-    BOOL requirePeerAuth = (storedFingerprint.length == CC_SHA256_DIGEST_LENGTH);
 
     nw_parameters_t tcpParams = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t tls_options) {
             sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(tls_options);
             sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
-            sec_protocol_options_set_peer_authentication_required(sec, requirePeerAuth);
+            sec_protocol_options_set_peer_authentication_required(sec, true);
 
             if (identity) {
                 sec_identity_t secIdentity = sec_identity_create(identity);
@@ -165,7 +163,7 @@ static const char *kInputPortStr = "14568";
                     sec_protocol_options_set_local_identity(sec, secIdentity);
                 }
             }
-            /* Accept self-signed certs; pin only if fingerprint stored */
+            /* Reject unknown peers; pin if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
                   sec_protocol_verify_complete_t complete) {
@@ -179,7 +177,7 @@ static const char *kInputPortStr = "14568";
                         BOOL trusted = [self2 verifyPeerCertificate:trust];
                         complete(trusted);
                     } else {
-                        complete(true);
+                        complete(false);
                     }
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
@@ -194,14 +192,12 @@ static const char *kInputPortStr = "14568";
 - (nw_parameters_t)createSecureUDPParameters {
     __weak WirelessTransport *weakSelf = self;
     SecIdentityRef identity = _tlsIdentity;
-    NSData *storedFingerprint = [self loadStoredPeerFingerprint];
-    BOOL requirePeerAuth = (storedFingerprint.length == CC_SHA256_DIGEST_LENGTH);
 
     nw_parameters_t udpParams = nw_parameters_create_secure_udp(
         ^(nw_protocol_options_t dtls_options) {
             sec_protocol_options_t sec = nw_tls_copy_sec_protocol_options(dtls_options);
             sec_protocol_options_set_min_tls_protocol_version(sec, tls_protocol_version_TLSv13);
-            sec_protocol_options_set_peer_authentication_required(sec, requirePeerAuth);
+            sec_protocol_options_set_peer_authentication_required(sec, true);
 
             if (identity) {
                 sec_identity_t secIdentity = sec_identity_create(identity);
@@ -210,7 +206,7 @@ static const char *kInputPortStr = "14568";
                 }
             }
 
-            /* Accept self-signed certs; pin only if fingerprint stored */
+            /* Reject unknown peers; pin if fingerprint stored */
             sec_protocol_options_set_verify_block(sec,
                 ^(sec_protocol_metadata_t metadata, sec_trust_t trust,
                   sec_protocol_verify_complete_t complete) {
@@ -224,7 +220,7 @@ static const char *kInputPortStr = "14568";
                         BOOL trusted = [self2 verifyPeerCertificate:trust];
                         complete(trusted);
                     } else {
-                        complete(true);
+                        complete(false);
                     }
                 },
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));

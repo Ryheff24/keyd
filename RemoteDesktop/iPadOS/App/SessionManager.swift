@@ -26,6 +26,11 @@ final class SessionManager {
         didSet {
             print("[CONSOLE] SessionManager state: \(oldValue.rawValue) -> \(state.rawValue)")
             Self.log.info("[SessionManager] state changed: \(oldValue.rawValue) -> \(self.state.rawValue)")
+            // Cancel connecting timeout once we leave .connecting
+            if oldValue == .connecting && state != .connecting {
+                connectingTimeoutTimer?.invalidate()
+                connectingTimeoutTimer = nil
+            }
             testRunner?.noteSessionStateChanged(old: oldValue, new: state)
         }
     }
@@ -73,6 +78,8 @@ final class SessionManager {
     private var reconnectTimer: Timer?
     private static let maxReconnectDelay: TimeInterval = 2.0
     private static let baseReconnectDelay: TimeInterval = 0.25
+    private var connectingTimeoutTimer: Timer?
+    private static let connectingTimeout: TimeInterval = 8.0
 
     // MARK: - Test Mode
 
@@ -108,12 +115,7 @@ final class SessionManager {
     /// Start the session. Check pairing state and begin monitoring transports.
     func start() {
         Self.log.info("[SessionManager] start() called, current state=\(self.state.rawValue)")
-
-        // Mac regenerates TLS identity on every dev launch (avoids keychain ACL
-        // issues from code-signature changes). Clear iPad side too so both start
-        // fresh — auto-reconnect across Mac relaunches isn't possible anyway.
-        qrPairing.resetPairing()
-        print("[CONSOLE] start(): cleared stale pairing (Mac regenerates TLS identity each launch)")
+        print("[CONSOLE] start(): isPaired=\(qrPairing.isPaired)")
 
         // Set up HUD callbacks
         hudViewModel.onEcoModeChanged = { [weak self] isEco in
@@ -125,10 +127,14 @@ final class SessionManager {
         hudViewModel.onResolutionMatch = { [weak self] in
             self?.requestResolutionMatch()
         }
+        hudViewModel.onResetPairing = { [weak self] in
+            self?.resetPairingAndShowQR()
+        }
 
-        // Test mode: skip QR camera, auto-pair via Bonjour discovery
+        // Test mode: always fresh pair (Mac resets pairing in test mode too)
         if isTestMode {
-            print("[CONSOLE] start(): TEST MODE -- skipping QR, starting auto-pair via Bonjour")
+            qrPairing.resetPairing()
+            print("[CONSOLE] start(): TEST MODE -- cleared pairing, starting auto-pair via Bonjour")
             testRunner?.runAllTests()
             state = .awaitingPairing
             qrPairing.autoPairViaBonjourForTestMode(testRunner: testRunner) { [weak self] in
@@ -138,11 +144,18 @@ final class SessionManager {
             return
         }
 
-        // Check if already paired
+        // Check if already paired (persisted from previous session)
         if qrPairing.isPaired {
             Self.log.info("[SessionManager] start(): already paired -- setting state to .connecting and starting transport monitoring")
+            print("[CONSOLE] start(): restoring pairing, pairedHost=\(qrPairing.pairedHost ?? "nil")")
+            if let macHost = qrPairing.pairedHost {
+                usbTransport.setPeerAddress(macHost)
+            }
             state = .connecting
             startTransportMonitoring()
+            // If Mac's cert changed or pairing is stale, we'll never connect.
+            // Fall back to QR after timeout.
+            startConnectingTimeout()
         } else {
             Self.log.info("[SessionManager] start(): not paired -- setting state to .awaitingPairing (QR scanner should appear)")
             state = .awaitingPairing
@@ -180,6 +193,7 @@ final class SessionManager {
     /// Resume session after app returns to foreground.
     func resumeFromBackground() {
         Self.log.info("[SessionManager] resumeFromBackground() called, state=\(self.state.rawValue), isPaired=\(self.qrPairing.isPaired)")
+        print("[CONSOLE] resumeFromBackground: state=\(state.rawValue), usb=\(usbTransport.isConnected), wifi=\(wirelessTransport.isConnected)")
 
         guard qrPairing.isPaired else {
             Self.log.info("[SessionManager] resumeFromBackground(): not paired, returning early")
@@ -192,8 +206,23 @@ final class SessionManager {
             reconnectAttempt = 0
             startTransportMonitoring()
         case .streaming:
-            // Already streaming, nothing to do
-            break
+            // App was suspended — transports may have died while we weren't running.
+            // Check if any transport is still alive; if not, trigger reconnect.
+            if !usbTransport.isConnected && !wirelessTransport.isConnected {
+                print("[CONSOLE] resumeFromBackground: transports dead while backgrounded, reconnecting")
+                Self.log.info("Transports lost while backgrounded — reconnecting")
+                state = .reconnecting
+                reconnectAttempt = 0
+                startTransportMonitoring()
+            } else {
+                // Transport still alive — restart timers that were invalidated on background
+                startFPSUpdateTimer()
+                startLatencyProbeTimer()
+            }
+        case .connecting:
+            // Already trying to connect, restart transport monitoring
+            reconnectAttempt = 0
+            startTransportMonitoring()
         default:
             break
         }
@@ -205,6 +234,40 @@ final class SessionManager {
         fpsUpdateTimer?.invalidate()
         latencyProbeTimer?.invalidate()
         reconnectTimer?.invalidate()
+        connectingTimeoutTimer?.invalidate()
+    }
+
+    /// Reset pairing credentials and return to QR scanner.
+    func resetPairingAndShowQR() {
+        print("[CONSOLE] resetPairingAndShowQR: clearing pairing and returning to QR")
+        Self.log.info("User requested pairing reset")
+        reconnectTimer?.invalidate()
+        fpsUpdateTimer?.invalidate()
+        latencyProbeTimer?.invalidate()
+        connectingTimeoutTimer?.invalidate()
+        usbTransport.stopMonitoring()
+        wirelessTransport.stopBrowsing()
+        metalRenderer.stop()
+        qrPairing.resetPairing()
+        let transition = TransportFSM.transition(from: currentTransport, on: .disconnected)
+        currentTransport = transition.state
+        state = .awaitingPairing
+    }
+
+    /// Start a timeout for the .connecting state.
+    /// If we don't reach streaming within the timeout, the persisted pairing is stale
+    /// (e.g. Mac regenerated its TLS cert). Clear pairing and fall back to QR.
+    private func startConnectingTimeout() {
+        connectingTimeoutTimer?.invalidate()
+        connectingTimeoutTimer = Timer.scheduledTimer(withTimeInterval: Self.connectingTimeout, repeats: false) { [weak self] _ in
+            guard let self = self, self.state == .connecting else { return }
+            print("[CONSOLE] Connecting timeout -- pairing likely stale, falling back to QR")
+            Self.log.info("Connecting timeout expired -- resetting stale pairing")
+            self.usbTransport.stopMonitoring()
+            self.wirelessTransport.stopBrowsing()
+            self.qrPairing.resetPairing()
+            self.state = .awaitingPairing
+        }
     }
 
     /// Disconnect and clean up the session.

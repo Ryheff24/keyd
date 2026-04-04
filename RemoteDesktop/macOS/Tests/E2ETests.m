@@ -1029,4 +1029,119 @@ static void e2eReceiveMin(nw_connection_t conn, size_t minLen, size_t maxLen,
     CFRelease(surface);
 }
 
+#pragma mark - Security: Identity File Permissions (C3)
+
+/// Verify /tmp/keydrd-tls/identity.p12 has restrictive permissions (not world-readable).
+/// Catches C3: TLS identity stored in world-readable /tmp with hardcoded password.
+- (void)testIdentityFilePermissions {
+    NSString *identityDir = @"/tmp/keydrd-tls";
+    NSString *identityFile = @"/tmp/keydrd-tls/identity.p12";
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    /* Check if the identity file exists */
+    if (![fm fileExistsAtPath:identityFile]) {
+        /* File doesn't exist — may not have been generated yet.
+         * This is not a vulnerability per se, but note it. */
+        NSLog(@"sec-identity-file-permissions: identity.p12 not found at %@", identityFile);
+        /* Pass: no file = no exposure */
+        return;
+    }
+
+    /* Check directory permissions */
+    NSError *dirError = nil;
+    NSDictionary *dirAttrs = [fm attributesOfItemAtPath:identityDir error:&dirError];
+    XCTAssertNil(dirError, @"Failed to read directory attributes: %@", dirError);
+
+    if (dirAttrs) {
+        NSUInteger dirPerms = [dirAttrs filePosixPermissions];
+        /* Directory should be 0700 (owner-only) */
+        XCTAssertEqual(dirPerms & 0077, 0,
+                       @"VULNERABLE (C3): /tmp/keydrd-tls/ has group/other permissions: %lo (expected 0700)",
+                       (unsigned long)dirPerms);
+        NSLog(@"sec-identity-file-permissions: directory permissions = %lo", (unsigned long)dirPerms);
+    }
+
+    /* Check file permissions */
+    NSError *fileError = nil;
+    NSDictionary *fileAttrs = [fm attributesOfItemAtPath:identityFile error:&fileError];
+    XCTAssertNil(fileError, @"Failed to read file attributes: %@", fileError);
+
+    if (fileAttrs) {
+        NSUInteger filePerms = [fileAttrs filePosixPermissions];
+        /* File should be 0600 (owner-only read/write) */
+        XCTAssertEqual(filePerms & 0077, 0,
+                       @"VULNERABLE (C3): identity.p12 has group/other permissions: %lo (expected 0600)",
+                       (unsigned long)filePerms);
+        NSLog(@"sec-identity-file-permissions: file permissions = %lo", (unsigned long)filePerms);
+
+        /* Also check file owner matches current user */
+        NSString *fileOwner = fileAttrs[NSFileOwnerAccountName];
+        NSString *currentUser = NSUserName();
+        XCTAssertEqualObjects(fileOwner, currentUser,
+                              @"identity.p12 owned by %@ (expected %@)", fileOwner, currentUser);
+    }
+}
+
+#pragma mark - Security: Keychain Access Controls (H1)
+
+/// Verify keychain items use kSecAttrAccessibleWhenUnlockedThisDeviceOnly.
+/// Catches H1: No Keychain access controls on stored secrets.
+- (void)testKeychainAccessControls {
+    NSString *service = @"com.ryheff.keyd.remote.agent";
+    NSArray *accounts = @[
+        @"tls-identity-p12",
+        @"tls-cert-der",
+        @"tls-private-key",
+        @"peer-fingerprint",
+        @"shared-secret",
+    ];
+
+    NSMutableArray *issues = [NSMutableArray array];
+    int itemsFound = 0;
+
+    for (NSString *account in accounts) {
+        NSDictionary *query = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrService: service,
+            (__bridge id)kSecAttrAccount: account,
+            (__bridge id)kSecReturnAttributes: @YES,
+        };
+
+        CFTypeRef result = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+
+        if (status == errSecSuccess && result) {
+            itemsFound++;
+            NSDictionary *attrs = (__bridge_transfer NSDictionary *)result;
+
+            id accessible = attrs[(__bridge id)kSecAttrAccessible];
+            if (accessible) {
+                /* Check it matches WhenUnlockedThisDeviceOnly */
+                if (![accessible isEqual:(__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly]) {
+                    [issues addObject:[NSString stringWithFormat:
+                        @"%@: accessible=%@ (expected WhenUnlockedThisDeviceOnly)", account, accessible]];
+                }
+            } else {
+                [issues addObject:[NSString stringWithFormat:
+                    @"%@: no kSecAttrAccessible set (H1 vulnerability)", account]];
+            }
+
+            NSLog(@"sec-keychain-access-control: %@ found, accessible=%@", account, accessible ?: @"(nil)");
+        } else if (status == errSecItemNotFound) {
+            NSLog(@"sec-keychain-access-control: %@ not found in keychain", account);
+        } else {
+            [issues addObject:[NSString stringWithFormat:
+                @"%@: keychain query error %d", account, (int)status]];
+            if (result) CFRelease(result);
+        }
+    }
+
+    if (itemsFound > 0 && issues.count > 0) {
+        XCTFail(@"VULNERABLE (H1): %@", [issues componentsJoinedByString:@"; "]);
+    } else if (itemsFound == 0) {
+        NSLog(@"sec-keychain-access-control: no keychain items found to audit — agent may not have paired yet");
+    }
+    /* itemsFound > 0 && issues.count == 0 => pass */
+}
+
 @end
