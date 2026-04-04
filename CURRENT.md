@@ -1,5 +1,40 @@
 # CURRENT
 
+## Lane WiFi Iteration 24 (burst-density starvation correlation + adaptive burst guard)
+
+- Timestamp: 2026-04-04 17:30:55 EDT
+- Commands:
+  - Baseline: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: burst-density starvation correlation"`
+  - Validation: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate burst/starvation fix"`
+- Pass/Fail:
+  - Baseline: `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Validation: `[TEST] COMPLETE: 26/33 passed, 7 failed`
+- Hypothesis tested:
+  - Long-tail stutter is dominated by burst-density arrival starvation (transport->decode side), not renderer dequeue policy.
+- Instrumentation added/refined:
+  - `RemoteDesktop/iPadOS/App/SessionManager.swift`
+    - Added `frame-arrival` correlation logs with `seqDelta`, `interArrival`, `payload`, renderer pending/depth, UDP reassembly pending/ooo, and explicit `starvationSignal`.
+  - `RemoteDesktop/macOS/App/SessionManager.m`
+    - Added burst-density telemetry per 1s window: `burst[tail,severe,density]`.
+    - Added adaptive eval logging fields: `burstTail`, `burstSevere`, `burstDensity`, `maxFrameKB`, `avgFrameKB`.
+- Evidence-backed root cause:
+  - iPad starvation windows now show repeated `starvationSignal=true` with no queue buildup:
+    - `interArrival=83.67ms`, `109.27ms`, `151.31ms` while `rendererDepth=0` and `reasmPending=0`, `seqDelta=1`.
+  - Mac simultaneously reports bursty frame density spikes:
+    - `max=424KB`, `burstDensity=49.35x`, `burst[tail=1 severe=1]`, with adaptive `tailRisk=yes` triggers.
+  - This confirms source burstiness / sparse delivery windows starving render input (not packet loss/reassembly backlog).
+- Behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Fed burst-density signals into adaptive WiFi controller (`tailRiskCongestion` + stronger burst-aware bitrate downshift steps).
+- Metric deltas (validation vs baseline):
+  - heavy-load: `fps 57.5 -> 59.7`, `pipe avg/p95 54/149ms -> 48/103ms` (improved)
+  - video-playback: `fps 56.5 -> 59.8`, `maxGap 250ms -> 142ms` (improved)
+  - sustained-stream: `fps avg/1%low 54.7/6.0 -> 56.8/10.0`, `jitter 27.9ms -> 18.2ms`, `pipe med/avg/p95 37/63/170ms -> 32/44/105ms`, `glass med/avg/p95 60/89/200ms -> 56/69/131ms` (improved, still failing)
+  - fps test: `avg 55.4 -> 57.0`, `jitter 27.0ms -> 20.7ms`, but `maxGap 283ms -> 417ms` (regression tail remains)
+- Outcome:
+  - Improving but not done; objective not achieved yet (FPS and long-tail thresholds still failing).
+- Next immediate hypothesis:
+  - Add burst-window shaping at the send scheduler surface (per-frame pacing budget tied to measured burst density) so oversized frames cannot create 80-150ms inter-arrival starvation gaps downstream.
+
 ## Lane WiFi Iteration 23 (renderer dequeue/catchup policy probe, reverted)
 
 - Timestamp: 2026-04-04 17:14:51 EDT
