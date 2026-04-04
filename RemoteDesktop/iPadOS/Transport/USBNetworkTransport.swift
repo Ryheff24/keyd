@@ -46,6 +46,10 @@ final class USBNetworkTransport {
     private var tcpBuffer = Data()
     /// Read cursor into tcpBuffer to avoid O(n) front-removal on every frame.
     private var tcpBufferReadOffset = 0
+    private var tcpDrainInvocationCount = 0
+    private var tcpCompactionCount = 0
+    private var tcpMessagesDelivered = 0
+    private static let tcpCompactionMinConsumedBytes = 2 << 20
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
@@ -692,7 +696,14 @@ final class USBNetworkTransport {
             guard let self = self else { return }
 
             if let data = content, !data.isEmpty {
+                let beforeCount = self.tcpBuffer.count
+                self.tcpBuffer.reserveCapacity(beforeCount + data.count + (256 << 10))
                 self.tcpBuffer.append(data)
+                let afterCount = self.tcpBuffer.count
+                if beforeCount == 0 || afterCount >= (2 << 20) || afterCount % (1 << 20) < data.count {
+                    print("[CONSOLE] USBTransport: tcp-recv append=\(data.count)B buffer=\(afterCount)B readOffset=\(self.tcpBufferReadOffset)")
+                    self.log.info("USB TCP recv append=\(data.count, privacy: .public)B buffer=\(afterCount, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
+                }
                 self.drainUSBTCPBuffer()
             }
 
@@ -703,6 +714,12 @@ final class USBNetworkTransport {
 
     /// Extract complete length-prefixed messages from the USB TCP reassembly buffer.
     private func drainUSBTCPBuffer() {
+        tcpDrainInvocationCount += 1
+        let drainStart = CFAbsoluteTimeGetCurrent()
+        let startBufferCount = tcpBuffer.count
+        let startReadOffset = tcpBufferReadOffset
+        var deliveredThisDrain = 0
+
         while (tcpBuffer.count - tcpBufferReadOffset) >= 4 {
             let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
                 guard let base = buf.baseAddress else { return 0 }
@@ -713,25 +730,51 @@ final class USBNetworkTransport {
 
             guard msgLen > 0, msgLen < 4_000_000 else {
                 print("[CONSOLE] USBTransport: invalid TCP frame length \(msgLen), clearing buffer")
+                self.log.error("USB TCP drain invalid-length msgLen=\(msgLen, privacy: .public) clearing buffer=\(self.tcpBuffer.count, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
                 tcpBuffer.removeAll()
                 tcpBufferReadOffset = 0
                 return
             }
 
-            guard (tcpBuffer.count - tcpBufferReadOffset) >= 4 + msgLen else { return }
+            guard (tcpBuffer.count - tcpBufferReadOffset) >= 4 + msgLen else {
+                let available = tcpBuffer.count - tcpBufferReadOffset
+                if available >= (1 << 20) {
+                    print("[CONSOLE] USBTransport: tcp-drain partial msgLen=\(msgLen) available=\(available)B buffer=\(tcpBuffer.count)B")
+                    self.log.info("USB TCP drain partial msgLen=\(msgLen, privacy: .public) available=\(available, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B")
+                }
+                break
+            }
 
             let msgStart = tcpBufferReadOffset + 4
             let msgEnd = msgStart + msgLen
             let message = tcpBuffer.subdata(in: msgStart..<msgEnd)
             tcpBufferReadOffset = msgEnd
+            deliveredThisDrain += 1
+            tcpMessagesDelivered += 1
             onInputReceived?(message)
         }
 
-        // Compact occasionally to keep memory bounded while avoiding repeated memmove cost.
-        if tcpBufferReadOffset > 0 &&
-            (tcpBufferReadOffset >= (1 << 20) || tcpBufferReadOffset >= (tcpBuffer.count / 2)) {
+        // Compact only when consumed bytes dominate unread bytes to avoid frequent O(n) memmove churn.
+        let consumedBytes = tcpBufferReadOffset
+        let unreadBytes = tcpBuffer.count - tcpBufferReadOffset
+        if consumedBytes >= Self.tcpCompactionMinConsumedBytes &&
+            (unreadBytes == 0 || consumedBytes >= (unreadBytes * 3)) {
+            let compactStart = CFAbsoluteTimeGetCurrent()
             tcpBuffer.removeSubrange(0..<tcpBufferReadOffset)
             tcpBufferReadOffset = 0
+            tcpCompactionCount += 1
+            let compactElapsedMs = (CFAbsoluteTimeGetCurrent() - compactStart) * 1000.0
+            print("[CONSOLE] USBTransport: tcp-compact #\(tcpCompactionCount) consumed=\(consumedBytes)B unread=\(unreadBytes)B elapsed=\(String(format: "%.2f", compactElapsedMs))ms newBuffer=\(tcpBuffer.count)B")
+            self.log.info("USB TCP compact #\(self.tcpCompactionCount, privacy: .public) consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B elapsedMs=\(compactElapsedMs, privacy: .public) newBuffer=\(self.tcpBuffer.count, privacy: .public)B")
+        } else if consumedBytes > 0 && (consumedBytes % (2 << 20) == 0) {
+            print("[CONSOLE] USBTransport: tcp-drain hold consumed=\(consumedBytes)B unread=\(unreadBytes)B buffer=\(tcpBuffer.count)B")
+            self.log.info("USB TCP drain hold consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B")
+        }
+
+        let drainElapsedMs = (CFAbsoluteTimeGetCurrent() - drainStart) * 1000.0
+        if deliveredThisDrain > 0 && (drainElapsedMs > 4.0 || deliveredThisDrain >= 8 || tcpDrainInvocationCount <= 8) {
+            print("[CONSOLE] USBTransport: tcp-drain delivered=\(deliveredThisDrain) elapsed=\(String(format: "%.2f", drainElapsedMs))ms start=\(startBufferCount)B/\(startReadOffset) end=\(tcpBuffer.count)B/\(tcpBufferReadOffset) totalMsgs=\(tcpMessagesDelivered)")
+            self.log.info("USB TCP drain delivered=\(deliveredThisDrain, privacy: .public) elapsedMs=\(drainElapsedMs, privacy: .public) startBuf=\(startBufferCount, privacy: .public)B startOffset=\(startReadOffset, privacy: .public) endBuf=\(self.tcpBuffer.count, privacy: .public)B endOffset=\(self.tcpBufferReadOffset, privacy: .public) totalMsgs=\(self.tcpMessagesDelivered, privacy: .public)")
         }
     }
 

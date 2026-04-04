@@ -696,16 +696,22 @@ final class TransportManager: ObservableObject {
     }
 
     private func startAWDLConnectionAttempt(availableNowMessage: String, unavailableMessage: String) async {
-        let canAttemptImmediately = await awdlTransport.beginAutoConnect(pairingMode: suppressAWDLStatusUntilPaired)
+        let connectResult = await awdlTransport.beginAutoConnect(pairingMode: suppressAWDLStatusUntilPaired)
 
-        if canAttemptImmediately {
+        switch connectResult {
+        case .immediate, .alreadyActive:
             fsmState = .connecting(transport: .awdl, awdlEnabled: true)
             setIdleTimerState(false)
-            logConnectionEvent(availableNowMessage)
+            logConnectionEvent("\(availableNowMessage) [result=\(String(describing: connectResult))]")
             scheduleAWDLConnectingFallback()
-        } else {
+        case .pendingReconnect(let backoff):
+            fsmState = .connecting(transport: .awdl, awdlEnabled: true)
+            setIdleTimerState(false)
+            logConnectionEvent("AWDL reconnect already scheduled [backoff=\(String(format: "%.2f", backoff))s, suppress=\(suppressAWDLStatusUntilPaired)]")
+            scheduleAWDLConnectingFallback(after: UInt64(max(backoff * 1_500_000_000, 1_000_000_000)))
+        case .waitingForDiscovery:
             handleEvent(.awdlDisconnected)
-            logConnectionEvent(unavailableMessage)
+            logConnectionEvent("\(unavailableMessage) [result=waitingForDiscovery]")
         }
     }
 

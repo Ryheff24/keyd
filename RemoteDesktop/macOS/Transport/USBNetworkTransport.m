@@ -544,14 +544,70 @@ static const char *kInputPortStr = "14568";
         });
 
         if (chunks.count > 0) {
+            uint64_t chunkBatchStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
             os_log(transport_log(),
                    "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu hevc=%{public}s",
                    frameSeq, tcpChunkMTU, (unsigned long)chunks.count,
                    isHEVC ? "yes" : "no");
-            [self _sendTCPFramedChunkAtIndex:0
-                                   fromChunks:chunks
-                                   connection:conn
-                                   completion:completion];
+
+            __block dispatch_data_t framedBatch = nil;
+            __block size_t framedBytes = 0;
+            __block BOOL buildFailed = NO;
+            [chunks enumerateObjectsUsingBlock:^(NSData * _Nonnull chunk, NSUInteger idx, BOOL * _Nonnull stop) {
+                uint32_t *lenCopy = malloc(sizeof(uint32_t));
+                if (!lenCopy) {
+                    buildFailed = YES;
+                    *stop = YES;
+                    return;
+                }
+                uint32_t netLen = htonl((uint32_t)chunk.length);
+                *lenCopy = netLen;
+                dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
+                                                               DISPATCH_DATA_DESTRUCTOR_FREE);
+                dispatch_data_t payloadData = dispatch_data_create(chunk.bytes, chunk.length,
+                                                                   _transportQueue,
+                                                                   DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+                dispatch_data_t framedChunk = dispatch_data_create_concat(lenData, payloadData);
+                framedBytes += sizeof(uint32_t) + chunk.length;
+                framedBatch = framedBatch ? dispatch_data_create_concat(framedBatch, framedChunk) : framedChunk;
+                if (idx == 0 || idx + 1 == chunks.count || ((idx + 1) % 16 == 0)) {
+                    os_log(transport_log(),
+                           "USB media chunk batch build: seq=%u chunk=%lu/%lu bytes=%zu",
+                           frameSeq, (unsigned long)(idx + 1), (unsigned long)chunks.count, chunk.length);
+                }
+            }];
+
+            if (buildFailed || !framedBatch) {
+                os_log_error(transport_log(),
+                             "USB media chunk batch build failed: seq=%u chunks=%lu",
+                             frameSeq, (unsigned long)chunks.count);
+                if (completion) completion(NO);
+                return;
+            }
+
+            uint64_t buildElapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - chunkBatchStartNs) / NSEC_PER_MSEC;
+            os_log(transport_log(),
+                   "USB media chunk batch ready: seq=%u chunks=%lu framedBytes=%zu buildElapsed=%llums",
+                   frameSeq, (unsigned long)chunks.count, framedBytes, buildElapsedMs);
+
+            /* Keep chunk NSData storage alive until send completion because payloadData
+             * references chunk.bytes with DISPATCH_DATA_DESTRUCTOR_DEFAULT. */
+            NSArray<NSData *> *chunksRetained = [chunks copy];
+            nw_connection_send(conn, framedBatch, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
+                               true, ^(nw_error_t _Nullable error) {
+                (void)chunksRetained;
+                uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
+                if (completion) completion(error == nil);
+                if (error) {
+                    os_log_error(transport_log(),
+                                 "USB media chunk batch send error: %{public}@ (seq=%u chunks=%lu elapsed=%llums)",
+                                 error, frameSeq, (unsigned long)chunks.count, elapsedMs);
+                    return;
+                }
+                os_log(transport_log(),
+                       "USB media chunk batch send success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums",
+                       frameSeq, (unsigned long)chunks.count, framedBytes, elapsedMs);
+            });
             return;
         }
     }

@@ -34,6 +34,13 @@ actor AWDLTransport {
         }
     }
 
+    enum BeginAutoConnectResult: Equatable {
+        case immediate
+        case alreadyActive
+        case pendingReconnect(backoff: TimeInterval)
+        case waitingForDiscovery
+    }
+
     private var awdlState: AWDLConnectionState = .idle
     private var browser: NWBrowser?
     private var discoveredEndpoint: NWEndpoint?
@@ -285,23 +292,37 @@ actor AWDLTransport {
         return path.status == .satisfied && path.usesInterfaceType(.wifi)
     }
 
-    func beginAutoConnect(pairingMode: Bool = false) async -> Bool {
+    func beginAutoConnect(pairingMode: Bool = false) async -> BeginAutoConnectResult {
         pairingModeEnabled = pairingMode
+
+        if hasConnection() {
+            logger.info("beginAutoConnect: already connected (state=\(String(describing: awdlState)), pairingMode=\(pairingModeEnabled))")
+            return .alreadyActive
+        }
+
+        if awdlState.isConnecting {
+            logger.info("beginAutoConnect: connection attempt already in progress (state=\(String(describing: awdlState)), pairingMode=\(pairingModeEnabled))")
+            return .alreadyActive
+        }
+
+        if case .reconnecting(let backoff) = awdlState {
+            logger.info("beginAutoConnect: reconnect already scheduled (backoff=\(backoff)s, pairingMode=\(pairingModeEnabled))")
+            return .pendingReconnect(backoff: backoff)
+        }
+
         reconnectBackoff = 0.0
         reconnectTask?.cancel()
         reconnectTask = nil
         awdlState = .browsing
 
-        if hasConnection() || awdlState.isConnecting {
-            return true
-        }
-
         guard discoveredEndpoint != nil else {
-            return false
+            logger.info("beginAutoConnect: no discovered endpoint yet (state=\(String(describing: awdlState)), pairingMode=\(pairingModeEnabled))")
+            return .waitingForDiscovery
         }
 
         await maybeConnectIfNeeded()
-        return true
+        logger.info("beginAutoConnect: connect attempt started (state=\(String(describing: awdlState)), pairingMode=\(pairingModeEnabled))")
+        return .immediate
     }
 
     /// Reset the reconnect backoff (call after successful session resume acknowledgment).

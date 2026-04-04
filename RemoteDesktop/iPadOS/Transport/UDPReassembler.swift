@@ -223,8 +223,21 @@ final class UDPReassembler {
     }
     /// Reassemble a complete frame into deliverable data.
     private func buildFrameData(seq: UInt16, pending: PendingFrame) -> Data? {
-        // Reassemble payload in chunk_idx order
-        var fullPayload = Data()
+        // Reassemble payload in chunk_idx order.
+        // Pre-size the buffer to avoid repeated append growth/copy churn.
+        var totalPayloadBytes = 0
+        for i in 0..<pending.chunkTotal {
+            guard let chunk = pending.chunks[i] else {
+                // Should not happen if isComplete is true, but guard anyway
+                print("[CONSOLE] UDPReassembler: missing chunk \(i) for seq=\(seq) during reassembly")
+                return nil
+            }
+            totalPayloadBytes += chunk.count
+        }
+
+        var fullPayload = Data(capacity: totalPayloadBytes)
+        let reassembleStart = CFAbsoluteTimeGetCurrent()
+
         for i in 0..<pending.chunkTotal {
             guard let chunk = pending.chunks[i] else {
                 // Should not happen if isComplete is true, but guard anyway
@@ -232,6 +245,12 @@ final class UDPReassembler {
                 return nil
             }
             fullPayload.append(chunk)
+        }
+
+        let reassembleElapsedMs = (CFAbsoluteTimeGetCurrent() - reassembleStart) * 1000.0
+        if reassembleElapsedMs > 2.0 || pending.chunkTotal >= 8 {
+            print("[CONSOLE] UDPReassembler: reassemble seq=\(seq) chunks=\(pending.chunkTotal) bytes=\(totalPayloadBytes) elapsed=\(String(format: "%.2f", reassembleElapsedMs))ms")
+            Self.log.info("USB/UDP reassemble seq=\(seq, privacy: .public) chunks=\(pending.chunkTotal, privacy: .public) bytes=\(totalPayloadBytes, privacy: .public) elapsedMs=\(reassembleElapsedMs, privacy: .public)")
         }
 
         // Build complete frame: reconstruct header from first chunk

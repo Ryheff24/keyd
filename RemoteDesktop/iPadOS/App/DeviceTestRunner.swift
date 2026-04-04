@@ -3253,7 +3253,7 @@ final class DeviceTestRunner {
         let glassSummary = latencyWindowSummary(window: glassWindow)
         let udpStats = sm.udpReassembler.statsSnapshot()
 
-        print("[CONSOLE] STREAM-TELEMETRY t=\(String(format: "%.1f", elapsed))s transport=\(transport) state=\(sm.state.rawValue) observed=\(observedDelta)fps rendered=\(renderedDelta)fps keyframes+\(keyframeDelta) decodeFail+\(decodeFailureDelta) renderer[overwrites+\(overwriteDelta) pending=\(rendererStats.hasPendingFrame ? 1 : 0)] pipeline=\(pipelineSummary) glass=\(glassSummary) reasm[pending=\(udpStats.pendingFrames) ooo=\(udpStats.outOfOrderBuffered) delivered=\(udpStats.framesDelivered) evicted=\(udpStats.framesEvicted) purged=\(udpStats.framesPurged) lastSeq=\(udpStats.lastDeliveredSeq)]")
+        print("[CONSOLE] STREAM-TELEMETRY t=\(String(format: "%.1f", elapsed))s transport=\(transport) state=\(sm.state.rawValue) observed=\(observedDelta)fps rendered=\(renderedDelta)fps keyframes+\(keyframeDelta) decodeFail+\(decodeFailureDelta) renderer[overwrites+\(overwriteDelta) pending=\(rendererStats.hasPendingFrame ? 1 : 0) depth=\(rendererStats.pendingDepth) catchup=\(rendererStats.adaptiveCatchupCount) catchupDrop=\(rendererStats.adaptiveCatchupDropFrames)] pipeline=\(pipelineSummary) glass=\(glassSummary) reasm[pending=\(udpStats.pendingFrames) ooo=\(udpStats.outOfOrderBuffered) delivered=\(udpStats.framesDelivered) evicted=\(udpStats.framesEvicted) purged=\(udpStats.framesPurged) lastSeq=\(udpStats.lastDeliveredSeq)]")
     }
 
     private func latencyWindowSummary(window: [Int64]) -> String {

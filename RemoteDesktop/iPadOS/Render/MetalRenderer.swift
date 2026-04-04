@@ -32,9 +32,13 @@ final class MetalRenderer: NSObject {
     struct StatsSnapshot {
         let overwrittenFrames: Int
         let hasPendingFrame: Bool
+        let pendingDepth: Int
+        let adaptiveCatchupCount: Int
+        let adaptiveCatchupDropFrames: Int
     }
 
     private static let maxPendingFrames = 3
+    private static let adaptiveQueueDelayThresholdMs = 12.0
 
     // MARK: - Properties
 
@@ -83,6 +87,8 @@ final class MetalRenderer: NSObject {
     /// blocking the main run loop.
     private var inflightSkipCount = 0
     private var renderQueueDelayLogCount = 0
+    private var adaptiveCatchupCount = 0
+    private var adaptiveCatchupDropFrames = 0
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -379,7 +385,10 @@ final class MetalRenderer: NSObject {
         defer { textureLock.unlock() }
         return StatsSnapshot(
             overwrittenFrames: overwrittenFrameCount,
-            hasPendingFrame: !pendingFrames.isEmpty
+            hasPendingFrame: !pendingFrames.isEmpty,
+            pendingDepth: pendingFrames.count,
+            adaptiveCatchupCount: adaptiveCatchupCount,
+            adaptiveCatchupDropFrames: adaptiveCatchupDropFrames
         )
     }
 
@@ -456,6 +465,7 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         // Present frames in FIFO order to preserve cadence continuity.
         // Dropping already-decoded pending frames at render tick can cause
         // visible stutter and low rendered-FPS under bursty arrivals.
+        let dequeueNowUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
         textureLock.lock()
         guard !pendingFrames.isEmpty else {
             textureLock.unlock()
@@ -463,15 +473,36 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             inflightSemaphore.signal()
             return
         }
-        let frame = pendingFrames.removeFirst()
+        let pendingBefore = pendingFrames.count
+        let oldestDelayMs = Double(dequeueNowUs &- pendingFrames[0].enqueuedAtUs) / 1000.0
+        let shouldCatchUp = pendingBefore >= Self.maxPendingFrames || oldestDelayMs >= Self.adaptiveQueueDelayThresholdMs
+
+        let frame: PendingRenderFrame
+        let dequeueMode: String
+        var droppedStaleFrames = 0
+        if shouldCatchUp && pendingBefore > 1 {
+            frame = pendingFrames.removeLast()
+            droppedStaleFrames = pendingFrames.count
+            if droppedStaleFrames > 0 {
+                pendingFrames.removeAll(keepingCapacity: true)
+                adaptiveCatchupDropFrames += droppedStaleFrames
+            }
+            adaptiveCatchupCount += 1
+            dequeueMode = pendingBefore >= Self.maxPendingFrames ? "catchup-depth" : "catchup-delay"
+        } else {
+            frame = pendingFrames.removeFirst()
+            dequeueMode = "fifo"
+        }
         let pendingAfterPop = pendingFrames.count
         textureLock.unlock()
 
-        let dequeueNowUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
         let queueDelayMs = Double(dequeueNowUs &- frame.enqueuedAtUs) / 1000.0
         renderQueueDelayLogCount += 1
-        if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= 20.0 {
-            print("[CONSOLE] MetalRenderer: render dequeue pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms captureTsUs=\(frame.captureTimestampUs)")
+        if droppedStaleFrames > 0 {
+            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms threshold=\(String(format: "%.2f", Self.adaptiveQueueDelayThresholdMs))ms droppedStale=\(droppedStaleFrames) catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames)")
+        }
+        if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= 20.0 || droppedStaleFrames > 0 {
+            print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms captureTsUs=\(frame.captureTimestampUs)")
         }
 
         // Step 6: Set pipeline state and resources
