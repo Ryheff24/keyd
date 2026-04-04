@@ -41,10 +41,10 @@ final class MetalRenderer: NSObject {
         let adaptiveHardCatchupDropFrames: Int
     }
 
-    private static let maxPendingFrames = 3
-    private static let adaptiveQueueDelayThresholdMs = 16.0
-    private static let softCatchupQueueDelayThresholdMs = 16.0
-    private static let hardCatchupQueueDelayThresholdMs = 30.0
+    private static let maxPendingFrames = 4
+    private static let adaptiveQueueDelayThresholdMs = 18.0
+    private static let softCatchupQueueDelayThresholdMs = 18.0
+    private static let hardCatchupQueueDelayThresholdMs = 36.0
 
     // MARK: - Properties
 
@@ -497,9 +497,9 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         var droppedStaleFrames = 0
         if shouldHardCatchUp && pendingBefore > 1 {
             frame = pendingFrames.removeLast()
-            droppedStaleFrames = pendingFrames.count
+            droppedStaleFrames = max(0, pendingFrames.count - 1)
             if droppedStaleFrames > 0 {
-                pendingFrames.removeAll(keepingCapacity: true)
+                pendingFrames.removeFirst(droppedStaleFrames)
                 adaptiveCatchupDropFrames += droppedStaleFrames
                 adaptiveHardCatchupDropFrames += droppedStaleFrames
             }

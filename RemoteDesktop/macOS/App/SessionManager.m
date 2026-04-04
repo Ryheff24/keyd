@@ -63,8 +63,8 @@ static const int kWirelessAdaptiveMinBitrate = 2500000; /* 2.5 Mbps floor */
 static const int kWirelessAdaptiveMaxBitrate = 6000000; /* keep bounded to limit burst size */
 static const int kWirelessAdaptiveBitrateStepDown = 500000;
 static const int kWirelessAdaptiveBitrateStepUp = 250000;
-static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 900;
-static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 1500;
+static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 700;
+static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 1800;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
 /* Keep wireless media on the established TLS/TCP stream. This removes the
@@ -1369,6 +1369,16 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
+    if (![NSThread isMainThread]) {
+        __weak SessionManager *weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            [strongSelf startWirelessPerformanceTimerIfNeeded];
+        });
+        return;
+    }
+
     if (!_testMode || _wirelessPerformanceTimer != nil) {
         return;
     }
@@ -1425,6 +1435,16 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 }
 
 - (void)stopWirelessPerformanceTimer {
+    if (![NSThread isMainThread]) {
+        __weak SessionManager *weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            [strongSelf stopWirelessPerformanceTimer];
+        });
+        return;
+    }
+
     [_wirelessPerformanceTimer invalidate];
     _wirelessPerformanceTimer = nil;
     [self resetWirelessPerformanceWindow];
@@ -1458,13 +1478,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 
     BOOL severeCongestion = (tcpSendDrops > 0) ||
                             (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi + 1) ||
-                            (tcpMaxCompletionMs >= 60) ||
-                            (preDrops >= 4);
+                            (tcpMaxCompletionMs >= 45) ||
+                            (preDrops >= 2);
     BOOL mildCongestion = !severeCongestion &&
-                          ((tcpSlowCompletions >= 2) ||
-                           (tcpMaxCompletionMs >= 30) ||
-                           (preDrops > 0) ||
-                           (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi));
+                          ((tcpSlowCompletions >= 1) ||
+                           (tcpMaxCompletionMs >= 24) ||
+                            (preDrops > 0) ||
+                            (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi));
     BOOL healthy = !severeCongestion && !mildCongestion &&
                    tcpSendDrops == 0 && queueDrops == 0 && preDrops == 0 &&
                    tcpSlowCompletions == 0 && tcpInFlightNow <= 1 && tcpMaxCompletionMs < 18;
@@ -1543,7 +1563,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     }
 
     _capture.captureFPS = (uint32_t)targetFPS;
-    if (_captureWidth > 0 && _captureHeight > 0) {
+    if (fpsChanged && _captureWidth > 0 && _captureHeight > 0) {
         [_capture updateCaptureResolution:_captureWidth height:_captureHeight];
     }
     [_hevcEncoder updateStreamingRateWithFPS:targetFPS bitrate:targetBitrate reason:reason];
