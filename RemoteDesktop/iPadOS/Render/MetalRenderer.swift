@@ -44,6 +44,8 @@ final class MetalRenderer: NSObject {
     private static let maxPendingFrames = 5
     private static let hardDepthCatchupPendingThreshold = 4
     private static let hardDepthCatchupMinQueueDelayThresholdMs = 24.0
+    private static let hardDepthCatchupDelayStreakThreshold = 2
+    private static let hardDepthCatchupCooldownTicks = 4
     private static let softCatchupQueueDelayThresholdMs = 24.0
     private static let hardCatchupQueueDelayThresholdMs = 48.0
     private static let hardCatchupExtremeQueueDelayThresholdMs = 140.0
@@ -122,11 +124,21 @@ final class MetalRenderer: NSObject {
     private var adaptiveHardCatchupDropFrames = 0
     private var softCatchupDelayStreak = 0
     private var hardCatchupDelayStreak = 0
+    private var hardDepthCatchupDelayStreak = 0
+    private var hardDepthCatchupCooldownTicksRemaining = 0
     private var renderTickCount = 0
     private var noPendingTickCount = 0
     private var commandBufferFailureCount = 0
     private var encoderFailureCount = 0
     private var presentCompletionLogCount = 0
+
+    private static func pendingDepthBand(_ depth: Int) -> String {
+        switch depth {
+        case ..<2: return "low"
+        case ..<4: return "mid"
+        default: return "high"
+        }
+    }
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -337,6 +349,11 @@ final class MetalRenderer: NSObject {
             enqueuedAtUs: UInt64(CACurrentMediaTime() * 1_000_000.0)
         ))
         let pendingAfter = pendingFrames.count
+        let pendingBandBefore = Self.pendingDepthBand(pendingBefore)
+        let pendingBandAfter = Self.pendingDepthBand(pendingAfter)
+        if pendingBandBefore != pendingBandAfter {
+            print("[CONSOLE] MetalRenderer: pending depth transition reason=enqueue from=\(pendingBefore)(\(pendingBandBefore)) to=\(pendingAfter)(\(pendingBandAfter)) captureTsUs=\(captureTimestampUs)")
+        }
         if pendingAfter >= 2 && (pendingAfter == Self.maxPendingFrames || pendingAfter % 2 == 0) {
             print("[CONSOLE] MetalRenderer: enqueue success pending=\(pendingAfter) captureTsUs=\(captureTimestampUs)")
         }
@@ -529,6 +546,9 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             return
         }
         let pendingBefore = pendingFrames.count
+        if hardDepthCatchupCooldownTicksRemaining > 0 {
+            hardDepthCatchupCooldownTicksRemaining -= 1
+        }
         let oldestDelayMs = Double(dequeueNowUs &- pendingFrames[0].enqueuedAtUs) / 1000.0
         let hardDelayTriggered = oldestDelayMs >= Self.hardCatchupQueueDelayThresholdMs
         let hardExtremeTail = oldestDelayMs >= Self.hardCatchupExtremeQueueDelayThresholdMs
@@ -537,8 +557,19 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         } else {
             hardCatchupDelayStreak = 0
         }
-        let hardDepthTriggered = pendingBefore >= Self.hardDepthCatchupPendingThreshold &&
+        let hardDepthCandidate = pendingBefore >= Self.hardDepthCatchupPendingThreshold &&
             oldestDelayMs >= Self.hardDepthCatchupMinQueueDelayThresholdMs
+        if hardDepthCandidate {
+            hardDepthCatchupDelayStreak += 1
+        } else if pendingBefore <= Self.softCatchupMinPendingDepth {
+            hardDepthCatchupDelayStreak = 0
+            hardDepthCatchupCooldownTicksRemaining = 0
+        } else if hardDepthCatchupDelayStreak > 0 {
+            hardDepthCatchupDelayStreak -= 1
+        }
+        let hardDepthTriggered = hardDepthCandidate &&
+            hardDepthCatchupDelayStreak >= Self.hardDepthCatchupDelayStreakThreshold &&
+            hardDepthCatchupCooldownTicksRemaining == 0
         let shouldHardCatchUp = hardExtremeTail || hardDepthTriggered ||
             (hardDelayTriggered && hardCatchupDelayStreak >= Self.hardCatchupDelayStreakThreshold)
         let softDelayTriggered = oldestDelayMs >= Self.softCatchupQueueDelayThresholdMs
@@ -560,7 +591,7 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             if hardExtremeTail {
                 hardKeepTarget = 2
             } else if hardDepthTriggered && !hardDelayTriggered {
-                hardKeepTarget = 3
+                hardKeepTarget = max(3, pendingFrames.count - 1)
             } else {
                 hardKeepTarget = 2
             }
@@ -575,6 +606,10 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             adaptiveHardCatchupCount += 1
             softCatchupDelayStreak = 0
             hardCatchupDelayStreak = 0
+            if hardDepthTriggered && !hardDelayTriggered && !hardExtremeTail {
+                hardDepthCatchupCooldownTicksRemaining = Self.hardDepthCatchupCooldownTicks
+                hardDepthCatchupDelayStreak = 0
+            }
             dequeueMode = hardExtremeTail
                 ? "catchup-hard-extreme"
                 : (hardDepthTriggered ? "catchup-hard-depth" : "catchup-hard-delay")
@@ -594,16 +629,22 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             dequeueMode = "fifo"
         }
         let pendingAfterPop = pendingFrames.count
+        let pendingBandBefore = Self.pendingDepthBand(pendingBefore)
+        let pendingBandAfter = Self.pendingDepthBand(pendingAfterPop)
         textureLock.unlock()
 
         let queueDelayMs = Double(dequeueNowUs &- frame.enqueuedAtUs) / 1000.0
+        let dequeueAgeDeltaMs = max(0.0, oldestDelayMs - queueDelayMs)
         let displayLeadMs = (update.targetPresentationTimestamp - CACurrentMediaTime()) * 1000.0
         renderQueueDelayLogCount += 1
+        if pendingBandBefore != pendingBandAfter || droppedStaleFrames > 0 {
+            print("[CONSOLE] MetalRenderer: pending depth transition reason=dequeue mode=\(dequeueMode) from=\(pendingBefore)(\(pendingBandBefore)) to=\(pendingAfterPop)(\(pendingBandAfter)) droppedStale=\(droppedStaleFrames) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms queueDelay=\(String(format: "%.2f", queueDelayMs))ms")
+        }
         if droppedStaleFrames > 0 {
-            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms hardDepth=\(Self.hardDepthCatchupPendingThreshold) softDepth=\(Self.softCatchupMinPendingDepth) hardDepthTriggered=\(hardDepthTriggered) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) hardKeep=\(hardKeepTarget) hardExtreme=\(hardExtremeTail) droppedStale=\(droppedStaleFrames) catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames) softCatchup=\(adaptiveSoftCatchupCount)/\(adaptiveSoftCatchupDropFrames) hardCatchup=\(adaptiveHardCatchupCount)/\(adaptiveHardCatchupDropFrames)")
+            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms hardDepth=\(Self.hardDepthCatchupPendingThreshold) softDepth=\(Self.softCatchupMinPendingDepth) hardDepthCandidate=\(hardDepthCandidate) hardDepthTriggered=\(hardDepthTriggered) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) hardKeep=\(hardKeepTarget) hardExtreme=\(hardExtremeTail) droppedStale=\(droppedStaleFrames) dequeueAgeDelta=\(String(format: "%.2f", dequeueAgeDeltaMs))ms catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames) softCatchup=\(adaptiveSoftCatchupCount)/\(adaptiveSoftCatchupDropFrames) hardCatchup=\(adaptiveHardCatchupCount)/\(adaptiveHardCatchupDropFrames)")
         }
         if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= Self.softCatchupQueueDelayThresholdMs || droppedStaleFrames > 0 || pendingBefore >= Self.hardDepthCatchupPendingThreshold {
-            print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms displayLead=\(String(format: "%.2f", displayLeadMs))ms softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthTriggered=\(hardDepthTriggered) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) captureTsUs=\(frame.captureTimestampUs)")
+            print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms dequeueAgeDelta=\(String(format: "%.2f", dequeueAgeDeltaMs))ms displayLead=\(String(format: "%.2f", displayLeadMs))ms softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthCandidate=\(hardDepthCandidate) hardDepthTriggered=\(hardDepthTriggered) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) captureTsUs=\(frame.captureTimestampUs)")
         }
         onFrameDequeuedForRender?(frame.captureTimestampUs,
                                   frame.enqueuedAtUs,

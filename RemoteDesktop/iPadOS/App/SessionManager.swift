@@ -78,8 +78,16 @@ final class SessionManager {
         let decodeMs: Double?
         let stateAtDecode: String
     }
+    private struct HEVCRenderTrace {
+        let dequeuedAtUs: UInt64
+        let queueDelayMs: Double
+        let pendingBefore: Int
+        let pendingAfter: Int
+        let mode: String
+    }
     private let hevcHandoffTraceLock = NSLock()
     private var hevcHandoffTraceByCaptureTs: [UInt64: HEVCHandoffTrace] = [:]
+    private var hevcRenderTraceByCaptureTs: [UInt64: HEVCRenderTrace] = [:]
     private let hevcHandoffQueue = DispatchQueue(label: "com.ryheff.keyd.session.hevc-handoff", qos: .userInteractive)
     private var hevcHandoffLogCount: Int = 0
 
@@ -865,10 +873,24 @@ final class SessionManager {
             return
         }
         hevcHandoffTraceLock.unlock()
+        hevcHandoffTraceLock.lock()
+        hevcRenderTraceByCaptureTs[captureTsUs] = HEVCRenderTrace(dequeuedAtUs: dequeuedAtUs,
+                                                                  queueDelayMs: queueDelayMs,
+                                                                  pendingBefore: pendingBefore,
+                                                                  pendingAfter: pendingAfter,
+                                                                  mode: mode)
+        if hevcRenderTraceByCaptureTs.count > 256 {
+            let oldestKeys = hevcRenderTraceByCaptureTs.keys.sorted().prefix(64)
+            for key in oldestKeys {
+                hevcRenderTraceByCaptureTs.removeValue(forKey: key)
+            }
+        }
+        hevcHandoffTraceLock.unlock()
         let submitToDequeueMs = Double(Int64(dequeuedAtUs) - Int64(trace.decodeSubmitUs)) / 1_000.0
         let decodeToDequeueMs = Double(Int64(dequeuedAtUs) - Int64(trace.decodeDoneUs)) / 1_000.0
         if queueDelayMs >= 20.0 || pendingBefore >= 4 || trace.seq % 240 == 0 {
-            print("[CONSOLE] SessionManager: hevc-handoff dequeue seq=\(trace.seq) source=\(trace.source) mode=\(mode) state=\(state.rawValue) stateAtDecode=\(trace.stateAtDecode) transport=\(trace.transport) pending=\(pendingBefore)->\(pendingAfter) queueDelay=\(String(format: "%.2f", queueDelayMs))ms decodeToDequeue=\(String(format: "%.2f", decodeToDequeueMs))ms submitToDequeue=\(String(format: "%.2f", submitToDequeueMs))ms")
+            let enqueueToDequeueMs = Double(Int64(dequeuedAtUs) - Int64(enqueuedAtUs)) / 1_000.0
+            print("[CONSOLE] SessionManager: hevc-handoff dequeue seq=\(trace.seq) source=\(trace.source) mode=\(mode) state=\(state.rawValue) stateAtDecode=\(trace.stateAtDecode) transport=\(trace.transport) pending=\(pendingBefore)->\(pendingAfter) queueDelay=\(String(format: "%.2f", queueDelayMs))ms enqueueToDequeue=\(String(format: "%.2f", enqueueToDequeueMs))ms decodeToDequeue=\(String(format: "%.2f", decodeToDequeueMs))ms submitToDequeue=\(String(format: "%.2f", submitToDequeueMs))ms")
         }
     }
 
@@ -882,12 +904,27 @@ final class SessionManager {
             hevcHandoffTraceLock.unlock()
             return
         }
+        let renderTrace = hevcRenderTraceByCaptureTs.removeValue(forKey: captureTsUs)
         hevcHandoffTraceLock.unlock()
         let submitToPresentMs = Double(Int64(completionUs) - Int64(trace.decodeSubmitUs)) / 1_000.0
         let decodeToPresentMs = Double(Int64(completionUs) - Int64(trace.decodeDoneUs)) / 1_000.0
         let enqueueToPresentMs = Double(Int64(completionUs) - Int64(trace.enqueueUs)) / 1_000.0
-        if submitToPresentMs >= 40.0 || queueDelayMs >= 20.0 || trace.seq % 240 == 0 {
-            print("[CONSOLE] SessionManager: hevc-handoff present seq=\(trace.seq) source=\(trace.source) mode=\(mode) state=\(state.rawValue) submitToPresent=\(String(format: "%.2f", submitToPresentMs))ms decodeToPresent=\(String(format: "%.2f", decodeToPresentMs))ms enqueueToPresent=\(String(format: "%.2f", enqueueToPresentMs))ms queueDelay=\(String(format: "%.2f", queueDelayMs))ms gpuRoundtrip=\(String(format: "%.2f", gpuRoundtripMs))ms")
+        let dequeueToPresentMs: Double
+        if let renderTrace {
+            dequeueToPresentMs = Double(Int64(completionUs) - Int64(renderTrace.dequeuedAtUs)) / 1_000.0
+        } else {
+            dequeueToPresentMs = max(0.0, submitToPresentMs - enqueueToPresentMs)
+        }
+        let postDequeuePipelineMs = max(0.0, submitToPresentMs - queueDelayMs)
+        if submitToPresentMs >= 40.0 || queueDelayMs >= 20.0 || dequeueToPresentMs >= 16.0 || trace.seq % 240 == 0 {
+            let pendingLabel: String
+            if let renderTrace {
+                pendingLabel = "\(renderTrace.pendingBefore)->\(renderTrace.pendingAfter)"
+            } else {
+                pendingLabel = "n/a"
+            }
+            let dequeueMode = renderTrace?.mode ?? mode
+            print("[CONSOLE] SessionManager: hevc-handoff present seq=\(trace.seq) source=\(trace.source) mode=\(dequeueMode) state=\(state.rawValue) pending=\(pendingLabel) submitToPresent=\(String(format: "%.2f", submitToPresentMs))ms decodeToPresent=\(String(format: "%.2f", decodeToPresentMs))ms enqueueToPresent=\(String(format: "%.2f", enqueueToPresentMs))ms dequeueToPresent=\(String(format: "%.2f", dequeueToPresentMs))ms queueDelay=\(String(format: "%.2f", queueDelayMs))ms postDequeuePipeline=\(String(format: "%.2f", postDequeuePipelineMs))ms gpuRoundtrip=\(String(format: "%.2f", gpuRoundtripMs))ms")
         }
     }
 
