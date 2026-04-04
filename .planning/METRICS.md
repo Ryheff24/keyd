@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.297` | `0.011` | `0.007` | ❌ |
+| FPS | `57.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.296` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `37 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `106 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency p95 | `107 ms` | `8 ms` | `7 ms` | ❌ |
 | Pipeline latency avg | `51 ms` | `7 ms` | `6 ms` | ❌ |
 | Glass-to-glass latency median | `69 ms` | `26 ms` | `20 ms` | ❌ |
 | Glass-to-glass latency p95 | `129 ms` | `27 ms` | `25 ms` | ❌ |
 | Glass-to-glass latency avg | `77 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `60.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `34 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `104 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load FPS | `59.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `39 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `107 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -107,3 +107,4 @@ Rules:
 | 2026-04-04 | 18:44:47 EDT | `fe616ab` | `2752x1786` | `2496x1620` | `56.9 fps` | `0.865` | `28/101/37 ms` | `50/134/58 ms` | `58.6 fps, 28/135 ms` | `1` | `26/33` | wifi: iteration4 launch-retry diagnostics |
 | 2026-04-04 | 18:52:14 EDT | `fa4d643` | `2752x1786` | `2496x1620` | `55.4 fps` | `1.475` | `44/141/64 ms` | `77/159/90 ms` | `55.8 fps, 65/328 ms` | `1` | `26/33` | wifi: iteration5 burst-severe escalation guard |
 | 2026-04-04 | 18:59:13 EDT | `2547d7b` | `2752x1786` | `2496x1620` | `57.4 fps` | `1.297` | `37/106/51 ms` | `69/129/77 ms` | `60.1 fps, 34/104 ms` | `1` | `26/33` | wifi: iteration6 tcp-scheduler recovery spacing under completion-tail pressure |
+| 2026-04-04 | 19:07:55 EDT | `5936ba5` | `2752x1786` | `2496x1620` | `57.9 fps` | `1.296` | `37/107/51 ms` | `69/129/77 ms` | `59.0 fps, 39/107 ms` | `1` | `26/33` | wifi: iteration7 fast adaptive recovery ramp after transient completion-tail |
