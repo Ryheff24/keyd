@@ -1,5 +1,37 @@
 # CURRENT
 
+## Lane WiFi Iteration 29 (iteration7 canonical run triage + synthetic catch-up recovery)
+
+- Timestamp: 2026-04-04 19:12:08 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration7 fast adaptive recovery ramp after transient completion-tail"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metrics + deltas vs iteration6 baseline:
+  - Overall: unchanged pass/fail (`26/33`, same 7 failures).
+  - heavy-load: `fps 59.0` (slight regression from iteration6 `59.5`), `pipe p95 107ms`.
+  - fps test: `avg 57.9`, `1% low 9.2` (still poor), `jitter 22.4ms`, `maxGap 150ms`.
+  - sustained-stream: `avg/1%low 57.2/9.2`, `pipe p95 108ms`, `glass p95 130ms`.
+- High-signal evidence:
+  - `/tmp/keyd-e2e-ipad.log`: no transport loss (`frame-loss PASS loss=0.0%`), but persistent cadence/latency failures.
+  - `/tmp/keyd-e2e-mac.log`: adaptive path largely healthy (`downshift-severe-soft` once, immediate `recovery-upshift-fast`), and low-FPS windows occurred with no network pressure (`tail=0`, `tcpSlow=0`, `preDrop=0`, `scheduler delays=0`).
+  - Low encoded windows (`encoded 25-49`) point to capture-side cadence undersupply during transient timer lag, not transport backpressure.
+- Hypothesis tested:
+  - Dominant bottleneck moved upstream to synthetic capture pacing under transient scheduling stalls; adaptive transport recovery is no longer the principal limiter for 1% low.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Capture/ScreenCapture.m`):
+  - Added synthetic capture schedule telemetry with explicit steady + catch-up branches:
+    - `Synthetic timer steady: ...`
+    - `Synthetic timer catch-up: ...`
+    - `Synthetic timer catch-up capped: ...`
+  - Added bounded fast catch-up emission path (`kSyntheticCatchUpBurstMax=3`) so delayed timer ticks can recover emitted-frame cadence instead of dragging multi-second low-FPS tails.
+  - Added counters for emitted frames and catch-up activity; reset on start/stop for run-to-run causality.
+- Next immediate move:
+  - Run canonical WiFi command next iteration and verify:
+    - reduced low-encoded windows without transport pressure,
+    - improved `1% low` and `frame-pacing` CV,
+    - no regression in latency tails, resolution, or frame-loss.
+
 ## Lane WiFi Iteration 28 (iteration6 completion-tail run triage + recovery ramp fix)
 
 - Timestamp: 2026-04-04 19:02:59 EDT

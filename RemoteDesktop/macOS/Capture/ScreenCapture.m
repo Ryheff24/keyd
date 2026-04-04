@@ -24,6 +24,7 @@ static const uint64_t kWatchdogIntervalNs = 2ULL * NSEC_PER_SEC;
 /* Frame timeout: if no frame for >2s and display is awake, flag re-auth */
 static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
 static const int32_t kSyntheticFPS = 120;
+static const uint32_t kSyntheticCatchUpBurstMax = 3;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -201,6 +202,11 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     Float64 _syntheticSourceFPS;
     BOOL _syntheticIsVideo;
     CIContext *_syntheticCIContext;
+    uint64_t _syntheticScheduleStartUs;
+    uint64_t _syntheticEmittedFrames;
+    uint64_t _syntheticCatchupEvents;
+    uint64_t _syntheticCatchupFrames;
+    uint64_t _syntheticCatchupCappedEvents;
 
     /* Cached background for static-image mode.
      * CGContextDrawImage is CPU-only and takes ~24ms at 2752x1786.
@@ -239,6 +245,11 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         _needsReauthorization = NO;
         _lastFrameTime = 0;
         self.captureFPS = kSyntheticFPS;
+        _syntheticScheduleStartUs = 0;
+        _syntheticEmittedFrames = 0;
+        _syntheticCatchupEvents = 0;
+        _syntheticCatchupFrames = 0;
+        _syntheticCatchupCappedEvents = 0;
 
         dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
             DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
@@ -486,6 +497,11 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     _syntheticAsset = nil;
     _syntheticSourceFPS = 0;
     _syntheticIsVideo = NO;
+    _syntheticScheduleStartUs = 0;
+    _syntheticEmittedFrames = 0;
+    _syntheticCatchupEvents = 0;
+    _syntheticCatchupFrames = 0;
+    _syntheticCatchupCappedEvents = 0;
 
     os_log_info(sc_log(), "Screen capture stopped");
 }
@@ -1137,6 +1153,12 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         timerFPSValue = MIN(timerFPSValue, _syntheticSourceFPS);
     }
     uint64_t timerIntervalNs = (uint64_t)llround((double)NSEC_PER_SEC / timerFPSValue);
+    uint64_t timerIntervalUs = MAX((uint64_t)1, timerIntervalNs / 1000ULL);
+    _syntheticScheduleStartUs = keydrd_host_time_us();
+    _syntheticEmittedFrames = 0;
+    _syntheticCatchupEvents = 0;
+    _syntheticCatchupFrames = 0;
+    _syntheticCatchupCappedEvents = 0;
     _syntheticTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _captureQueue);
     dispatch_source_set_timer(_syntheticTimer,
                               dispatch_time(DISPATCH_TIME_NOW, 0),
@@ -1149,8 +1171,57 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         if (!strongSelf) {
             return;
         }
-        [strongSelf _emitSyntheticFrameAtIndex:frameIndex];
-        frameIndex++;
+        uint64_t nowUs = keydrd_host_time_us();
+        uint64_t elapsedUs = nowUs - strongSelf->_syntheticScheduleStartUs;
+        uint64_t expectedFrames = (elapsedUs / timerIntervalUs) + 1;
+        uint64_t emittedFrames = strongSelf->_syntheticEmittedFrames;
+        uint64_t backlogFrames = expectedFrames > emittedFrames ? (expectedFrames - emittedFrames) : 1;
+        uint64_t framesThisTick = MIN((uint64_t)kSyntheticCatchUpBurstMax, MAX((uint64_t)1, backlogFrames));
+
+        if (framesThisTick > 1) {
+            strongSelf->_syntheticCatchupEvents++;
+            strongSelf->_syntheticCatchupFrames += (framesThisTick - 1);
+            if (backlogFrames > framesThisTick) {
+                strongSelf->_syntheticCatchupCappedEvents++;
+            }
+            os_log(sc_log(),
+                   "Synthetic timer catch-up: expected=%llu emitted=%llu backlog=%llu emitNow=%llu cap=%u lagUs=%llu catchup[events=%llu frames=%llu capped=%llu]",
+                   expectedFrames,
+                   emittedFrames,
+                   backlogFrames,
+                   framesThisTick,
+                   kSyntheticCatchUpBurstMax,
+                   expectedFrames > emittedFrames ? (expectedFrames - emittedFrames) * timerIntervalUs : 0,
+                   strongSelf->_syntheticCatchupEvents,
+                   strongSelf->_syntheticCatchupFrames,
+                   strongSelf->_syntheticCatchupCappedEvents);
+        } else if (backlogFrames > framesThisTick) {
+            strongSelf->_syntheticCatchupCappedEvents++;
+            os_log(sc_log(),
+                   "Synthetic timer catch-up capped: expected=%llu emitted=%llu backlog=%llu emitNow=%llu cap=%u lagUs=%llu catchup[events=%llu frames=%llu capped=%llu]",
+                   expectedFrames,
+                   emittedFrames,
+                   backlogFrames,
+                   framesThisTick,
+                   kSyntheticCatchUpBurstMax,
+                   expectedFrames > emittedFrames ? (expectedFrames - emittedFrames) * timerIntervalUs : 0,
+                   strongSelf->_syntheticCatchupEvents,
+                   strongSelf->_syntheticCatchupFrames,
+                   strongSelf->_syntheticCatchupCappedEvents);
+        } else if (strongSelf->_syntheticEmittedFrames < 10 || strongSelf->_syntheticEmittedFrames % 600 == 0) {
+            os_log(sc_log(),
+                   "Synthetic timer steady: expected=%llu emitted=%llu backlog=%llu emitNow=1 lagUs=%llu",
+                   expectedFrames,
+                   emittedFrames,
+                   backlogFrames,
+                   expectedFrames > emittedFrames ? (expectedFrames - emittedFrames) * timerIntervalUs : 0);
+        }
+
+        for (uint64_t i = 0; i < framesThisTick; i++) {
+            [strongSelf _emitSyntheticFrameAtIndex:frameIndex];
+            frameIndex++;
+            strongSelf->_syntheticEmittedFrames++;
+        }
     });
     dispatch_resume(_syntheticTimer);
 
