@@ -1,5 +1,44 @@
 # CURRENT
 
+## Lane WiFi Iteration 33 (iteration11 canonical run triage + HEVC saturation budget escalation)
+
+- Timestamp: 2026-04-04 19:42:40 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration11 hevc pending saturation retry guard to reduce starvation tails"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metric deltas vs iteration10:
+  - sustained-stream `1% low 9.2 -> 7.5` (regressed).
+  - fps test `maxGap 175ms -> 242ms` (regressed tail).
+  - iPad starvation signals `916 -> 443` (`starvationSignal=true`, improved count but severe tails remain).
+  - HEVC saturation guard behavior: `retry=10`, `admit=1`, `skip=7` (skip count worse than iter10 skip total `5`).
+- Highest-impact bottleneck evidence:
+  - Saturation skips still cluster during transient burst/catch-up windows:
+    - startup burst at `19:37:48` skipped 3 frames in ~31ms,
+    - catch-up burst at `19:40:26` skipped 2 frames near `maxFrameKB=424` burst density `52.08x`,
+    - media restart at `19:41:00` skipped 2 more frames immediately after DTLS ready.
+  - Retry budget is currently too short (`2 x 800us = 1.6ms`) relative to observed encode completion windows (`13-65ms`) in these spikes, so retries often expire before pending drains.
+- Hypothesis tested:
+  - The current retry guard reduced starvation event frequency but still drops clustered frames when saturation persists beyond 1.6ms, creating cadence holes that worsen `1% low` and `maxGap`.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Encode/HEVCEncoder.m`):
+  - Added saturation branch planning telemetry:
+    - `encodePixelBuffer: saturation guard branch=plan ... hitStreak skipStreak attempts sleepUs budgetUs`
+  - Added adaptive retry budget escalation on repeated saturation/skip:
+    - default `2` retries, escalated `6` retries when hit streak or skip streak indicates persistent pressure.
+  - Expanded branch-complete logs:
+    - `branch=retry` now includes `budgetUs`,
+    - `branch=admit` and `branch=skip` include budget + streak context,
+    - `branch=recovered` logs streak reset when pending pressure clears.
+  - Preserved existing drop/skip semantics and fidelity/resolution behavior (no threshold/reporting changes).
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - fewer clustered `branch=skip` events during startup/catch-up/restart windows,
+    - more `branch=admit` recoveries under the escalated retry budget,
+    - improved `sustained-stream 1% low` and `fps maxGap` without transport pressure or fidelity regression.
+
 ## Lane WiFi Iteration 32 (iteration10 canonical run triage + HEVC saturation retry guard)
 
 - Timestamp: 2026-04-04 19:36:24 EDT

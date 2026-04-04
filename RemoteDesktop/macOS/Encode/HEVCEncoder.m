@@ -30,7 +30,9 @@ static const int kEcoMaxHeight1080 = 1080;
 static const int kEcoMaxWidth720 = 1280;
 static const int kEcoMaxHeight720 = 720;
 static const int kEncodePendingSaturationRetryAttempts = 2;
+static const int kEncodePendingSaturationRetryAttemptsEscalated = 6;
 static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
+static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
 
 @implementation HEVCEncoder {
     VTCompressionSessionRef _session;
@@ -48,6 +50,8 @@ static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
     atomic_int _pendingFrameCount;
     atomic_bool _forceNextKeyframe;
     int _skipLogCount;
+    int _saturationHitStreak;
+    int _saturationSkipStreak;
 }
 
 #pragma mark - Lifecycle
@@ -60,6 +64,8 @@ static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
         _pendingFrameCount = 0;
         _forceNextKeyframe = false;
         _skipLogCount = 0;
+        _saturationHitStreak = 0;
+        _saturationSkipStreak = 0;
     }
     return self;
 }
@@ -82,6 +88,8 @@ static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
     _originalQuality = quality;
     _pendingFrameCount = 0;
     _forceNextKeyframe = false;
+    _saturationHitStreak = 0;
+    _saturationSkipStreak = 0;
 
     [self _createSessionWithWidth:width height:height fps:fps bitrate:bitrate quality:quality];
 }
@@ -181,6 +189,8 @@ static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
     _isActive = NO;
     _pendingFrameCount = 0;
     _forceNextKeyframe = false;
+    _saturationHitStreak = 0;
+    _saturationSkipStreak = 0;
     _onEncodedFrame = nil;
 
     if (_session) {
@@ -264,16 +274,37 @@ static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
         BOOL admittedAfterWait = NO;
         static int saturationRetryLogCount = 0;
         static int saturationAdmitLogCount = 0;
+        static int saturationPlanLogCount = 0;
+        _saturationHitStreak++;
+        BOOL escalateBudget =
+            (_saturationHitStreak >= kEncodePendingSaturationEscalateHitStreakThreshold) ||
+            (_saturationSkipStreak > 0);
+        int retryAttempts =
+            escalateBudget ? kEncodePendingSaturationRetryAttemptsEscalated : kEncodePendingSaturationRetryAttempts;
+        uint64_t retryBudgetUs = (uint64_t)retryAttempts * (uint64_t)kEncodePendingSaturationRetrySleepUs;
 
-        for (int attempt = 1; attempt <= kEncodePendingSaturationRetryAttempts; attempt++) {
+        saturationPlanLogCount++;
+        if (saturationPlanLogCount <= 12 || saturationPlanLogCount % 200 == 0) {
+            os_log(hevc_log(),
+                   "encodePixelBuffer: saturation guard branch=plan pendingBefore=%d hitStreak=%d skipStreak=%d attempts=%d sleepUs=%u budgetUs=%llu",
+                   pendingBefore,
+                   _saturationHitStreak,
+                   _saturationSkipStreak,
+                   retryAttempts,
+                   (unsigned int)kEncodePendingSaturationRetrySleepUs,
+                   retryBudgetUs);
+        }
+
+        for (int attempt = 1; attempt <= retryAttempts; attempt++) {
             saturationRetryLogCount++;
             if (saturationRetryLogCount <= 10 || saturationRetryLogCount % 200 == 0) {
                 os_log(hevc_log(),
-                       "encodePixelBuffer: saturation guard branch=retry attempt=%d/%d pendingBefore=%d waitedUs=%llu",
+                       "encodePixelBuffer: saturation guard branch=retry attempt=%d/%d pendingBefore=%d waitedUs=%llu budgetUs=%llu",
                        attempt,
-                       kEncodePendingSaturationRetryAttempts,
+                       retryAttempts,
                        pendingBefore,
-                       waitedUs);
+                       waitedUs,
+                       retryBudgetUs);
             }
             usleep(kEncodePendingSaturationRetrySleepUs);
             waitedUs += kEncodePendingSaturationRetrySleepUs;
@@ -286,25 +317,44 @@ static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
 
         if (!admittedAfterWait) {
             _skipLogCount++;
+            _saturationSkipStreak++;
             if (_skipLogCount <= 10 || _skipLogCount % 100 == 0) {
                 os_log(hevc_log(),
-                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d waitedUs=%llu totalSkipped=%d",
+                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d waitedUs=%llu totalSkipped=%d hitStreak=%d skipStreak=%d budgetUs=%llu",
                        pendingBefore,
                        pending,
                        waitedUs,
-                       _skipLogCount);
+                       _skipLogCount,
+                       _saturationHitStreak,
+                       _saturationSkipStreak,
+                       retryBudgetUs);
             }
             return;
         }
 
+        _saturationHitStreak = 0;
+        _saturationSkipStreak = 0;
         saturationAdmitLogCount++;
         if (saturationAdmitLogCount <= 10 || saturationAdmitLogCount % 200 == 0) {
             os_log(hevc_log(),
-                   "encodePixelBuffer: saturation guard branch=admit pendingBefore=%d pendingAfter=%d waitedUs=%llu",
+                   "encodePixelBuffer: saturation guard branch=admit pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu",
                    pendingBefore,
                    pending,
-                   waitedUs);
+                   waitedUs,
+                   retryBudgetUs);
         }
+    } else if (_saturationHitStreak > 0 || _saturationSkipStreak > 0) {
+        static int saturationRecoveryLogCount = 0;
+        saturationRecoveryLogCount++;
+        if (saturationRecoveryLogCount <= 10 || saturationRecoveryLogCount % 200 == 0) {
+            os_log(hevc_log(),
+                   "encodePixelBuffer: saturation guard branch=recovered pending=%d hitStreak=%d skipStreak=%d",
+                   pending,
+                   _saturationHitStreak,
+                   _saturationSkipStreak);
+        }
+        _saturationHitStreak = 0;
+        _saturationSkipStreak = 0;
     }
 
     static int encodeCount = 0;
