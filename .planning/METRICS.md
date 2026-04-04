@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.267` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `33 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `112 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `53 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `59 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `133 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `77 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| FPS | `58.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.104` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `30 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `104 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `44 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `53 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `126 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `69 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.5 fps` | `119.8 fps` | `120.0 fps` | ❌ |
 | Heavy-load pipeline median | `32 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `102 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load pipeline p95 | `105 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -113,3 +113,4 @@ Rules:
 | 2026-04-04 | 19:33:14 EDT | `6cf29a0` | `2752x1786` | `2496x1620` | `58.0 fps` | `1.306` | `37/108/51 ms` | `69/130/78 ms` | `59.3 fps, 33/106 ms` | `1` | `26/33` | wifi: iteration10 tcp completion-guard spacing to prevent saturation starvation |
 | 2026-04-04 | 19:41:18 EDT | `02daed7` | `2752x1786` | `2496x1620` | `56.8 fps` | `0.968` | `28/120/39 ms` | `50/151/61 ms` | `59.7 fps, 26/80 ms` | `1` | `26/33` | wifi: iteration11 hevc pending saturation retry guard to reduce starvation tails |
 | 2026-04-04 | 19:47:33 EDT | `e3800d7` | `2752x1786` | `2496x1620` | `57.4 fps` | `1.267` | `33/112/53 ms` | `59/133/77 ms` | `59.6 fps, 32/102 ms` | `1` | `26/33` | wifi: iteration12 hevc adaptive saturation retry budget to reduce clustered skip tails |
+| 2026-04-04 | 19:54:08 EDT | `7fbb27d` | `2752x1786` | `2496x1620` | `58.1 fps` | `1.104` | `30/104/44 ms` | `53/126/69 ms` | `59.5 fps, 32/105 ms` | `1` | `26/33` | wifi: iteration13 hevc soft-hard saturation guard reduce pending2 skip tails |
