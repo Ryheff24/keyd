@@ -42,13 +42,13 @@ final class MetalRenderer: NSObject {
     }
 
     private static let maxPendingFrames = 5
-    private static let hardDepthCatchupPendingThreshold = 5
-    private static let hardDepthCatchupMinQueueDelayThresholdMs = 42.0
-    private static let softCatchupQueueDelayThresholdMs = 38.0
-    private static let hardCatchupQueueDelayThresholdMs = 72.0
+    private static let hardDepthCatchupPendingThreshold = 4
+    private static let hardDepthCatchupMinQueueDelayThresholdMs = 24.0
+    private static let softCatchupQueueDelayThresholdMs = 24.0
+    private static let hardCatchupQueueDelayThresholdMs = 48.0
     private static let hardCatchupExtremeQueueDelayThresholdMs = 140.0
     private static let softCatchupMinPendingDepth = 3
-    private static let softCatchupDelayStreakThreshold = 3
+    private static let softCatchupDelayStreakThreshold = 2
     private static let hardCatchupDelayStreakThreshold = 3
 
     // MARK: - Properties
@@ -106,6 +106,11 @@ final class MetalRenderer: NSObject {
     private var adaptiveHardCatchupDropFrames = 0
     private var softCatchupDelayStreak = 0
     private var hardCatchupDelayStreak = 0
+    private var renderTickCount = 0
+    private var noPendingTickCount = 0
+    private var commandBufferFailureCount = 0
+    private var encoderFailureCount = 0
+    private var presentCompletionLogCount = 0
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -433,13 +438,21 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
 
     func metalDisplayLink(_ link: CAMetalDisplayLink,
                           needsUpdate update: CAMetalDisplayLink.Update) {
+        renderTickCount += 1
         textureLock.lock()
         let hasPendingFrame = !pendingFrames.isEmpty
+        let pendingDepth = pendingFrames.count
         textureLock.unlock()
 
         // Nothing new to show. Keep the last presented frame on screen rather
         // than consuming drawables/redrawing stale content at display-link rate.
-        guard hasPendingFrame else { return }
+        guard hasPendingFrame else {
+            noPendingTickCount += 1
+            if noPendingTickCount <= 5 || noPendingTickCount % 300 == 0 {
+                print("[CONSOLE] MetalRenderer: tick skip reason=no-pending tick=\(renderTickCount) noPendingTotal=\(noPendingTickCount)")
+            }
+            return
+        }
 
         // Never block the main run loop waiting for a drawable slot; if the GPU
         // is briefly behind, keep the newest decoded frame pending for the next tick.
@@ -458,7 +471,10 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         let drawable = update.drawable
 
         // Step 3: Create command buffer
+        let commandBufferCreateStartUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            commandBufferFailureCount += 1
+            print("[CONSOLE] MetalRenderer: render abort reason=command-buffer-create-failed pendingDepth=\(pendingDepth) failures=\(commandBufferFailureCount)")
             inflightSemaphore.signal()
             return
         }
@@ -476,6 +492,8 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         guard let encoder = commandBuffer.makeRenderCommandEncoder(
             descriptor: renderPassDescriptor
         ) else {
+            encoderFailureCount += 1
+            print("[CONSOLE] MetalRenderer: render abort reason=encoder-create-failed pendingDepth=\(pendingDepth) failures=\(encoderFailureCount)")
             inflightSemaphore.signal()
             return
         }
@@ -563,12 +581,13 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         textureLock.unlock()
 
         let queueDelayMs = Double(dequeueNowUs &- frame.enqueuedAtUs) / 1000.0
+        let displayLeadMs = (update.targetPresentationTimestamp - CACurrentMediaTime()) * 1000.0
         renderQueueDelayLogCount += 1
         if droppedStaleFrames > 0 {
             print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms hardDepth=\(Self.hardDepthCatchupPendingThreshold) softDepth=\(Self.softCatchupMinPendingDepth) hardDepthTriggered=\(hardDepthTriggered) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) hardKeep=\(hardKeepTarget) hardExtreme=\(hardExtremeTail) droppedStale=\(droppedStaleFrames) catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames) softCatchup=\(adaptiveSoftCatchupCount)/\(adaptiveSoftCatchupDropFrames) hardCatchup=\(adaptiveHardCatchupCount)/\(adaptiveHardCatchupDropFrames)")
         }
-        if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= 24.0 || droppedStaleFrames > 0 {
-            print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthTriggered=\(hardDepthTriggered) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) captureTsUs=\(frame.captureTimestampUs)")
+        if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= Self.softCatchupQueueDelayThresholdMs || droppedStaleFrames > 0 || pendingBefore >= Self.hardDepthCatchupPendingThreshold {
+            print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms displayLead=\(String(format: "%.2f", displayLeadMs))ms softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthTriggered=\(hardDepthTriggered) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) captureTsUs=\(frame.captureTimestampUs)")
         }
 
         // Step 6: Set pipeline state and resources
@@ -607,8 +626,17 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             }
         }
 
+        let submitToGPUStartUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
         commandBuffer.addCompletedHandler { [weak self, retainedCVTexture = frame.cvTextureRef] _ in
             _ = retainedCVTexture
+            let completionUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
+            let gpuRoundtripMs = Double(completionUs &- submitToGPUStartUs) / 1000.0
+            if let self {
+                self.presentCompletionLogCount += 1
+                if self.presentCompletionLogCount <= 10 || self.presentCompletionLogCount % 240 == 0 || gpuRoundtripMs >= 12.0 {
+                    print("[CONSOLE] MetalRenderer: render complete mode=\(dequeueMode) queueDelay=\(String(format: "%.2f", queueDelayMs))ms gpuRoundtrip=\(String(format: "%.2f", gpuRoundtripMs))ms pendingAfter=\(pendingAfterPop) submitLag=\(String(format: "%.2f", Double(submitToGPUStartUs &- commandBufferCreateStartUs) / 1000.0))ms")
+                }
+            }
             self?.inflightSemaphore.signal()
         }
 
