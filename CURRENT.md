@@ -1,5 +1,45 @@
 # CURRENT
 
+## Lane WiFi Iteration 28 (iteration6 completion-tail run triage + recovery ramp fix)
+
+- Timestamp: 2026-04-04 19:02:59 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration6 tcp-scheduler recovery spacing under completion-tail pressure"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metrics + deltas vs prior run (iteration5 at 18:52):
+  - heavy-load: `fps 55.8 -> 60.1`, `pipe med/p95 65/328ms -> 34/104ms` (improved, still fails latency targets).
+  - fps test: `avg 55.4 -> 57.4`, `1% low 9.2 -> 9.2`, `jitter 26.6ms -> 22.6ms`, `maxGap 558ms -> 167ms` (tails improved, headroom still insufficient).
+  - pipeline-latency: `med/p95 44/141ms -> 37/106ms` (improved, still over target).
+  - glass-to-glass: `med/p95 77/159ms -> 69/129ms` (improved, still over target).
+- High-signal evidence:
+  - `/tmp/keyd-e2e-ipad.log`: no transport loss (`frame-loss PASS loss=0.0%`) but pacing/latency still fails (`fps avg=57.4`, `1% low=9.2`, `pipeline p95=106ms`, `g2g p95=129ms`).
+  - `/tmp/keyd-e2e-mac.log` telemetry now shows completion-tail pressure is reduced versus iteration5:
+    - `max preDrop=2` (was burst windows up to `47`),
+    - `max tcpMaxCompletion=66ms` (was `380ms`),
+    - `windows tcpMaxCompletion>=120ms: 0`,
+    - scheduler still inactive (`scheduler[delays=0 ...]` throughout).
+  - Adaptive controller still downshifted early (`downshift-severe-soft` to `54fps`) and climbed back slowly (`54 -> 56 -> 58 -> 60` over ~33s), aligning with persistent avg-FPS deficit.
+- Hypothesis tested:
+  - Primary bottleneck shifted from completion-tail meltdown to **overly conservative post-downshift recovery cadence**: transient early pressure recovers, but adaptive hysteresis/hold keeps capture below 60fps too long, depressing average FPS and latency headroom.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added fast healthy-recovery lane when pressure is truly clear (`inFlight=0`, `slow=0`, `maxCompletion<=16ms`, no drops, no burst-tail risk).
+  - New fast recovery gates + logs:
+    - `WiFi adaptive hold: reason=recovery-fast-cooldown ... metrics[...]`
+    - `WiFi adaptive hold: reason=recovery-fast-hysteresis ... metrics[...]`
+  - Added fast upshift reason + step:
+    - `reason=recovery-upshift-fast`
+    - allows up to `+4fps` smoothing step for this reason only (default remains `+2fps`).
+  - Kept existing severe/mild/tail-risk paths unchanged.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Run canonical WiFi command again and verify:
+    - early transient downshift recovers to 60fps faster via `recovery-upshift-fast`,
+    - reduced time spent at 54/56/58fps,
+    - improved `fps avg`, `sustained avg`, and latency p95 without reintroducing preDrop/completion-tail spikes.
+
 ## Lane WiFi Iteration 27 (iteration5 burst-severe escalation guard follow-up)
 
 - Timestamp: 2026-04-04 18:54:21 EDT
