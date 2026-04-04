@@ -42,6 +42,8 @@ final class UDPReassembler {
     private struct PendingFrame {
         let seq: UInt16
         let chunkTotal: UInt16
+        let sourceIsOrdered: Bool
+        let sourceLabel: String
         /// Header from the first chunk (chunk_idx == 0), used to reconstruct the complete header.
         var firstChunkHeader: MediaFrameHeader?
         /// Received chunks indexed by chunk_idx. nil = not yet received.
@@ -115,9 +117,9 @@ final class UDPReassembler {
     /// Process an incoming chunk. If this completes a frame, delivers it via `onFrameReassembled`.
     ///
     /// - Parameter data: Raw packet data including the 24-byte MediaFrameHeader + chunk payload.
-    func processChunk(_ data: Data) {
+    func processChunk(_ data: Data, sourceIsOrdered: Bool = false, sourceLabel: String = "udp") {
         queue.async {
-            self.processChunkLocked(data)
+            self.processChunkLocked(data, sourceIsOrdered: sourceIsOrdered, sourceLabel: sourceLabel)
         }
     }
 
@@ -153,7 +155,7 @@ final class UDPReassembler {
 
     // MARK: - Private
 
-    private func processChunkLocked(_ data: Data) {
+    private func processChunkLocked(_ data: Data, sourceIsOrdered: Bool, sourceLabel: String) {
         guard data.count >= MediaFrameHeader.size else {
             print("[CONSOLE] UDPReassembler: chunk too small (\(data.count) bytes)")
             return
@@ -175,7 +177,7 @@ final class UDPReassembler {
         // one-chunk UDP frames, and multi-chunk UDP frames share the same
         // sequence continuity guarantees.
         if chunkTotal <= 1 {
-            deliverFrameData(seq: seq, frameData: data)
+            deliverFrameData(seq: seq, frameData: data, sourceIsOrdered: sourceIsOrdered, sourceLabel: sourceLabel)
             return
         }
 
@@ -192,6 +194,8 @@ final class UDPReassembler {
             pendingFrames[seq] = PendingFrame(
                 seq: seq,
                 chunkTotal: chunkTotal,
+                sourceIsOrdered: sourceIsOrdered,
+                sourceLabel: sourceLabel,
                 firstChunkHeader: nil,
                 chunks: [:],
                 createdAt: CFAbsoluteTimeGetCurrent()
@@ -292,7 +296,7 @@ final class UDPReassembler {
         }
 
         guard let frameData = buildFrameData(seq: seq, pending: pending) else { return }
-        deliverFrameData(seq: seq, frameData: frameData)
+        deliverFrameData(seq: seq, frameData: frameData, sourceIsOrdered: pending.sourceIsOrdered, sourceLabel: pending.sourceLabel)
     }
 
     private func enqueueReassembledFrame(_ frameData: Data) {
@@ -303,7 +307,7 @@ final class UDPReassembler {
 
     /// Deliver a complete frame while preserving sequence continuity across
     /// all media paths, including direct single-chunk and TCP-fallback frames.
-    private func deliverFrameData(seq: UInt16, frameData: Data) {
+    private func deliverFrameData(seq: UInt16, frameData: Data, sourceIsOrdered: Bool, sourceLabel: String) {
         guard let header = MediaFrameHeader.parse(from: frameData) else {
             print("[CONSOLE] UDPReassembler: failed to parse complete frame for seq=\(seq)")
             return
@@ -362,6 +366,19 @@ final class UDPReassembler {
             let drained = drainOutOfOrderBuffer()
             if drained > 0 {
                 print("[CONSOLE] UDPReassembler: drained buffered frames=\(drained) newLast=\(lastDeliveredSeq) ooo_remaining=\(outOfOrderBuffer.count)")
+            }
+        } else if sourceIsOrdered {
+            // Reliable ordered source (TCP media path): a forward sequence gap means
+            // sender-side drop, not network reordering. Missing seq will never arrive.
+            if header.isKeyframe {
+                outOfOrderBuffer.removeAll()
+                lastDeliveredSeq = seq
+                framesDelivered += 1
+                print("[CONSOLE] UDPReassembler: ordered-gap fast-forward on keyframe seq=\(seq) source=\(sourceLabel) distance=\(distance)")
+                enqueueReassembledFrame(frameData)
+            } else {
+                print("[CONSOLE] UDPReassembler: ordered-gap detected seq=\(seq) source=\(sourceLabel) distance=\(distance) last=\(lastDeliveredSeq) -> immediate recovery")
+                enterRecoveryMode(reason: "ordered stream gap (\(sourceLabel), distance=\(distance))", missingSeq: lastDeliveredSeq &+ 1)
             }
         } else if distance <= Self.maxForwardGapBeforeSkip {
             // Slightly ahead — buffer and wait for the missing frames rather than

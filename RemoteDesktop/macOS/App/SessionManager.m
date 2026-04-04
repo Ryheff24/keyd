@@ -577,6 +577,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                        dispatch_get_main_queue(), ^{
             SessionManager *self2 = weakSelf2;
             if (!self2) return;
+            if (self2->_wirelessTransport.isConnected) {
+                os_log(sLog,
+                       "Skipping delayed WiFi advertising start: wireless session already active (state=%{public}s transport=%{public}s)",
+                       [self2 sessionStateName:self2->_sessionState], transport_state_name(self2->_transportState));
+                return;
+            }
             if (self2->_wirelessOnly) {
                 os_log(sLog, "Wireless-only mode — starting WiFi advertising");
             } else if (self2->_usbTransport.isConnected) {

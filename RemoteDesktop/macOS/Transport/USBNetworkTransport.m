@@ -21,6 +21,11 @@ static os_log_t transport_log(void) {
 /* Port number as C string for NWListener */
 static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
+/* TCP framing/chunking knobs for USB media path.
+ * Chunk only large HEVC payloads to preserve incremental parse behavior on iPad
+ * while avoiding per-chunk allocator/reassembly churn on normal frame sizes. */
+static const size_t kUSBMediaTCPChunkMTU = 64 * 1024;
+static const size_t kUSBMediaTCPChunkThresholdBytes = 512 * 1024;
 
 @interface USBNetworkTransport ()
 @property (nonatomic) dispatch_queue_t monitorQueue;
@@ -517,29 +522,35 @@ static const char *kInputPortStr = "14568";
     uint16_t frameSeq = 0;
     BOOL hasFrameSeq = NO;
     BOOL isHEVC = NO;
+    BOOL shouldChunkHEVC = NO;
+    size_t payloadLen = 0;
     uint64_t sendStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
     if (len >= sizeof(MediaFrameHeader)) {
         originalHeader = (const MediaFrameHeader *)data;
         frameSeq = originalHeader->seq;
         hasFrameSeq = YES;
         isHEVC = (originalHeader->flags & KEYDRD_FLAG_HEVC) != 0;
-        os_log(transport_log(), "USB media send entry: seq=%u bytes=%zu hevc=%{public}s",
-               frameSeq, len, isHEVC ? "yes" : "no");
+        payloadLen = len - sizeof(MediaFrameHeader);
+        shouldChunkHEVC = isHEVC && payloadLen > kUSBMediaTCPChunkThresholdBytes;
+        os_log(transport_log(),
+               "USB media send entry: seq=%u bytes=%zu payload=%zu hevc=%{public}s chunkMode=%{public}s threshold=%zu",
+               frameSeq, len, payloadLen, isHEVC ? "yes" : "no",
+               shouldChunkHEVC ? "chunked" : "single-frame",
+               kUSBMediaTCPChunkThresholdBytes);
     }
 
-    if (len >= sizeof(MediaFrameHeader) && isHEVC) {
+    if (len >= sizeof(MediaFrameHeader) && shouldChunkHEVC) {
         /* USB media still uses reliable TCP, but frame-level writes make the iPad
          * wait for large blobs before it can parse anything. Reframe all media
          * HEVC packets into chunked MediaFrameHeader packets so the existing
          * reassembler/decoder path can consume them incrementally over TCP.
-         * Keep LZ4 frames unchunked to avoid extra per-chunk framing overhead and
+         * Keep small HEVC and LZ4 frames unchunked to avoid extra per-chunk framing overhead and
          * receiver-side reassembly churn on the USB fast path. */
         const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
-        size_t payloadLen = len - sizeof(MediaFrameHeader);
-        const size_t tcpChunkMTU = 64 * 1024;
+        const size_t tcpChunkMTU = kUSBMediaTCPChunkMTU;
 
         size_t maxChunkPayload = tcpChunkMTU > sizeof(MediaFrameHeader) ? (tcpChunkMTU - sizeof(MediaFrameHeader)) : 1;
-        size_t estimatedChunkCount = (payloadLen + maxChunkPayload - 1) / maxChunkPayload;
+        size_t estimatedChunkCount = payloadLen == 0 ? 1 : ((payloadLen + maxChunkPayload - 1) / maxChunkPayload);
         size_t estimatedFramedBytes = payloadLen + (estimatedChunkCount * (sizeof(MediaFrameHeader) + sizeof(uint32_t)));
         NSMutableData *framedBatchData = [NSMutableData dataWithCapacity:estimatedFramedBytes];
         if (!framedBatchData) {
@@ -551,6 +562,7 @@ static const char *kInputPortStr = "14568";
 
         __block NSUInteger chunkCount = 0;
         __block size_t framedBytes = 0;
+        uint64_t chunkBuildStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
         chunk_frame(payload, payloadLen, originalHeader->seq, tcpChunkMTU,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
             uint32_t netLen = htonl((uint32_t)chunkLen);
@@ -566,12 +578,11 @@ static const char *kInputPortStr = "14568";
         });
 
         if (chunkCount > 0 && framedBatchData.length > 0) {
-            uint64_t chunkBatchStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
             os_log(transport_log(),
-                   "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu hevc=%{public}s",
+                   "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu hevc=%{public}s payload=%zu",
                    frameSeq, tcpChunkMTU, (unsigned long)chunkCount,
-                   isHEVC ? "yes" : "no");
-            uint64_t buildElapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - chunkBatchStartNs) / NSEC_PER_MSEC;
+                   isHEVC ? "yes" : "no", payloadLen);
+            uint64_t buildElapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - chunkBuildStartNs) / NSEC_PER_MSEC;
             os_log(transport_log(),
                    "USB media chunk batch ready: seq=%u chunks=%lu framedBytes=%zu buildElapsed=%llums estimate=%zu",
                    frameSeq, (unsigned long)chunkCount, framedBytes, buildElapsedMs, estimatedFramedBytes);
@@ -600,8 +611,9 @@ static const char *kInputPortStr = "14568";
     }
     if (hasFrameSeq) {
         os_log(transport_log(),
-               "USB media sending unchunked frame: seq=%u bytes=%zu hevc=%{public}s",
-               frameSeq, len, isHEVC ? "yes" : "no");
+               "USB media sending unchunked frame: seq=%u bytes=%zu payload=%zu hevc=%{public}s reason=%{public}s",
+               frameSeq, len, payloadLen, isHEVC ? "yes" : "no",
+               isHEVC ? "payload-below-chunk-threshold" : "non-hevc");
     }
 
     /* Build framed buffer in one allocation to reduce per-frame allocator churn. */

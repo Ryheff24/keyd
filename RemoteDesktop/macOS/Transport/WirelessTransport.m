@@ -20,6 +20,7 @@ static os_log_t wireless_log(void) {
 static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
 static const uint64_t kDuplicateReplaceIdleThresholdNs = 2000000000ULL;
+static const uint64_t kPendingConnectionReplaceThresholdNs = 1500000000ULL;
 
 static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     if (newerTicks <= olderTicks) {
@@ -39,6 +40,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     uint64_t _pacingDefaultIntervalTicks;  // nominal chunk spacing
     uint64_t _pacingCongestedIntervalTicks;// high-backlog chunk spacing
     uint64_t _nextSendTime;               // next allowed send time (mach absolute time)
+    uint64_t _inputAcceptedAtTicks;       // when current input candidate was accepted
     uint64_t _inputReadyAtTicks;          // when the current input connection reached ready
     uint64_t _lastInputActivityTicks;     // last time bytes were received on input connection
     BOOL _allowReconnectTakeover;         // allow replacing lingering input socket after disconnect
@@ -249,7 +251,12 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
 #pragma mark - Public API
 
 - (void)startAdvertising {
-    if (_bonjourListener) return;
+    if (_bonjourListener) {
+        os_log(wireless_log(),
+               "startAdvertising: listener already active (isConnected=%{public}d isAWDL=%{public}d inputConnection=%{public}p)",
+               _isConnected, _isAWDL, _inputConnection);
+        return;
+    }
 
     if (!_tlsIdentity) {
         os_log_error(wireless_log(), "Cannot start advertising: tlsIdentity not set");
@@ -508,25 +515,33 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
      * been idle long enough so reconnect can complete without waiting for TCP timeout. */
     if (_inputConnection) {
         uint64_t nowTicks = mach_absolute_time();
-        uint64_t idleNs = _lastInputActivityTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _lastInputActivityTicks) : UINT64_MAX;
+        uint64_t idleNs = _lastInputActivityTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _lastInputActivityTicks) : 0;
         uint64_t ageNs = _inputReadyAtTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _inputReadyAtTicks) : 0;
+        uint64_t pendingAgeNs = _inputAcceptedAtTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _inputAcceptedAtTicks) : 0;
+        BOOL hasInputActivity = (_lastInputActivityTicks > 0);
         BOOL staleByIdle = (_lastInputActivityTicks > 0) && (idleNs >= kDuplicateReplaceIdleThresholdNs);
         BOOL staleByNoInput = (_lastInputActivityTicks == 0) &&
                               (_inputReadyAtTicks > 0) &&
                               (ageNs >= kDuplicateReplaceIdleThresholdNs);
-        BOOL shouldReplace = _allowReconnectTakeover || (!_isConnected) || staleByIdle || staleByNoInput;
+        BOOL stalePendingConnect = (!_isConnected) &&
+                                   (_inputReadyAtTicks == 0) &&
+                                   (_inputAcceptedAtTicks > 0) &&
+                                   (pendingAgeNs >= kPendingConnectionReplaceThresholdNs);
+        BOOL shouldReplace = _allowReconnectTakeover || staleByIdle || staleByNoInput || stalePendingConnect;
 
         os_log(wireless_log(),
-               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d idle=%.2fs age=%.2fs allowReconnectTakeover=%{public}d shouldReplace=%{public}d",
+               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d hasInputActivity=%{public}d idle=%.2fs age=%.2fs pendingAge=%.2fs allowReconnectTakeover=%{public}d staleByIdle=%{public}d staleByNoInput=%{public}d stalePendingConnect=%{public}d shouldReplace=%{public}d",
                _inputConnection, _isConnected, _isAWDL,
-               (double)idleNs / 1000000000.0, (double)ageNs / 1000000000.0,
-               _allowReconnectTakeover, shouldReplace);
+               hasInputActivity,
+               (double)idleNs / 1000000000.0, (double)ageNs / 1000000000.0, (double)pendingAgeNs / 1000000000.0,
+               _allowReconnectTakeover, staleByIdle, staleByNoInput, stalePendingConnect, shouldReplace);
         if (shouldReplace) {
             const char *reason = _allowReconnectTakeover ? "reconnect-window" :
-                (!_isConnected ? "not-connected" : (staleByIdle ? "idle-timeout" : "no-input-timeout"));
+                (stalePendingConnect ? "pending-timeout" : (staleByIdle ? "idle-timeout" : "no-input-timeout"));
             os_log(wireless_log(), "Replacing stale wireless input connection (%{public}s)", reason);
             nw_connection_cancel(_inputConnection);
             _inputConnection = nil;
+            _inputAcceptedAtTicks = 0;
             _inputReadyAtTicks = 0;
             _lastInputActivityTicks = 0;
             _allowReconnectTakeover = NO;
@@ -537,6 +552,10 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         }
     }
     _inputConnection = connection;
+    _inputAcceptedAtTicks = mach_absolute_time();
+    os_log(wireless_log(),
+           "Accepted wireless candidate as current input connection (inputConnection=%{public}p isConnected=%{public}d)",
+           _inputConnection, _isConnected);
 
     nw_connection_set_queue(connection, _transportQueue);
 
@@ -577,6 +596,18 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
             self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
 
+            if (self2->_bonjourListener) {
+                os_log(wireless_log(),
+                       "Suspending Bonjour listener while wireless session is active (inputConnection=%{public}p)",
+                       self2->_inputConnection);
+                nw_listener_cancel(self2->_bonjourListener);
+                self2->_bonjourListener = nil;
+            } else {
+                os_log(wireless_log(),
+                       "Bonjour listener already suspended when connection became ready (inputConnection=%{public}p)",
+                       self2->_inputConnection);
+            }
+
             if (self2.onConnectionChanged) {
                 self2.onConnectionChanged(YES, detectedAWDL);
             }
@@ -595,8 +626,17 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                 self2.inputConnection = nil;
                 self2.isConnected = NO;
                 self2->_allowReconnectTakeover = NO;
+                self2->_inputAcceptedAtTicks = 0;
                 self2->_inputReadyAtTicks = 0;
                 self2->_lastInputActivityTicks = 0;
+                if (!self2->_bonjourListener) {
+                    os_log(wireless_log(),
+                           "Wireless connection ended; re-enabling Bonjour listener for reconnect discovery");
+                    [self2 startAdvertising];
+                } else {
+                    os_log(wireless_log(),
+                           "Wireless connection ended; Bonjour listener already active for reconnect discovery");
+                }
                 if (self2.onConnectionChanged) {
                     self2.onConnectionChanged(NO, self2.isAWDL);
                 }
@@ -773,6 +813,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         _inputConnection = nil;
     }
     _allowReconnectTakeover = NO;
+    _inputAcceptedAtTicks = 0;
     _inputReadyAtTicks = 0;
     _lastInputActivityTicks = 0;
     _isConnected = NO;

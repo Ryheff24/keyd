@@ -469,7 +469,7 @@ final class SessionManager {
 
         // Wireless media arrives as UDP chunks -- route through reassembler
         wirelessTransport.onMediaReceived = { [weak self] data in
-            self?.udpReassembler.processChunk(data)
+            self?.udpReassembler.processChunk(data, sourceIsOrdered: false, sourceLabel: "wireless-udp")
         }
 
         wirelessTransport.onInputReceived = { [weak self] data in
@@ -792,7 +792,8 @@ final class SessionManager {
                 if mediaHeader.chunkTotal > 1 && !mediaHeader.isHEVC {
                     print("[CONSOLE] handleInputReceived: routing chunked non-HEVC frame via reassembler seq=\(mediaHeader.seq) chunk=\(mediaHeader.chunkIdx + 1)/\(mediaHeader.chunkTotal)")
                 }
-                udpReassembler.processChunk(data)
+                let sourceLabel = wirelessTransport.isConnected && !usbTransport.isConnected ? "wireless-tcp-media" : "input-tcp-media"
+                udpReassembler.processChunk(data, sourceIsOrdered: true, sourceLabel: sourceLabel)
             } else {
                 handleReceivedFrame(data)
             }
