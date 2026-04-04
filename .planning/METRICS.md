@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `55.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.498` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `36 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `164 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `61 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `59 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `191 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `86 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `57.5 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| FPS | `57.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.181` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `31 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `110 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `48 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `55 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `131 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `72 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
 | Heavy-load pipeline median | `33 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `149 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load pipeline p95 | `103 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -101,3 +101,4 @@ Rules:
 | 2026-04-04 | 17:07:04 EDT | `c55fe1b` | `2752x1786` | `2496x1620` | `56.8 fps` | `1.296` | `38/108/52 ms` | `71/131/79 ms` | `59.5 fps, 37/110 ms` | `1` | `26/33` | wifi: baseline renderer dequeue oscillation confirm |
 | 2026-04-04 | 17:13:26 EDT | `934f9d3` | `2752x1786` | `2496x1620` | `56.0 fps` | `1.231` | `40/139/59 ms` | `64/162/83 ms` | `58.1 fps, 77/237 ms` | `1` | `26/33` | wifi: validate renderer dequeue/catchup policy |
 | 2026-04-04 | 17:20:36 EDT | `76fbfb3` | `2752x1786` | `2496x1620` | `55.4 fps` | `1.498` | `36/164/61 ms` | `59/191/86 ms` | `57.5 fps, 33/149 ms` | `1` | `26/33` | wifi: burst-density starvation correlation |
+| 2026-04-04 | 17:29:21 EDT | `de5ee42` | `2752x1786` | `2496x1620` | `57.0 fps` | `1.181` | `31/110/48 ms` | `55/131/72 ms` | `59.7 fps, 33/103 ms` | `1` | `26/33` | wifi: validate burst/starvation fix |
