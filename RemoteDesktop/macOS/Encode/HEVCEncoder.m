@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <os/log.h>
 #import <stdatomic.h>
+#import <unistd.h>
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -28,6 +29,8 @@ static const int kEcoMaxWidth1080 = 1920;
 static const int kEcoMaxHeight1080 = 1080;
 static const int kEcoMaxWidth720 = 1280;
 static const int kEcoMaxHeight720 = 720;
+static const int kEncodePendingSaturationRetryAttempts = 2;
+static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
 
 @implementation HEVCEncoder {
     VTCompressionSessionRef _session;
@@ -256,12 +259,52 @@ static const int kEcoMaxHeight720 = 720;
      * >1 keeps p95 encode under 35ms and jitter under 5ms. */
     int pending = atomic_load_explicit(&_pendingFrameCount, memory_order_relaxed);
     if (pending > 1) {
-        _skipLogCount++;
-        if (_skipLogCount <= 5 || _skipLogCount % 100 == 0) {
-            os_log(hevc_log(), "encodePixelBuffer: SKIPPED frame (pending=%d, total skipped=%d)",
-                   pending, _skipLogCount);
+        int pendingBefore = pending;
+        uint64_t waitedUs = 0;
+        BOOL admittedAfterWait = NO;
+        static int saturationRetryLogCount = 0;
+        static int saturationAdmitLogCount = 0;
+
+        for (int attempt = 1; attempt <= kEncodePendingSaturationRetryAttempts; attempt++) {
+            saturationRetryLogCount++;
+            if (saturationRetryLogCount <= 10 || saturationRetryLogCount % 200 == 0) {
+                os_log(hevc_log(),
+                       "encodePixelBuffer: saturation guard branch=retry attempt=%d/%d pendingBefore=%d waitedUs=%llu",
+                       attempt,
+                       kEncodePendingSaturationRetryAttempts,
+                       pendingBefore,
+                       waitedUs);
+            }
+            usleep(kEncodePendingSaturationRetrySleepUs);
+            waitedUs += kEncodePendingSaturationRetrySleepUs;
+            pending = atomic_load_explicit(&_pendingFrameCount, memory_order_relaxed);
+            if (pending <= 1) {
+                admittedAfterWait = YES;
+                break;
+            }
         }
-        return;
+
+        if (!admittedAfterWait) {
+            _skipLogCount++;
+            if (_skipLogCount <= 10 || _skipLogCount % 100 == 0) {
+                os_log(hevc_log(),
+                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d waitedUs=%llu totalSkipped=%d",
+                       pendingBefore,
+                       pending,
+                       waitedUs,
+                       _skipLogCount);
+            }
+            return;
+        }
+
+        saturationAdmitLogCount++;
+        if (saturationAdmitLogCount <= 10 || saturationAdmitLogCount % 200 == 0) {
+            os_log(hevc_log(),
+                   "encodePixelBuffer: saturation guard branch=admit pendingBefore=%d pendingAfter=%d waitedUs=%llu",
+                   pendingBefore,
+                   pending,
+                   waitedUs);
+        }
     }
 
     static int encodeCount = 0;

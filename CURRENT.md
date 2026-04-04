@@ -1,5 +1,39 @@
 # CURRENT
 
+## Lane WiFi Iteration 32 (iteration10 canonical run triage + HEVC saturation retry guard)
+
+- Timestamp: 2026-04-04 19:36:24 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration10 tcp completion-guard spacing to prevent saturation starvation"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metrics + deltas vs iteration9:
+  - heavy-load: `fps 59.3` (`-0.3`), `pipe p95 106ms` (`+1ms`).
+  - sustained-stream: `avg/1%low 57.6/9.2` (`+0.7/flat`), `pipe p95 110ms` (`+2ms`), `glass p95 133ms` (`+3ms`).
+  - fps test: `avg 58.0` (`+0.5`), `jitter 22.5ms` (`flat`), `maxGap 175ms` (`+8ms` regression).
+  - starvation signal: `916` events (`-16` vs iteration9 `932`) while low-FPS tails persist.
+- Highest-impact bottleneck evidence:
+  - TCP completion saturation hypothesis is largely resolved this run (`preDrop=0`, `tcpMaxCompletion<=29ms`, `tcpInFlightPeak=2`, no `tcp-backpressure` drops); completion guard applied once and prevented escalation.
+  - Remaining stutter is upstream cadence starvation: iPad logs still show repeated `starvationSignal=true` with empty downstream queues (`rendererDepth=0`, `reasmPending=0`), so transport/reassembly is not the active limiter.
+  - Mac logs show transient encoder saturation on burst windows (`encodePixelBuffer: SKIPPED frame ... pending=2`, total skipped `5`) including synthetic catch-up moments, matching starvation-like delivery holes without network pressure.
+- Hypothesis tested:
+  - Current highest-impact limiter is transient HEVC pending saturation during burst/catch-up windows; immediate frame skip on `pending>1` creates avoidable cadence holes that depress `1% low` and pacing even after TCP pressure is controlled.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Encode/HEVCEncoder.m`):
+  - Added branch-complete saturation-guard telemetry:
+    - `encodePixelBuffer: saturation guard branch=retry ...`
+    - `encodePixelBuffer: saturation guard branch=admit ...`
+    - `encodePixelBuffer: saturation guard branch=skip ...`
+  - Added bounded completion wait before skip on `pending>1` (2 attempts × 800µs) to absorb transient encoder backlog instead of immediate drop.
+  - Preserved existing encode success/failure logs and skip counter semantics.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - lower `saturation guard branch=skip` counts and more `branch=admit` recoveries,
+    - reduced starvation windows (`starvationSignal=true`) with unchanged transport loss/fidelity,
+    - improved `1% low`, `frame-pacing`, and latency tails without reintroducing TCP pressure.
+
 ## Lane WiFi Iteration 31 (iteration9 canonical run triage + TCP completion-guard pacing)
 
 - Timestamp: 2026-04-04 19:29:58 EDT
