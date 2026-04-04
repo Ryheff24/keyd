@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `55.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.483` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `43 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `212 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `73 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `72 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `223 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `97 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `58.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `40 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `161 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `56.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.865` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `28 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `101 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `37 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `50 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `134 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `58 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `58.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `28 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `135 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -104,3 +104,4 @@ Rules:
 | 2026-04-04 | 17:29:21 EDT | `de5ee42` | `2752x1786` | `2496x1620` | `57.0 fps` | `1.181` | `31/110/48 ms` | `55/131/72 ms` | `59.7 fps, 33/103 ms` | `1` | `26/33` | wifi: validate burst/starvation fix |
 | 2026-04-04 | 17:35:28 EDT | `c19f1e1` | `2752x1786` | `2496x1620` | `56.1 fps` | `1.322` | `34/107/50 ms` | `65/129/76 ms` | `59.5 fps, 33/102 ms` | `1` | `26/33` | wifi: send-scheduler burst shaping |
 | 2026-04-04 | 17:42:53 EDT | `57b06be` | `2752x1786` | `2496x1620` | `55.1 fps` | `1.483` | `43/212/73 ms` | `72/223/97 ms` | `58.4 fps, 40/161 ms` | `1` | `26/33` | wifi: validate send-scheduler burst shaping |
+| 2026-04-04 | 18:44:47 EDT | `fe616ab` | `2752x1786` | `2496x1620` | `56.9 fps` | `0.865` | `28/101/37 ms` | `50/134/58 ms` | `58.6 fps, 28/135 ms` | `1` | `26/33` | wifi: iteration4 launch-retry diagnostics |
