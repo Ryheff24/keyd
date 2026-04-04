@@ -69,6 +69,11 @@ static const NSUInteger kWirelessSevereCongestionChunkThreshold = 224;
 static const uint64_t kWirelessMildCongestedFrameIntervalUs = 16667;  /* ~60fps cadence */
 static const uint64_t kWirelessSevereCongestedFrameIntervalUs = 20000;/* stronger smoothing */
 static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate source timestamp jitter around cadence */
+/* Maximum in-flight TCP sends for Wi-Fi media path.
+ * Bounds kernel queue depth to avoid stale-frame tail latency and jitter. */
+static const int32_t kMaxMediaSendsInFlightWiFi = 3;
+/* Completion latency above this indicates kernel/network backlog in Wi-Fi TCP path. */
+static const uint64_t kWirelessTCPSlowCompletionThresholdMs = 25;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -158,6 +163,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 /* Send backpressure: track in-flight TCP media sends.
  * When > kMaxTcpSendsInFlight, drop new frames to prevent queue buildup. */
 @property (nonatomic, assign) volatile int32_t tcpMediaSendsInFlight;
+@property (nonatomic, assign) volatile int32_t wifiTCPMediaSendsInFlight;
 @property (atomic, assign) uint64_t wirelessLastEncodeSubmitUs;
 @property (nonatomic, assign) volatile int32_t wifiPerfEncodedFrames;
 @property (nonatomic, assign) volatile int32_t wifiPerfEncodedBytes;
@@ -168,6 +174,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPFallbacks;
 @property (nonatomic, assign) volatile int32_t wifiPerfPeakQueuedChunks;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPSendDrops;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPInFlightPeak;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSlowCompletions;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPMaxCompletionMs;
 
 /* QR code display window */
 @property (nonatomic, strong, nullable) NSWindow *qrWindow;
@@ -730,7 +739,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 #pragma mark - Streaming
 
 - (void)onTransportConnected {
-    os_log(sLog, "Transport connected -- sending handshake");
+    os_log(sLog, "Transport connected -- sending handshake (state=%{public}s transport=%{public}s usbConnected=%{public}d wifiConnected=%{public}d viewportReceived=%{public}d viewport=%ux%u hevcActive=%{public}d)",
+           [self sessionStateName:_sessionState],
+           transport_state_name(_transportState),
+           _usbTransport.isConnected, _wirelessTransport.isConnected,
+           _viewportReceived, _viewportWidth, _viewportHeight,
+           _hevcEncoder.isActive);
     _tcpMediaSendsInFlight = 0;
     _wirelessLastEncodeSubmitUs = 0;
     [self stopWirelessPerformanceTimer];
@@ -1110,7 +1124,49 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                        originalHeader->seq, payloadLen);
             }
             wifiTCPMediaLogCount++;
-            [_wirelessTransport sendMediaFrameViaTCP:data length:len];
+            uint32_t seq = originalHeader->seq;
+            uint64_t enqueueUs = keydrd_host_time_us();
+            int32_t inFlight = OSAtomicIncrement32Barrier(&_wifiTCPMediaSendsInFlight);
+            if (inFlight > _wifiPerfTCPInFlightPeak) {
+                _wifiPerfTCPInFlightPeak = inFlight;
+            }
+            if (inFlight <= 5 || inFlight % 10 == 0) {
+                os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu",
+                       seq, inFlight, len);
+            }
+            if (inFlight > kMaxMediaSendsInFlightWiFi) {
+                OSAtomicDecrement32Barrier(&_wifiTCPMediaSendsInFlight);
+                OSAtomicIncrement32Barrier(&_wifiPerfTCPSendDrops);
+                static int wifiTCPSendDropCount = 0;
+                wifiTCPSendDropCount++;
+                if (wifiTCPSendDropCount <= 10 || wifiTCPSendDropCount % 100 == 0) {
+                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d limit=%d totalDropped=%d",
+                           seq, inFlight - 1, kMaxMediaSendsInFlightWiFi, wifiTCPSendDropCount);
+                }
+                return;
+            }
+            __weak SessionManager *weakSelf = self;
+            [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
+                SessionManager *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_wifiTCPMediaSendsInFlight);
+                uint64_t doneUs = keydrd_host_time_us();
+                uint64_t elapsedMs = doneUs > enqueueUs ? (doneUs - enqueueUs) / 1000 : 0;
+                if ((int32_t)elapsedMs > strongSelf->_wifiPerfTCPMaxCompletionMs) {
+                    strongSelf->_wifiPerfTCPMaxCompletionMs = (int32_t)MIN(elapsedMs, (uint64_t)INT32_MAX);
+                }
+                if (elapsedMs >= kWirelessTCPSlowCompletionThresholdMs) {
+                    OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSlowCompletions);
+                    os_log(sLog, "WiFi TCP send slow completion: seq=%u success=%{public}s elapsed=%llums inFlightNow=%d",
+                           seq, success ? "yes" : "no", elapsedMs, left);
+                } else if (!success || left < 2) {
+                    os_log(sLog, "WiFi TCP send completion: seq=%u success=%{public}s elapsed=%llums inFlightNow=%d",
+                           seq, success ? "yes" : "no", elapsedMs, left);
+                }
+                if (!success) {
+                    OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSendDrops);
+                }
+            }];
             return;
         }
 
@@ -1177,6 +1233,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfTCPFallbacks = 0;
     _wifiPerfPeakQueuedChunks = 0;
     _wifiPerfTCPSendDrops = 0;
+    _wifiPerfTCPInFlightPeak = 0;
+    _wifiPerfTCPSlowCompletions = 0;
+    _wifiPerfTCPMaxCompletionMs = 0;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
@@ -1206,13 +1265,18 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t tcpFallbacks = strongSelf->_wifiPerfTCPFallbacks;
         int32_t tcpSendDrops = strongSelf->_wifiPerfTCPSendDrops;
         int32_t peakQueued = strongSelf->_wifiPerfPeakQueuedChunks;
+        int32_t tcpInFlightPeak = strongSelf->_wifiPerfTCPInFlightPeak;
+        int32_t tcpSlowCompletions = strongSelf->_wifiPerfTCPSlowCompletions;
+        int32_t tcpMaxCompletionMs = strongSelf->_wifiPerfTCPMaxCompletionMs;
+        int32_t tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
         NSUInteger queuedNow = strongSelf->_wirelessTransport.queuedMediaChunkCount;
         double avgKB = encodedFrames > 0 ? ((double)encodedBytes / (double)encodedFrames) / 1024.0 : 0.0;
         const char *pacingMode = queuedNow >= 320 ? "congested" : (queuedNow <= 96 ? "fast" : "default");
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
                preDrops, queueDrops, tcpFallbacks, tcpSendDrops,
+               tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
                (unsigned long)queuedNow, peakQueued, pacingMode);
 
         [strongSelf resetWirelessPerformanceWindow];
@@ -1492,12 +1556,32 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     const ViewportReportPayload *payload =
         (const ViewportReportPayload *)((const uint8_t *)data + sizeof(InputEventHeader));
 
+    uint32_t oldViewportWidth = _viewportWidth;
+    uint32_t oldViewportHeight = _viewportHeight;
     _viewportWidth = payload->viewport_width;
     _viewportHeight = payload->viewport_height;
     _viewportReceived = YES;
 
-    os_log(sLog, "iPad viewport report: %ux%u (Mac display: %ux%u)",
-           _viewportWidth, _viewportHeight, _captureWidth, _captureHeight);
+    BOOL viewportChanged = (_viewportWidth != oldViewportWidth) || (_viewportHeight != oldViewportHeight);
+    os_log(sLog, "iPad viewport report: %ux%u (previous: %ux%u, changed=%{public}d, Mac display: %ux%u, hevcActive=%{public}d, usbConnected=%{public}d)",
+           _viewportWidth, _viewportHeight,
+           oldViewportWidth, oldViewportHeight, viewportChanged,
+           _captureWidth, _captureHeight, _hevcEncoder.isActive, _usbTransport.isConnected);
+
+    if (!_usbTransport.isConnected && _hevcEncoder.isActive) {
+        uint32_t expectedEncodeWidth = _viewportWidth;
+        uint32_t expectedEncodeHeight = _viewportHeight;
+        keydrd_limit_size(_viewportWidth, _viewportHeight,
+                          kWirelessMaxEncodeWidth, kWirelessMaxEncodeHeight,
+                          &expectedEncodeWidth, &expectedEncodeHeight);
+        if (!viewportChanged &&
+            _captureWidth == expectedEncodeWidth &&
+            _captureHeight == expectedEncodeHeight) {
+            os_log(sLog, "Skipping redundant HEVC restart on unchanged viewport during active wireless session (expected=%ux%u capture=%ux%u)",
+                   expectedEncodeWidth, expectedEncodeHeight, _captureWidth, _captureHeight);
+            return;
+        }
+    }
 
     /* In LZ4 mode (wired USB), no HEVC encoder needed.
      * Resize capture to viewport dims, send geometry update to iPad so LZ4
@@ -1905,9 +1989,17 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
      * If USB connected first during startTransportMonitoring, WiFi advertising
      * was skipped. Start it now so transport rotation tests (and real reconnections)
      * can discover the Mac over WiFi/AWDL. */
+    if (!_wiredOnly) {
+        [_wirelessTransport beginReconnectWindow];
+    }
+
     if (!_wiredOnly && !_wirelessTransport.isConnected) {
-        os_log(sLog, "Starting WiFi advertising for reconnection (may have been skipped earlier)");
+        os_log(sLog, "Starting WiFi advertising for reconnection (may have been skipped earlier, state=%{public}s transport=%{public}s)",
+               [self sessionStateName:_sessionState], transport_state_name(_transportState));
         [_wirelessTransport startAdvertising];
+    } else if (!_wiredOnly) {
+        os_log(sLog, "Reconnect path: WiFi advertising already active (wirelessConnected=%{public}d state=%{public}s transport=%{public}s)",
+               _wirelessTransport.isConnected, [self sessionStateName:_sessionState], transport_state_name(_transportState));
     }
 
     _reconnectAttempt = 0;

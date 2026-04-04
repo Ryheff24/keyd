@@ -64,6 +64,8 @@ final class UDPReassembler {
     private var pendingFrames: [UInt16: PendingFrame] = [:]
 
     /// Insertion order tracking for eviction (oldest first).
+    /// Entries can become stale after delivery/purge; we lazily skip stale
+    /// entries during eviction to avoid repeated O(n) removeAll churn.
     private var insertionOrder: [UInt16] = []
 
     /// Timer that periodically purges stale incomplete frames.
@@ -96,6 +98,7 @@ final class UDPReassembler {
     /// Number of purge timer intervals between stats logs.
     /// purgeTimer fires every frameTimeoutInterval (2s), so 3 ticks = 6 seconds.
     private static let statsLogInterval = 3
+    private var staleInsertionSkips = 0
 
     // MARK: - Init
 
@@ -282,7 +285,6 @@ final class UDPReassembler {
     private func deliverCompleteFrame(seq: UInt16, pending: PendingFrame) {
         // Remove from tracking
         pendingFrames.removeValue(forKey: seq)
-        insertionOrder.removeAll { $0 == seq }
 
         reassembledCount += 1
         if reassembledCount <= 3 {
@@ -427,20 +429,31 @@ final class UDPReassembler {
 
     /// Evict the oldest pending frame to make room for a new one.
     private func evictOldest() {
-        guard let oldestSeq = insertionOrder.first else { return }
-        let pending = pendingFrames[oldestSeq]
-        let received = pending?.chunks.count ?? 0
-        let total = pending?.chunkTotal ?? 0
-        pendingFrames.removeValue(forKey: oldestSeq)
-        insertionOrder.removeFirst()
-        framesEvicted += 1
-        print("[CONSOLE] UDPReassembler: EVICTED seq=\(oldestSeq) (\(received)/\(total) chunks, total evicted=\(framesEvicted))")
-        if hasDeliveredFirstFrame {
-            let distance = seqDistance(from: lastDeliveredSeq, to: oldestSeq)
-            if distance > 0 && distance <= 32768 {
-                enterRecoveryMode(reason: "evicted incomplete frame", missingSeq: oldestSeq)
+        while !insertionOrder.isEmpty {
+            let oldestSeq = insertionOrder.removeFirst()
+            guard let pending = pendingFrames[oldestSeq] else {
+                staleInsertionSkips += 1
+                if staleInsertionSkips <= 5 || staleInsertionSkips % 50 == 0 {
+                    print("[CONSOLE] UDPReassembler: eviction-skip stale seq=\(oldestSeq) staleSkips=\(staleInsertionSkips) insertionDepth=\(insertionOrder.count)")
+                }
+                continue
             }
+
+            let received = pending.chunks.count
+            let total = pending.chunkTotal
+            pendingFrames.removeValue(forKey: oldestSeq)
+            framesEvicted += 1
+            print("[CONSOLE] UDPReassembler: EVICTED seq=\(oldestSeq) (\(received)/\(total) chunks, total evicted=\(framesEvicted), staleSkips=\(staleInsertionSkips))")
+            if hasDeliveredFirstFrame {
+                let distance = seqDistance(from: lastDeliveredSeq, to: oldestSeq)
+                if distance > 0 && distance <= 32768 {
+                    enterRecoveryMode(reason: "evicted incomplete frame", missingSeq: oldestSeq)
+                }
+            }
+            return
         }
+
+        print("[CONSOLE] UDPReassembler: eviction requested but insertion order empty (pending=\(pendingFrames.count), staleSkips=\(staleInsertionSkips))")
     }
 
     /// Start a timer that periodically purges stale incomplete frames.
@@ -468,7 +481,6 @@ final class UDPReassembler {
             framesPurged += 1
             print("[CONSOLE] UDPReassembler: PURGED seq=\(seq) (\(received)/\(total) chunks, age=\(String(format: "%.0f", (now - (pending?.createdAt ?? now)) * 1000))ms, total purged=\(framesPurged))")
             pendingFrames.removeValue(forKey: seq)
-            insertionOrder.removeAll { $0 == seq }
             if hasDeliveredFirstFrame {
                 let distance = seqDistance(from: lastDeliveredSeq, to: seq)
                 if distance > 0 && distance <= 32768 {

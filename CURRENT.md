@@ -2,61 +2,53 @@
 
 ## Active Objective
 
-- Lane: usb
-- Goal: restore and harden USB transport performance headroom under aggressive stream load (no E2E run in this loop by constraint)
+- Lane: wifi (lane C Objective-C)
+- Goal: reduce persistent Wi-Fi tail latency/jitter and stabilize FPS pacing without running E2E in this loop.
 
 ## Latest Run
 
-- Timestamp: 2026-04-04 (lane B USB iteration)
-- Command: `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/DerivedData build` and `xcodebuild -project RemoteDesktop/iPadOS/RemoteDesktopApp.xcodeproj -scheme RemoteDesktopApp -destination 'generic/platform=iOS' -derivedDataPath .build/DerivedData build`
-- Notes: USB-focused profiling/fix iteration only; E2E script intentionally not run per constraint.
-- Result: macOS build ✅, iPadOS build ✅
+- Timestamp: 2026-04-04 01:49:10 EDT
+- Command: `xcodebuild -workspace keyd.xcworkspace -scheme KeydAgent -configuration Debug -destination 'platform=macOS' build`
+- Notes: lane-C Wi-Fi bottleneck iteration only; E2E script intentionally not run per constraint.
+- Result: macOS build ✅
 
 ## Instrumentation Added This Iteration
 
-- Surfaces touched:
-  - `RemoteDesktop/iPadOS/Transport/USBNetworkTransport.swift`
-  - `RemoteDesktop/iPadOS/Transport/UDPReassembler.swift`
-  - `RemoteDesktop/macOS/Transport/USBNetworkTransport.m`
+- Surface touched:
+  - `RemoteDesktop/macOS/App/SessionManager.m`
 - New log signals:
-  - iPad USB TCP receive/drain path:
-    - `USBTransport: tcp-recv append=... buffer=... readOffset=...`
-    - `USBTransport: tcp-drain partial msgLen=... available=...`
-    - `USBTransport: tcp-drain delivered=... elapsed=... start=... end=... totalMsgs=...`
-    - `USBTransport: tcp-compact #... consumed=... unread=... elapsed=... newBuffer=...`
-  - iPad chunk reassembly:
-    - `UDPReassembler: reassemble seq=... chunks=... bytes=... elapsed=...`
-  - mac USB HEVC chunk send batching:
-    - `USB media chunk batch build: ...`
-    - `USB media chunk batch ready: ... buildElapsed=...`
-    - `USB media chunk batch send success/error: ... elapsed=...`
-- Why needed: prior USB behavior had no direct timing/queue visibility across TCP drain compaction and chunk-batch send cost, making regression causality ambiguous.
+  - `WiFi TCP send queued: seq=... inFlight=... bytes=...`
+  - `WiFi TCP backpressure drop: seq=... inFlight=... limit=... totalDropped=...`
+  - `WiFi TCP send slow completion: seq=... success=... elapsed=...ms inFlightNow=...`
+  - `WiFi TCP send completion: seq=... success=... elapsed=...ms inFlightNow=...`
+  - Expanded 1s telemetry: `tcpInFlight`, `tcpInFlightPeak`, `tcpSlow`, `tcpMaxCompletion`
+- Why needed: existing logs showed encode is mostly ~11ms while iPad pipeline p95 is ~155ms, indicating likely queue buildup in Wi-Fi TCP send path; new counters isolate kernel-send backlog and completion tails.
 
 ## Key Metrics (Latest)
 
-- E2E metrics: not collected in this loop (E2E script not run per lane constraint).
+- External evidence used (no new E2E run):
+  - iPad: sustained/fps/pacing/pipeline/glass failures with p95 pipeline ~155-156ms and jitter ~28ms.
+  - Mac: `encodePixelBuffer: SKIPPED frame (pending=2)` observed; final skip counter `4`.
+  - Mac: repeated `LATENCY-PROBE encode-complete: ~11ms` indicates encode itself is not dominant tail contributor.
 - Build status:
-  - macOS `RemoteDesktopAgent`: **BUILD SUCCEEDED**
-  - iPadOS `RemoteDesktopApp`: **BUILD SUCCEEDED**
+  - macOS `KeydAgent`: **BUILD SUCCEEDED**
 
 ## Current Hypothesis
 
-- Residual USB regression risk was primarily in:
-  1) iPad TCP reassembly compaction frequency (`removeSubrange`) causing avoidable memmove stalls,
-  2) iPad chunk reassembly append growth churn,
-  3) mac HEVC chunk-per-send recursion overhead and weak per-batch observability.
+- Dominant residual bottleneck for lane C is Wi-Fi TCP send-queue tailing (in-flight backlog/completion delays), not pure encode cost.
+- Unbounded/weakly bounded Wi-Fi TCP media in-flight depth likely converts transient link variance into long queueing delay, inflating p95 pipeline/g2g and causing low 1% FPS.
 
 ## Next Change
 
-- Let orchestrator run USB validation to quantify:
-  - TCP drain elapsed/compaction cadence improvements,
-  - chunk batch send elapsed stability,
-  - any remaining sender backpressure/drop bursts.
+- Run next Wi-Fi validation loop externally and triage:
+  - whether `tcpInFlightPeak` clips at 3,
+  - whether `tcpSlow`/`tcpMaxCompletion` correlate with pipeline p95 spikes,
+  - whether `tcpSendDrop` reduction/increase aligns with 1% low FPS and jitter movement.
 
 ## Validation Plan
 
-- Run USB validation command externally (orchestrator lane flow).
-- Triaging focus:
-  - iPad logs: `tcp-drain`, `tcp-compact`, `reassemble`.
-  - mac logs: `chunk batch ready/send success`, `TCP backpressure`.
-- Confirm no correctness/security regressions and no increased reconnect churn.
+- Do not run E2E script in this lane.
+- Use orchestrator-provided Wi-Fi test run and compare:
+  - iPad: sustained/fps/frame-pacing/pipeline/glass metrics,
+  - Mac: `WiFi TCP send*` and `WiFi perf 1s` TCP fields.
+- Confirm no reconnect/security regressions and that latency/FPS move in expected direction.

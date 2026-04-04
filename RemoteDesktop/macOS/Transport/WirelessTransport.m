@@ -41,6 +41,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     uint64_t _nextSendTime;               // next allowed send time (mach absolute time)
     uint64_t _inputReadyAtTicks;          // when the current input connection reached ready
     uint64_t _lastInputActivityTicks;     // last time bytes were received on input connection
+    BOOL _allowReconnectTakeover;         // allow replacing lingering input socket after disconnect
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
 }
@@ -312,6 +313,13 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     nw_listener_start(_bonjourListener);
 }
 
+- (void)beginReconnectWindow {
+    _allowReconnectTakeover = YES;
+    os_log(wireless_log(),
+           "Reconnect window armed: allowReconnectTakeover=1 inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d",
+           _inputConnection, _isConnected, _isAWDL);
+}
+
 - (void)stopAdvertising {
     if (_bonjourListener) {
         nw_listener_cancel(_bonjourListener);
@@ -506,19 +514,22 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         BOOL staleByNoInput = (_lastInputActivityTicks == 0) &&
                               (_inputReadyAtTicks > 0) &&
                               (ageNs >= kDuplicateReplaceIdleThresholdNs);
-        BOOL shouldReplace = (!_isConnected) || staleByIdle || staleByNoInput;
+        BOOL shouldReplace = _allowReconnectTakeover || (!_isConnected) || staleByIdle || staleByNoInput;
 
         os_log(wireless_log(),
-               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d idle=%.2fs age=%.2fs shouldReplace=%{public}d",
+               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d idle=%.2fs age=%.2fs allowReconnectTakeover=%{public}d shouldReplace=%{public}d",
                _inputConnection, _isConnected, _isAWDL,
-               (double)idleNs / 1000000000.0, (double)ageNs / 1000000000.0, shouldReplace);
+               (double)idleNs / 1000000000.0, (double)ageNs / 1000000000.0,
+               _allowReconnectTakeover, shouldReplace);
         if (shouldReplace) {
-            const char *reason = !_isConnected ? "not-connected" : (staleByIdle ? "idle-timeout" : "no-input-timeout");
+            const char *reason = _allowReconnectTakeover ? "reconnect-window" :
+                (!_isConnected ? "not-connected" : (staleByIdle ? "idle-timeout" : "no-input-timeout"));
             os_log(wireless_log(), "Replacing stale wireless input connection (%{public}s)", reason);
             nw_connection_cancel(_inputConnection);
             _inputConnection = nil;
             _inputReadyAtTicks = 0;
             _lastInputActivityTicks = 0;
+            _allowReconnectTakeover = NO;
         } else {
             os_log(wireless_log(), "Ignoring duplicate wireless candidate while an existing session is active");
             nw_connection_cancel(connection);
@@ -561,6 +572,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
 
             self2.isAWDL = detectedAWDL;
             self2.isConnected = YES;
+            self2->_allowReconnectTakeover = NO;
             self2->_inputReadyAtTicks = mach_absolute_time();
             self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
@@ -582,6 +594,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
             if (self2.inputConnection == connection) {
                 self2.inputConnection = nil;
                 self2.isConnected = NO;
+                self2->_allowReconnectTakeover = NO;
                 self2->_inputReadyAtTicks = 0;
                 self2->_lastInputActivityTicks = 0;
                 if (self2.onConnectionChanged) {
@@ -759,6 +772,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         nw_connection_cancel(_inputConnection);
         _inputConnection = nil;
     }
+    _allowReconnectTakeover = NO;
     _inputReadyAtTicks = 0;
     _lastInputActivityTicks = 0;
     _isConnected = NO;

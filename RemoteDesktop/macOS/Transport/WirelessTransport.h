@@ -61,6 +61,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)startAdvertising;
 
 /**
+ * Arm reconnect takeover mode so the next accepted wireless candidate can
+ * replace a lingering connection from a lost session.
+ */
+- (void)beginReconnectWindow;
+
+/**
  * Stop advertising and tear down all connections.
  */
 - (void)stopAdvertising;

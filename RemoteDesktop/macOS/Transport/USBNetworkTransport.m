@@ -432,19 +432,20 @@ static const char *kInputPortStr = "14568";
     nw_connection_t conn = _inputConnection;
     if (!conn) return;
 
-    /* Prepend 4-byte big-endian length prefix for TCP message framing */
-    uint32_t netLen = htonl((uint32_t)len);
-    uint32_t *lenCopy = malloc(sizeof(uint32_t));
-    if (!lenCopy) {
-        os_log_error(transport_log(), "Input send skipped: failed to allocate length prefix");
+    /* Build a single contiguous framed buffer to avoid concat/allocation churn
+     * on high-frequency input events. */
+    size_t framedLen = sizeof(uint32_t) + len;
+    uint8_t *framedCopy = malloc(framedLen);
+    if (!framedCopy) {
+        os_log_error(transport_log(), "Input send skipped: failed to allocate framed input buffer (%zu bytes)", framedLen);
         return;
     }
-    *lenCopy = netLen;
-    dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
-                                                   DISPATCH_DATA_DESTRUCTOR_FREE);
-    dispatch_data_t payloadData = dispatch_data_create(data, len, _transportQueue,
-                                                       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+
+    uint32_t netLen = htonl((uint32_t)len);
+    memcpy(framedCopy, &netLen, sizeof(uint32_t));
+    memcpy(framedCopy + sizeof(uint32_t), data, len);
+    dispatch_data_t framed = dispatch_data_create(framedCopy, framedLen, _transportQueue,
+                                                  DISPATCH_DATA_DESTRUCTOR_FREE);
 
     nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
@@ -537,79 +538,65 @@ static const char *kInputPortStr = "14568";
         size_t payloadLen = len - sizeof(MediaFrameHeader);
         const size_t tcpChunkMTU = 64 * 1024;
 
-        NSMutableArray<NSData *> *chunks = [NSMutableArray array];
+        size_t maxChunkPayload = tcpChunkMTU > sizeof(MediaFrameHeader) ? (tcpChunkMTU - sizeof(MediaFrameHeader)) : 1;
+        size_t estimatedChunkCount = (payloadLen + maxChunkPayload - 1) / maxChunkPayload;
+        size_t estimatedFramedBytes = payloadLen + (estimatedChunkCount * (sizeof(MediaFrameHeader) + sizeof(uint32_t)));
+        NSMutableData *framedBatchData = [NSMutableData dataWithCapacity:estimatedFramedBytes];
+        if (!framedBatchData) {
+            os_log_error(transport_log(), "USB media chunk batch allocation failed: seq=%u estimate=%zu",
+                         frameSeq, estimatedFramedBytes);
+            if (completion) completion(NO);
+            return;
+        }
+
+        __block NSUInteger chunkCount = 0;
+        __block size_t framedBytes = 0;
         chunk_frame(payload, payloadLen, originalHeader->seq, tcpChunkMTU,
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
-            [chunks addObject:[NSData dataWithBytes:chunk length:chunkLen]];
+            uint32_t netLen = htonl((uint32_t)chunkLen);
+            [framedBatchData appendBytes:&netLen length:sizeof(uint32_t)];
+            [framedBatchData appendBytes:chunk length:chunkLen];
+            chunkCount += 1;
+            framedBytes += sizeof(uint32_t) + chunkLen;
+            if (chunkCount == 1 || chunkCount % 16 == 0) {
+                os_log(transport_log(),
+                       "USB media chunk batch append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
+                       frameSeq, (unsigned long)chunkCount, chunkLen, framedBytes);
+            }
         });
 
-        if (chunks.count > 0) {
+        if (chunkCount > 0 && framedBatchData.length > 0) {
             uint64_t chunkBatchStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
             os_log(transport_log(),
                    "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu hevc=%{public}s",
-                   frameSeq, tcpChunkMTU, (unsigned long)chunks.count,
+                   frameSeq, tcpChunkMTU, (unsigned long)chunkCount,
                    isHEVC ? "yes" : "no");
-
-            __block dispatch_data_t framedBatch = nil;
-            __block size_t framedBytes = 0;
-            __block BOOL buildFailed = NO;
-            [chunks enumerateObjectsUsingBlock:^(NSData * _Nonnull chunk, NSUInteger idx, BOOL * _Nonnull stop) {
-                uint32_t *lenCopy = malloc(sizeof(uint32_t));
-                if (!lenCopy) {
-                    buildFailed = YES;
-                    *stop = YES;
-                    return;
-                }
-                uint32_t netLen = htonl((uint32_t)chunk.length);
-                *lenCopy = netLen;
-                dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
-                                                               DISPATCH_DATA_DESTRUCTOR_FREE);
-                dispatch_data_t payloadData = dispatch_data_create(chunk.bytes, chunk.length,
-                                                                   _transportQueue,
-                                                                   DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-                dispatch_data_t framedChunk = dispatch_data_create_concat(lenData, payloadData);
-                framedBytes += sizeof(uint32_t) + chunk.length;
-                framedBatch = framedBatch ? dispatch_data_create_concat(framedBatch, framedChunk) : framedChunk;
-                if (idx == 0 || idx + 1 == chunks.count || ((idx + 1) % 16 == 0)) {
-                    os_log(transport_log(),
-                           "USB media chunk batch build: seq=%u chunk=%lu/%lu bytes=%zu",
-                           frameSeq, (unsigned long)(idx + 1), (unsigned long)chunks.count, chunk.length);
-                }
-            }];
-
-            if (buildFailed || !framedBatch) {
-                os_log_error(transport_log(),
-                             "USB media chunk batch build failed: seq=%u chunks=%lu",
-                             frameSeq, (unsigned long)chunks.count);
-                if (completion) completion(NO);
-                return;
-            }
-
             uint64_t buildElapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - chunkBatchStartNs) / NSEC_PER_MSEC;
             os_log(transport_log(),
-                   "USB media chunk batch ready: seq=%u chunks=%lu framedBytes=%zu buildElapsed=%llums",
-                   frameSeq, (unsigned long)chunks.count, framedBytes, buildElapsedMs);
+                   "USB media chunk batch ready: seq=%u chunks=%lu framedBytes=%zu buildElapsed=%llums estimate=%zu",
+                   frameSeq, (unsigned long)chunkCount, framedBytes, buildElapsedMs, estimatedFramedBytes);
 
-            /* Keep chunk NSData storage alive until send completion because payloadData
-             * references chunk.bytes with DISPATCH_DATA_DESTRUCTOR_DEFAULT. */
-            NSArray<NSData *> *chunksRetained = [chunks copy];
+            NSData *batchRetained = framedBatchData;
+            dispatch_data_t framedBatch = dispatch_data_create(batchRetained.bytes, batchRetained.length,
+                                                               _transportQueue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
             nw_connection_send(conn, framedBatch, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                                true, ^(nw_error_t _Nullable error) {
-                (void)chunksRetained;
+                (void)batchRetained;
                 uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
                 if (completion) completion(error == nil);
                 if (error) {
                     os_log_error(transport_log(),
-                                 "USB media chunk batch send error: %{public}@ (seq=%u chunks=%lu elapsed=%llums)",
-                                 error, frameSeq, (unsigned long)chunks.count, elapsedMs);
+                             "USB media chunk batch send error: %{public}@ (seq=%u chunks=%lu elapsed=%llums)",
+                                 error, frameSeq, (unsigned long)chunkCount, elapsedMs);
                     return;
                 }
                 os_log(transport_log(),
-                       "USB media chunk batch send success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums",
-                       frameSeq, (unsigned long)chunks.count, framedBytes, elapsedMs);
+                        "USB media chunk batch send success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums",
+                        frameSeq, (unsigned long)chunkCount, framedBytes, elapsedMs);
             });
             return;
         }
+        os_log_error(transport_log(), "USB media chunk batch empty: seq=%u payload=%zu", frameSeq, payloadLen);
     }
     if (hasFrameSeq) {
         os_log(transport_log(),
@@ -617,29 +604,19 @@ static const char *kInputPortStr = "14568";
                frameSeq, len, isHEVC ? "yes" : "no");
     }
 
-    /* Copy data — caller may free immediately after return */
-    void *copy = malloc(len);
-    if (!copy) {
+    /* Build framed buffer in one allocation to reduce per-frame allocator churn. */
+    size_t framedLen = sizeof(uint32_t) + len;
+    uint8_t *framedCopy = malloc(framedLen);
+    if (!framedCopy) {
+        os_log_error(transport_log(), "Media TCP send skipped: failed to allocate framed buffer (%zu bytes)", framedLen);
         if (completion) completion(NO);
         return;
     }
-    memcpy(copy, data, len);
-
-    /* Prepend 4-byte big-endian length prefix for TCP message framing */
     uint32_t netLen = htonl((uint32_t)len);
-    uint32_t *lenCopy = malloc(sizeof(uint32_t));
-    if (!lenCopy) {
-        os_log_error(transport_log(), "Media TCP send skipped: failed to allocate length prefix");
-        free(copy);
-        if (completion) completion(NO);
-        return;
-    }
-    *lenCopy = netLen;
-    dispatch_data_t lenData = dispatch_data_create(lenCopy, sizeof(uint32_t), _transportQueue,
-                                                   DISPATCH_DATA_DESTRUCTOR_FREE);
-    dispatch_data_t payloadData = dispatch_data_create(copy, len, _transportQueue,
-                                                       DISPATCH_DATA_DESTRUCTOR_FREE);
-    dispatch_data_t framed = dispatch_data_create_concat(lenData, payloadData);
+    memcpy(framedCopy, &netLen, sizeof(uint32_t));
+    memcpy(framedCopy + sizeof(uint32_t), data, len);
+    dispatch_data_t framed = dispatch_data_create(framedCopy, framedLen, _transportQueue,
+                                                  DISPATCH_DATA_DESTRUCTOR_FREE);
 
     nw_connection_send(conn, framed, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                        true, ^(nw_error_t _Nullable error) {
