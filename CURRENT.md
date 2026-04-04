@@ -1,5 +1,43 @@
 # CURRENT
 
+## Lane WiFi Iteration 34 (iteration12 canonical run triage + HEVC soft/hard saturation guard)
+
+- Timestamp: 2026-04-04 19:49:06 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration12 hevc adaptive saturation retry budget to reduce clustered skip tails"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metric deltas vs iteration11:
+  - sustained-stream `1% low 7.5 -> 9.2` (improved).
+  - fps test `maxGap 242ms -> 400ms` (severe regression tail).
+  - iPad starvation signals `443 -> 762` (`starvationSignal=true`, regressed).
+  - HEVC saturation guard behavior: `retry=10` (flat), `admit=1 -> 2` (improved), `skip=7 -> 6` (slight improvement, still clustered).
+- Highest-impact bottleneck evidence:
+  - Encoder saturation skips remain clustered around burst windows with `pendingBefore=2`:
+    - startup cluster at `19:44:05` produced 3 skips in ~28ms despite escalated retries (`budgetUs=4800`),
+    - restart/catch-up cluster near `19:46:43` produced 2 more skips and one later skip at `19:47:14`.
+  - Current retry windows (`1.6ms` default / `4.8ms` escalated) still expire before transient encode drains on `pending=2`, creating cadence holes that align with `maxGap=400ms` and high starvation count.
+- Hypothesis tested:
+  - Remaining stutter is dominated by overly aggressive skip policy at `pending=2`; these are soft, transient pressure windows and should prefer bounded wait + admit instead of skipping frames.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Encode/HEVCEncoder.m`):
+  - Added explicit saturation modes and threshold telemetry:
+    - `branch=plan ... mode=soft|hard dropThreshold=3 ...`
+  - Introduced soft/hard saturation behavior split:
+    - soft (`pending=2`): longer bounded retry budget (`6` / `14` attempts) and admit when still below hard threshold,
+    - hard (`pending>=3`): preserve drop-protect semantics.
+  - Added branch-complete soft-admit logging:
+    - `branch=admit-soft pendingBefore ... pendingAfter ... waitedUs ... budgetUs ...`
+  - Expanded skip telemetry with saturation mode (`soft|hard`) for failure-path causality.
+  - Preserved test semantics, thresholds, transport security behavior, and resolution/fidelity.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - clustered `branch=skip` events collapse (especially `pendingBefore=2` cases),
+    - `branch=admit-soft` appears at prior burst windows with lower starvation count,
+    - improved `fps maxGap`, `1% low`, and jitter without latency runaway or fidelity regression.
+
 ## Lane WiFi Iteration 33 (iteration11 canonical run triage + HEVC saturation budget escalation)
 
 - Timestamp: 2026-04-04 19:42:40 EDT

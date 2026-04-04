@@ -31,8 +31,11 @@ static const int kEcoMaxWidth720 = 1280;
 static const int kEcoMaxHeight720 = 720;
 static const int kEncodePendingSaturationRetryAttempts = 2;
 static const int kEncodePendingSaturationRetryAttemptsEscalated = 6;
+static const int kEncodePendingSaturationRetryAttemptsSoft = 6;
+static const int kEncodePendingSaturationRetryAttemptsSoftEscalated = 14;
 static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
 static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
+static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
 
 @implementation HEVCEncoder {
     VTCompressionSessionRef _session;
@@ -263,31 +266,40 @@ static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
         return;
     }
 
-    /* Frame skip: drop frames when encoder pipeline is saturated.
-     * Only allow 1 frame in-flight. With >2, keyframe stalls cascade into
-     * 150ms+ gaps (measured: 30 stutters, 46ms jitter at >2 threshold).
-     * >1 keeps p95 encode under 35ms and jitter under 5ms. */
+    /* Frame saturation guard:
+     * - pending >=3: hard saturation (drop-protect to prevent queue runaway)
+     * - pending ==2: soft saturation (prefer bounded wait + admit to avoid cadence holes) */
     int pending = atomic_load_explicit(&_pendingFrameCount, memory_order_relaxed);
     if (pending > 1) {
         int pendingBefore = pending;
         uint64_t waitedUs = 0;
         BOOL admittedAfterWait = NO;
+        BOOL softSaturation = (pendingBefore < kEncodePendingSaturationHardDropPendingThreshold);
         static int saturationRetryLogCount = 0;
         static int saturationAdmitLogCount = 0;
+        static int saturationSoftAdmitLogCount = 0;
         static int saturationPlanLogCount = 0;
         _saturationHitStreak++;
         BOOL escalateBudget =
             (_saturationHitStreak >= kEncodePendingSaturationEscalateHitStreakThreshold) ||
             (_saturationSkipStreak > 0);
-        int retryAttempts =
-            escalateBudget ? kEncodePendingSaturationRetryAttemptsEscalated : kEncodePendingSaturationRetryAttempts;
+        int retryAttempts;
+        if (softSaturation) {
+            retryAttempts = escalateBudget ? kEncodePendingSaturationRetryAttemptsSoftEscalated
+                                           : kEncodePendingSaturationRetryAttemptsSoft;
+        } else {
+            retryAttempts = escalateBudget ? kEncodePendingSaturationRetryAttemptsEscalated
+                                           : kEncodePendingSaturationRetryAttempts;
+        }
         uint64_t retryBudgetUs = (uint64_t)retryAttempts * (uint64_t)kEncodePendingSaturationRetrySleepUs;
 
         saturationPlanLogCount++;
         if (saturationPlanLogCount <= 12 || saturationPlanLogCount % 200 == 0) {
             os_log(hevc_log(),
-                   "encodePixelBuffer: saturation guard branch=plan pendingBefore=%d hitStreak=%d skipStreak=%d attempts=%d sleepUs=%u budgetUs=%llu",
+                   "encodePixelBuffer: saturation guard branch=plan pendingBefore=%d mode=%{public}s dropThreshold=%d hitStreak=%d skipStreak=%d attempts=%d sleepUs=%u budgetUs=%llu",
                    pendingBefore,
+                   softSaturation ? "soft" : "hard",
+                   kEncodePendingSaturationHardDropPendingThreshold,
                    _saturationHitStreak,
                    _saturationSkipStreak,
                    retryAttempts,
@@ -309,7 +321,7 @@ static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
             usleep(kEncodePendingSaturationRetrySleepUs);
             waitedUs += kEncodePendingSaturationRetrySleepUs;
             pending = atomic_load_explicit(&_pendingFrameCount, memory_order_relaxed);
-            if (pending <= 1) {
+            if (pending <= 1 || (softSaturation && pending < kEncodePendingSaturationHardDropPendingThreshold)) {
                 admittedAfterWait = YES;
                 break;
             }
@@ -320,9 +332,10 @@ static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
             _saturationSkipStreak++;
             if (_skipLogCount <= 10 || _skipLogCount % 100 == 0) {
                 os_log(hevc_log(),
-                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d waitedUs=%llu totalSkipped=%d hitStreak=%d skipStreak=%d budgetUs=%llu",
+                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d mode=%{public}s waitedUs=%llu totalSkipped=%d hitStreak=%d skipStreak=%d budgetUs=%llu",
                        pendingBefore,
                        pending,
+                       softSaturation ? "soft" : "hard",
                        waitedUs,
                        _skipLogCount,
                        _saturationHitStreak,
@@ -334,14 +347,26 @@ static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
 
         _saturationHitStreak = 0;
         _saturationSkipStreak = 0;
-        saturationAdmitLogCount++;
-        if (saturationAdmitLogCount <= 10 || saturationAdmitLogCount % 200 == 0) {
-            os_log(hevc_log(),
-                   "encodePixelBuffer: saturation guard branch=admit pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu",
-                   pendingBefore,
-                   pending,
-                   waitedUs,
-                   retryBudgetUs);
+        if (softSaturation && pending > 1) {
+            saturationSoftAdmitLogCount++;
+            if (saturationSoftAdmitLogCount <= 10 || saturationSoftAdmitLogCount % 100 == 0) {
+                os_log(hevc_log(),
+                       "encodePixelBuffer: saturation guard branch=admit-soft pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu",
+                       pendingBefore,
+                       pending,
+                       waitedUs,
+                       retryBudgetUs);
+            }
+        } else {
+            saturationAdmitLogCount++;
+            if (saturationAdmitLogCount <= 10 || saturationAdmitLogCount % 200 == 0) {
+                os_log(hevc_log(),
+                       "encodePixelBuffer: saturation guard branch=admit pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu",
+                       pendingBefore,
+                       pending,
+                       waitedUs,
+                       retryBudgetUs);
+            }
         }
     } else if (_saturationHitStreak > 0 || _saturationSkipStreak > 0) {
         static int saturationRecoveryLogCount = 0;
