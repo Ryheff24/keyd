@@ -1,5 +1,79 @@
 # CURRENT
 
+## Lane A Iteration 19 (Wi‑Fi control-path grace recovery, non‑E2E)
+
+- Timestamp: 2026-04-04 12:57:20 EDT
+- Scope: eliminate sustained-stream reconnect dip from transient TCP control-path EOF/cancel while media path remains healthy; preserve legitimate dead-path recovery.
+- Commands:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination "platform=macOS,arch=arm64" -derivedDataPath .build/DerivedData build`
+  - `xcodebuild -project RemoteDesktop/iPadOS/RemoteDesktopApp.xcodeproj -scheme RemoteDesktopApp -configuration Debug -destination "generic/platform=iOS" -derivedDataPath .build/DerivedData build`
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgentTests -configuration Debug -destination "platform=macOS,arch=arm64" -only-testing:RemoteDesktopAgentTests/TransportFSMTests -only-testing:RemoteDesktopAgentTests/TransportNetworkTests test`
+- Result:
+  - macOS build ✅
+  - iPadOS build ✅
+  - targeted transport tests ✅ (`52 executed, 0 failed`)
+- Hypothesis: control-channel interruptions (EOF/cancel/fail) should enter a bounded degraded mode if DTLS media is still active, allowing in-session control replacement instead of immediate disconnect/reconnect churn.
+- Instrumentation/behavior added:
+  - `RemoteDesktop/macOS/Transport/WirelessTransport.m`
+    - Replaced unconditional TCP EOF teardown behavior with decision logging:
+      - `decision=degraded` when media is active.
+      - `decision=reconnect-triggered` when media is not active.
+    - Added bounded control recovery loop (poll `750ms`, hard deadline `6s`) with explicit logs:
+      - `decision=degraded reason=awaiting-control-replacement`
+      - `decision=preserved reason=control-path-recovered`
+      - `decision=reconnect-triggered reason=control-recovery-timeout`
+    - During degraded window:
+      - preserve `isConnected` and media session,
+      - arm reconnect takeover + Bonjour discovery for replacement control socket,
+      - only emit disconnect (`onConnectionChanged(NO, ...)`) on hard timeout/no-media path.
+    - Added explicit recovery cancel logs on ready/teardown/media-loss.
+  - `RemoteDesktop/iPadOS/Transport/WirelessTransport.swift`
+    - Mirrored bounded control recovery strategy for `.failed/.cancelled` and TCP receive EOF/error:
+      - transient control loss + active media => degraded preserve path + replacement attempts.
+      - no media or timeout => reconnect-triggered teardown.
+    - Added matching decision logs (`preserved` / `degraded` / `reconnect-triggered`) with reason/detail/elapsed context.
+    - Added cancellation/reset points for control recovery on TCP ready, teardown, and media-path loss.
+- Next move:
+  - Run canonical Wi‑Fi full-profile E2E on orchestrator lane and verify around t~190s:
+    - control-path events should show degraded/preserved instead of immediate disconnect chain,
+    - no `WiFiUnavailable -> Disconnected -> DisconnectCurrent` cascade unless recovery timeout/no-media condition is hit.
+
+## Lane C Iteration 19 (Wi‑Fi stale-frame tail guard, non‑E2E)
+
+- Timestamp: 2026-04-04 12:54:29 EDT
+- Scope: reduce sustained 1% low collapse and tail latency spikes by preventing stale frames from entering Wi‑Fi HEVC pipeline under transient load; continuity-first and floor-safe (>=30fps); no E2E run per constraint.
+- Commands:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -destination 'platform=macOS,arch=arm64' -configuration Debug build`
+  - `swift build --package-path SharedProtocol`
+  - `swift test --package-path SharedProtocol`
+- Result:
+  - SharedProtocol build ✅
+  - SharedProtocol tests ✅ (`76 passed, 0 failed`)
+  - macOS agent build ⚠️ blocked by pre-existing unrelated compile errors in `RemoteDesktop/macOS/Transport/WirelessTransport.m`:
+    - missing selectors `cancelControlPathRecoveryWithReason:` and `beginControlPathRecoveryForReason:detail:wasAWDL:`
+- Hypothesis: sustained p95/p99 spikes with 0% frame-loss and low send-drop pressure are dominated by source-side frame age tails feeding encoder after transient scheduling delays; age-aware pre-encode dropping should cut long-tail pipeline latency and improve 1% lows by favoring freshness over stale throughput.
+- Instrumentation/behavior added (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added Wi‑Fi pre-encode stale-age guard (TCP media path only):
+    - dynamic stale thresholds (base/congested/severe): `90ms / 65ms / 48ms`
+    - hard absolute stale cut: `220ms`
+    - drops happen pre-encode with explicit reasoned log:
+      - `WiFi pre-encode drop: reason=stale-age age=... threshold=... absThreshold=...`
+  - Added frame-age telemetry (sampled) in pre-encode path:
+    - per-window counters for stale drops, max age, age sample count, age sum
+    - 1s perf log now includes:
+      - `stalePreDrop=... preAgeAvg=...ms preAgeMax=...ms`
+  - Added continuity-first anti-oscillation hold after stale events:
+    - track `wifiAdaptiveLastStaleDropUs`
+    - block healthy upshifts for `3200ms` after stale drops (`post-stale-recovery`)
+    - tail/severe classifiers now consider stale-drop and stale-max-age signals.
+- Expected effect:
+  - Reduce long-tail pipeline age bursts by refusing outdated frames before encode.
+  - Improve 1% low consistency via fresher frame admission and delayed rebound upshifts after stale events.
+  - Keep floor guard unchanged (`kWirelessAdaptiveMinFPS = 30`) and continuity-first behavior preserved.
+- Residual risk:
+  - Overly aggressive stale thresholds could reduce effective fps during brief CPU spikes; telemetry added to tune this quickly.
+  - Build validation for macOS agent remains blocked by unrelated WirelessTransport compile issue, so touched file compiles not fully re-verified in this environment.
+
 ## Lane C Iteration 18 (Wi‑Fi tail/jitter stabilization, non‑E2E)
 
 - Timestamp: 2026-04-04 12:38:23 EDT

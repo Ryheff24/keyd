@@ -38,6 +38,8 @@ final class WirelessTransport {
     private var browsingRequested = false
     private var browserRestartAttempt = 0
     private var connectWatchdogWorkItem: DispatchWorkItem?
+    private var controlRecoveryWorkItem: DispatchWorkItem?
+    private var controlRecoveryStartedAt: DispatchTime?
 
     private var mediaConnection: NWConnection?
     private var inputConnection: NWConnection?
@@ -52,6 +54,8 @@ final class WirelessTransport {
     private var connectedServiceName: String?
     private var pendingMediaCallbacks = 0
     private var maxPendingMediaCallbacks = 0
+    private let controlRecoveryPollInterval: TimeInterval = 0.75
+    private let controlRecoveryHardDeadline: TimeInterval = 6.0
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "WirelessTransport")
 
@@ -416,6 +420,7 @@ final class WirelessTransport {
                 }
                 self.connectWatchdogWorkItem?.cancel()
                 self.connectWatchdogWorkItem = nil
+                self.cancelControlPathRecovery(reason: "tcp-ready")
                 print("[CONSOLE] WirelessTransport: TLS TCP connection READY")
                 self.log.info("TLS wireless TCP connection ready")
 
@@ -443,12 +448,14 @@ final class WirelessTransport {
                 self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
                 let hasMediaPath = (self.mediaConnection != nil)
-                if hasMediaPath {
-                    print("[CONSOLE] WirelessTransport: TCP FAILED but media path still active -- preserving session (isConnected=\(self.isConnected), connectedServiceName=\(self.connectedServiceName ?? "nil"))")
-                    self.log.info("TCP failed while media path active; preserving session state")
-                    self.isConnected = true
+                let wasConnected = self.isConnected
+                let wasAWDL = self.isAWDL
+                if hasMediaPath && wasConnected {
+                    print("[CONSOLE] WirelessTransport: control path loss decision=degraded reason=tcp-failed-media-active action=preserve-session-and-recover-control detail=\(error)")
+                    self.log.info("Control path loss decision=degraded reason=tcp-failed-media-active detail=\(error)")
+                    self.beginControlPathRecovery(reason: "tcp-failed", detail: "\(error)", wasAWDL: wasAWDL)
                 } else {
-                    let wasAWDL = self.isAWDL
+                    self.cancelControlPathRecovery(reason: "tcp-failed-no-media")
                     print("[CONSOLE] WirelessTransport: clearing connectedServiceName after failure (\(self.connectedServiceName ?? "nil"))")
                     self.connectedServiceName = nil
                     self.isConnected = false
@@ -465,20 +472,23 @@ final class WirelessTransport {
                 }
                 self.connectWatchdogWorkItem?.cancel()
                 self.connectWatchdogWorkItem = nil
+                let wasAWDL = self.isAWDL
+                let wasConnected = self.isConnected
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED, clearing service latch (\(self.connectedServiceName ?? "nil"))")
                 self.inputConnection = nil
                 self.connectedServiceName = nil
                 let hasMediaPath = (self.mediaConnection != nil)
-                if !hasMediaPath {
-                    let wasAWDL = self.isAWDL
+                if hasMediaPath && wasConnected {
+                    self.isConnected = true
+                    print("[CONSOLE] WirelessTransport: control path loss decision=degraded reason=tcp-cancelled-media-active action=preserve-session-and-recover-control")
+                    self.log.info("Control path loss decision=degraded reason=tcp-cancelled-media-active")
+                    self.beginControlPathRecovery(reason: "tcp-cancelled", detail: "state-cancelled", wasAWDL: wasAWDL)
+                } else {
+                    self.cancelControlPathRecovery(reason: "tcp-cancelled-no-media")
                     self.isConnected = false
                     print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED teardown branch isConnected=\(self.isConnected) mediaConnectionActive=\(hasMediaPath) wasAWDL=\(wasAWDL)")
                     self.onConnectionChanged?(false, wasAWDL)
                     self.scheduleBrowserRestart(reason: "tcp-cancelled")
-                } else {
-                    self.isConnected = true
-                    print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED but media path remains active -- preserving session (isConnected=\(self.isConnected), mediaConnectionActive=\(hasMediaPath))")
-                    self.log.info("TCP cancelled while media path active; preserving session state")
                 }
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED exit isConnected=\(self.isConnected) mediaConnectionActive=\(hasMediaPath)")
                 self.log.info("TLS wireless TCP connection cancelled")
@@ -687,11 +697,25 @@ final class WirelessTransport {
             }
 
             if let error = error {
-                print("[CONSOLE] WirelessTransport: TCP receive error: \(error)")
+                let hasMediaPath = (self.mediaConnection != nil)
+                let wasConnected = self.isConnected
+                if hasMediaPath && wasConnected {
+                    print("[CONSOLE] WirelessTransport: control path loss decision=degraded reason=tcp-receive-error-media-active action=cancel-input-and-preserve-session detail=\(error)")
+                } else {
+                    print("[CONSOLE] WirelessTransport: control path loss decision=reconnect-triggered reason=tcp-receive-error-no-media action=cancel-input detail=\(error)")
+                }
+                connection.cancel()
                 return
             }
             if isComplete {
-                print("[CONSOLE] WirelessTransport: TCP receive complete (EOF)")
+                let hasMediaPath = (self.mediaConnection != nil)
+                let wasConnected = self.isConnected
+                if hasMediaPath && wasConnected {
+                    print("[CONSOLE] WirelessTransport: control path loss decision=degraded reason=tcp-eof-media-active action=cancel-input-and-preserve-session")
+                } else {
+                    print("[CONSOLE] WirelessTransport: control path loss decision=reconnect-triggered reason=tcp-eof-no-media action=cancel-input")
+                }
+                connection.cancel()
                 return
             }
             self.scheduleInputReceive(connection)
@@ -733,6 +757,7 @@ final class WirelessTransport {
 
     private func tearDownConnections(clearServiceName: Bool = true, reason: String = "unspecified") {
         print("[CONSOLE] WirelessTransport: tearDownConnections reason=\(reason) clearServiceName=\(clearServiceName) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
+        cancelControlPathRecovery(reason: "tearDownConnections")
         connectWatchdogWorkItem?.cancel()
         connectWatchdogWorkItem = nil
         mediaConnection?.cancel()
@@ -813,7 +838,77 @@ final class WirelessTransport {
         transportQueue.asyncAfter(deadline: .now() + 3.0, execute: workItem)
     }
 
+    private func cancelControlPathRecovery(reason: String) {
+        controlRecoveryWorkItem?.cancel()
+        controlRecoveryWorkItem = nil
+        if let started = controlRecoveryStartedAt {
+            let elapsedMs = (DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+            print("[CONSOLE] WirelessTransport: control recovery cancelled reason=\(reason) elapsedMs=\(elapsedMs)")
+            log.info("Control recovery cancelled reason=\(reason) elapsedMs=\(elapsedMs)")
+        }
+        controlRecoveryStartedAt = nil
+    }
+
+    private func beginControlPathRecovery(reason: String, detail: String, wasAWDL: Bool) {
+        if controlRecoveryStartedAt == nil {
+            controlRecoveryStartedAt = .now()
+        }
+        connectedServiceName = nil
+
+        if browser == nil {
+            print("[CONSOLE] WirelessTransport: control recovery starting browser for replacement discovery reason=\(reason)")
+            startBrowsing()
+        } else {
+            print("[CONSOLE] WirelessTransport: control recovery reusing active browser reason=\(reason)")
+        }
+
+        controlRecoveryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            if let inputConnection = self.inputConnection, case .ready = inputConnection.state {
+                print("[CONSOLE] WirelessTransport: control path loss decision=preserved reason=control-path-recovered action=continue-session")
+                self.log.info("Control path loss decision=preserved reason=control-path-recovered")
+                self.cancelControlPathRecovery(reason: "control-recovered")
+                return
+            }
+
+            let elapsedNs: UInt64
+            if let started = self.controlRecoveryStartedAt {
+                elapsedNs = DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds
+            } else {
+                elapsedNs = 0
+            }
+            let elapsedSec = Double(elapsedNs) / 1_000_000_000.0
+            let hasMediaPath = (self.mediaConnection != nil)
+            if hasMediaPath && elapsedSec < self.controlRecoveryHardDeadline {
+                print("[CONSOLE] WirelessTransport: control path loss decision=degraded reason=awaiting-control-replacement detail=\(detail) elapsedMs=\(elapsedNs / 1_000_000) deadlineMs=\(Int(self.controlRecoveryHardDeadline * 1000))")
+                self.log.info("Control path loss decision=degraded reason=awaiting-control-replacement elapsedMs=\(elapsedNs / 1_000_000)")
+                if let current = self.controlRecoveryWorkItem {
+                    self.transportQueue.asyncAfter(deadline: .now() + self.controlRecoveryPollInterval, execute: current)
+                }
+                return
+            }
+
+            print("[CONSOLE] WirelessTransport: control path loss decision=reconnect-triggered reason=control-recovery-timeout trigger=\(reason) detail=\(detail) elapsedMs=\(elapsedNs / 1_000_000) mediaActive=\(hasMediaPath)")
+            self.log.error("Control path loss decision=reconnect-triggered reason=control-recovery-timeout trigger=\(reason)")
+            self.mediaConnection?.cancel()
+            self.mediaConnection = nil
+            self.inputConnection?.cancel()
+            self.inputConnection = nil
+            self.connectedServiceName = nil
+            self.isConnected = false
+            self.isAWDL = false
+            self.tcpBuffer.removeAll()
+            self.cancelControlPathRecovery(reason: "control-recovery-timeout")
+            self.onConnectionChanged?(false, wasAWDL)
+            self.scheduleBrowserRestart(reason: "control-recovery-timeout")
+        }
+        controlRecoveryWorkItem = workItem
+        transportQueue.asyncAfter(deadline: .now() + controlRecoveryPollInterval, execute: workItem)
+    }
+
     private func handleActiveMediaPathLoss(reason: String, detail: String) {
+        cancelControlPathRecovery(reason: "media-path-loss")
         let hadInputConnection = (inputConnection != nil)
         let wasConnected = isConnected
         let wasAWDL = isAWDL

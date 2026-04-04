@@ -712,6 +712,14 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
         if (completion) completion(NO);
         return;
     }
+    size_t totalLen = sizeof(MediaFrameHeader) + payloadLen;
+    if (totalLen > UINT32_MAX) {
+        os_log_error(transport_log(),
+                     "USB media split-send skipped: framed payload too large for TCP length prefix (seq=%u total=%zu payload=%zu)",
+                     header->seq, totalLen, payloadLen);
+        if (completion) completion(NO);
+        return;
+    }
 
     uint64_t sendStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
     const uint32_t seqForLogs = header->seq;
@@ -789,7 +797,6 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
         return;
     }
 
-    size_t totalLen = sizeof(MediaFrameHeader) + payloadLen;
     uint8_t *framedCopy = malloc(sizeof(uint32_t) + totalLen);
     if (!framedCopy) {
         os_log_error(transport_log(),

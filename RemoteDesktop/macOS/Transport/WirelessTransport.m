@@ -21,6 +21,8 @@ static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
 static const uint64_t kDuplicateReplaceIdleThresholdNs = 2000000000ULL;
 static const uint64_t kPendingConnectionReplaceThresholdNs = 1500000000ULL;
+static const uint64_t kControlRecoveryPollIntervalNs = 750000000ULL;
+static const uint64_t kControlRecoveryHardDeadlineNs = 6000000000ULL;
 
 static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     if (newerTicks <= olderTicks) {
@@ -53,8 +55,10 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     uint64_t _inputAcceptedAtTicks;       // when current input candidate was accepted
     uint64_t _inputReadyAtTicks;          // when the current input connection reached ready
     uint64_t _lastInputActivityTicks;     // last time bytes were received on input connection
+    uint64_t _controlPathRecoveryStartedAtTicks; // first observed active control-path loss tick
     BOOL _allowReconnectTakeover;         // allow replacing lingering input socket after disconnect
     BOOL _advertisingRequested;           // true while caller expects Bonjour advertising to stay active
+    dispatch_block_t _Nullable _controlPathRecoveryWorkItem; // delayed control replacement evaluator
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
 }
@@ -667,6 +671,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
             self2->_allowReconnectTakeover = NO;
             self2->_inputReadyAtTicks = mach_absolute_time();
             self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
+            [self2 cancelControlPathRecoveryWithReason:"tcp-ready"];
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
 
             if (self2->_bonjourListener) {
@@ -708,22 +713,39 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
                    error ?: (nw_error_t)@"none",
                    self2.isAWDL);
             if (self2.inputConnection == connection) {
+                BOOL hasMediaPath = (self2->_mediaConnection != nil);
+                BOOL wasConnected = self2->_isConnected;
+                BOOL shouldDegradeAndRecover = hasMediaPath && wasConnected;
+                BOOL wasAWDL = self2->_isAWDL;
                 self2.inputConnection = nil;
-                self2.isConnected = NO;
-                self2->_allowReconnectTakeover = NO;
                 self2->_inputAcceptedAtTicks = 0;
                 self2->_inputReadyAtTicks = 0;
                 self2->_lastInputActivityTicks = 0;
+
+                if (shouldDegradeAndRecover) {
+                    os_log(wireless_log(),
+                           "Control path loss decision=degraded reason=tcp-state-ended-media-active state=%{public}d error=%{public}@ action=preserve-session-and-recover-control",
+                           (int)state,
+                           error ?: (nw_error_t)@"none");
+                    [self2 beginControlPathRecoveryForReason:"tcp-state-ended"
+                                                      detail:error
+                                                     wasAWDL:wasAWDL];
+                    break;
+                }
+
+                self2.isConnected = NO;
+                self2->_allowReconnectTakeover = NO;
+                [self2 cancelControlPathRecoveryWithReason:"tcp-ended-no-media"];
                 if (!self2->_bonjourListener) {
                     os_log(wireless_log(),
-                           "Wireless connection ended; re-enabling Bonjour listener for reconnect discovery");
+                           "Wireless connection ended without media; re-enabling Bonjour listener for reconnect discovery");
                     [self2 startAdvertising];
                 } else {
                     os_log(wireless_log(),
-                           "Wireless connection ended; Bonjour listener already active for reconnect discovery");
+                           "Wireless connection ended without media; Bonjour listener already active for reconnect discovery");
                 }
                 if (self2.onConnectionChanged) {
-                    self2.onConnectionChanged(NO, self2.isAWDL);
+                    self2.onConnectionChanged(NO, wasAWDL);
                 }
             }
             break;
@@ -965,7 +987,15 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
             return;
         }
         if (is_complete) {
-            os_log(wireless_log(), "TCP input receive completed (EOF) on active connection; cancelling to force lifecycle transition");
+            BOOL hasMediaPath = (self2->_mediaConnection != nil);
+            BOOL wasConnected = self2->_isConnected;
+            if (hasMediaPath && wasConnected) {
+                os_log(wireless_log(),
+                       "Control path loss decision=degraded reason=tcp-eof-media-active action=cancel-input-and-preserve-session");
+            } else {
+                os_log(wireless_log(),
+                       "Control path loss decision=reconnect-triggered reason=tcp-eof-no-media action=cancel-input");
+            }
             nw_connection_cancel(connection);
             return;
         }
@@ -973,9 +1003,108 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     });
 }
 
+- (void)cancelControlPathRecoveryWithReason:(const char *)reason {
+    if (_controlPathRecoveryWorkItem) {
+        dispatch_block_cancel(_controlPathRecoveryWorkItem);
+        _controlPathRecoveryWorkItem = nil;
+    }
+    if (_controlPathRecoveryStartedAtTicks > 0) {
+        uint64_t elapsedNs = keydrd_mach_delta_ns(mach_absolute_time(), _controlPathRecoveryStartedAtTicks);
+        os_log(wireless_log(),
+               "Control recovery cancelled reason=%{public}s elapsedMs=%{public}llums",
+               reason,
+               elapsedNs / 1000000ULL);
+    }
+    _controlPathRecoveryStartedAtTicks = 0;
+}
+
+- (void)beginControlPathRecoveryForReason:(const char *)reason
+                                   detail:(nw_error_t _Nullable)detail
+                                  wasAWDL:(BOOL)wasAWDL {
+    if (_controlPathRecoveryStartedAtTicks == 0) {
+        _controlPathRecoveryStartedAtTicks = mach_absolute_time();
+    }
+    _allowReconnectTakeover = YES;
+    if (_advertisingRequested && !_bonjourListener) {
+        os_log(wireless_log(),
+               "Control recovery: enabling Bonjour listener for control-path replacement discovery");
+        [self startAdvertising];
+    } else {
+        os_log(wireless_log(),
+               "Control recovery: listener state preserved (advertisingRequested=%{public}d listener=%{public}p)",
+               _advertisingRequested,
+               _bonjourListener);
+    }
+
+    if (_controlPathRecoveryWorkItem) {
+        dispatch_block_cancel(_controlPathRecoveryWorkItem);
+        _controlPathRecoveryWorkItem = nil;
+    }
+
+    __weak WirelessTransport *weakSelf = self;
+    __block dispatch_block_t evaluator = dispatch_block_create(0, ^{
+        WirelessTransport *self2 = weakSelf;
+        if (!self2) return;
+        if (self2->_inputConnection && self2->_inputReadyAtTicks > 0) {
+            os_log(wireless_log(),
+                   "Control path loss decision=preserved reason=control-path-recovered action=continue-session");
+            [self2 cancelControlPathRecoveryWithReason:"control-recovered"];
+            return;
+        }
+
+        uint64_t elapsedNs = self2->_controlPathRecoveryStartedAtTicks > 0 ?
+            keydrd_mach_delta_ns(mach_absolute_time(), self2->_controlPathRecoveryStartedAtTicks) : 0;
+        BOOL hasMediaPath = (self2->_mediaConnection != nil);
+        if (hasMediaPath && elapsedNs < kControlRecoveryHardDeadlineNs) {
+            os_log(wireless_log(),
+                   "Control path loss decision=degraded reason=awaiting-control-replacement detail=%{public}@ elapsedMs=%{public}llums deadlineMs=%{public}llums",
+                   detail ?: (nw_error_t)@"none",
+                   elapsedNs / 1000000ULL,
+                   kControlRecoveryHardDeadlineNs / 1000000ULL);
+            dispatch_block_t nextEvaluator = self2->_controlPathRecoveryWorkItem;
+            if (nextEvaluator) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)kControlRecoveryPollIntervalNs),
+                               self2->_transportQueue,
+                               nextEvaluator);
+            }
+            return;
+        }
+
+        os_log_error(wireless_log(),
+                     "Control path loss decision=reconnect-triggered reason=control-recovery-timeout trigger=%{public}s detail=%{public}@ elapsedMs=%{public}llums mediaActive=%{public}d",
+                     reason,
+                     detail ?: (nw_error_t)@"none",
+                     elapsedNs / 1000000ULL,
+                     hasMediaPath);
+        nw_connection_t staleMedia = self2->_mediaConnection;
+        self2->_mediaConnection = nil;
+        if (staleMedia) {
+            nw_connection_cancel(staleMedia);
+        }
+        self2->_allowReconnectTakeover = NO;
+        self2->_inputAcceptedAtTicks = 0;
+        self2->_inputReadyAtTicks = 0;
+        self2->_lastInputActivityTicks = 0;
+        self2->_isConnected = NO;
+        self2->_isAWDL = NO;
+        [self2 cancelControlPathRecoveryWithReason:"control-recovery-timeout"];
+        if (self2.onConnectionChanged) {
+            self2.onConnectionChanged(NO, wasAWDL);
+        }
+        if (self2->_advertisingRequested && !self2->_bonjourListener) {
+            [self2 startAdvertising];
+        }
+    });
+    _controlPathRecoveryWorkItem = evaluator;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)kControlRecoveryPollIntervalNs),
+                   _transportQueue,
+                   evaluator);
+}
+
 #pragma mark - Private: Teardown
 
 - (void)tearDownConnections {
+    [self cancelControlPathRecoveryWithReason:"tearDownConnections"];
     [self resetSendPacing];
     if (_mediaListener) {
         nw_listener_cancel(_mediaListener);
@@ -998,6 +1127,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
 }
 
 - (void)handleActiveMediaPathLossWithReason:(const char *)reason detail:(nw_error_t _Nullable)detail {
+    [self cancelControlPathRecoveryWithReason:"media-path-loss"];
     BOOL hadInputConnection = (_inputConnection != nil);
     BOOL wasConnected = _isConnected;
     BOOL wasAWDL = _isAWDL;

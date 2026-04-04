@@ -66,6 +66,7 @@ final class USBNetworkTransport {
     private static let tcpDrainDeliveredLogInterval = 64
     private static let tcpCompactionMinConsumedBytes = 8 << 20
     private static let tcpReceiveMaxLength = 1 << 20
+    private static let tcpMaxFrameLength = 4_000_000
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
@@ -776,9 +777,9 @@ final class USBNetworkTransport {
                 return Int(UInt32(bigEndian: raw))
             }
 
-            guard msgLen > 0, msgLen < 4_000_000 else {
+            guard msgLen > 0, msgLen < Self.tcpMaxFrameLength else {
                 print("[CONSOLE] USBTransport: invalid TCP frame length \(msgLen), clearing buffer")
-                self.log.error("USB TCP drain invalid-length msgLen=\(msgLen, privacy: .public) clearing buffer=\(self.tcpBuffer.count, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
+                self.log.error("USB TCP drain invalid-length msgLen=\(msgLen, privacy: .public) max=\(Self.tcpMaxFrameLength, privacy: .public)B clearing buffer=\(self.tcpBuffer.count, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
                 tcpBuffer.removeAll()
                 tcpBufferReadOffset = 0
                 return
