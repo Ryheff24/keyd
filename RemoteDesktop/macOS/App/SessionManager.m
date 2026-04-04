@@ -14,6 +14,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <AppKit/AppKit.h>
 #import <limits.h>
+#include <unistd.h>
 
 /* NSWindow subclass that closes on Escape key */
 @interface QRWindow : NSWindow
@@ -111,6 +112,14 @@ static const uint64_t kWirelessTCPStallNoCompletionThresholdMs = 260;
 static const uint64_t kWirelessTCPStallRecoveryCooldownMs = 1200;
 static const uint64_t kWirelessTCPPostRecoveryAdaptiveHoldMs = 2600;
 static const uint64_t kWirelessTCPStallLogIntervalMs = 500;
+/* Burst-window send scheduler shaping for Wi-Fi TCP media path.
+ * Spaces clustered enqueue bursts to reduce completion tail spikes without
+ * lowering fidelity, resolution, or steady-state frame cadence. */
+static const uint64_t kWirelessTCPSchedulerBurstWindowUs = 12000;
+static const int32_t kWirelessTCPSchedulerBurstWindowTailThreshold = 3;
+static const uint64_t kWirelessTCPSchedulerBaseSpacingUs = 800;
+static const uint64_t kWirelessTCPSchedulerTailSpacingUs = 1400;
+static const uint64_t kWirelessTCPSchedulerSevereSpacingUs = 2200;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
 static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 95;
@@ -231,6 +240,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (atomic, assign) uint64_t wifiTCPLastStallRecoveryUs;
 @property (atomic, assign) uint64_t wifiTCPStallLastLogUs;
 @property (atomic, assign) uint32_t wifiTCPSendGeneration;
+@property (atomic, assign) uint64_t wifiTCPSchedulerWindowStartUs;
+@property (atomic, assign) uint64_t wifiTCPSchedulerLastSubmitUs;
+@property (nonatomic, assign) volatile int32_t wifiTCPSchedulerWindowSendCount;
 @property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveDownshifts;
 @property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveUpshifts;
 @property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveHolds;
@@ -241,6 +253,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfPreEncodeAgeTotalMs;
 @property (nonatomic, assign) volatile int32_t wifiPerfBurstTailFrames;
 @property (nonatomic, assign) volatile int32_t wifiPerfBurstSevereFrames;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSchedulerDelays;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSchedulerDelayMaxUs;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSchedulerBurstWindows;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSchedulerBurstSends;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPSchedulerDelayTotalUs;
 @property (nonatomic, assign) int32_t wifiAdaptiveTargetFPS;
 @property (nonatomic, assign) int32_t wifiAdaptiveTargetBitrate;
 @property (nonatomic, assign) int32_t wifiAdaptiveAppliedFPS;
@@ -852,6 +869,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiTCPInFlightSaturatedSinceUs = 0;
     _wifiTCPLastStallRecoveryUs = 0;
     _wifiTCPStallLastLogUs = 0;
+    _wifiTCPSchedulerWindowStartUs = 0;
+    _wifiTCPSchedulerLastSubmitUs = 0;
+    _wifiTCPSchedulerWindowSendCount = 0;
     _wifiTCPSendGeneration += 1;
     _wirelessLastEncodeSubmitUs = 0;
     [self resetWiFiAdaptiveControlState];
@@ -1295,13 +1315,74 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             uint32_t seq = originalHeader->seq;
             uint64_t enqueueUs = keydrd_host_time_us();
             uint32_t sendGeneration = self.wifiTCPSendGeneration;
+            uint64_t schedulerWindowStartUs = self.wifiTCPSchedulerWindowStartUs;
+            if (schedulerWindowStartUs == 0 ||
+                enqueueUs <= schedulerWindowStartUs ||
+                enqueueUs - schedulerWindowStartUs > kWirelessTCPSchedulerBurstWindowUs) {
+                self.wifiTCPSchedulerWindowStartUs = enqueueUs;
+                _wifiTCPSchedulerWindowSendCount = 0;
+                schedulerWindowStartUs = enqueueUs;
+            }
+            int32_t burstWindowSendCount = OSAtomicIncrement32Barrier(&_wifiTCPSchedulerWindowSendCount);
+            BOOL burstWindowTail = burstWindowSendCount >= kWirelessTCPSchedulerBurstWindowTailThreshold;
+            if (burstWindowSendCount == kWirelessTCPSchedulerBurstWindowTailThreshold) {
+                OSAtomicIncrement32Barrier(&_wifiPerfTCPSchedulerBurstWindows);
+            }
+            if (burstWindowTail) {
+                OSAtomicIncrement32Barrier(&_wifiPerfTCPSchedulerBurstSends);
+            }
+            int32_t inFlightBefore = _wifiTCPMediaSendsInFlight;
+            uint64_t schedulerSpacingUs = 0;
+            const char *schedulerReason = "none";
+            if (inFlightBefore >= 2 || payloadLen >= kWirelessBurstSevereFrameBytes) {
+                schedulerSpacingUs = kWirelessTCPSchedulerSevereSpacingUs;
+                schedulerReason = inFlightBefore >= 2 ? "inflight-severe" : "payload-severe";
+            } else if (burstWindowTail) {
+                schedulerSpacingUs = kWirelessTCPSchedulerTailSpacingUs;
+                schedulerReason = "burst-window-tail";
+            } else if (inFlightBefore >= 1 || payloadLen >= kWirelessBurstTailFrameBytes) {
+                schedulerSpacingUs = kWirelessTCPSchedulerBaseSpacingUs;
+                schedulerReason = inFlightBefore >= 1 ? "inflight-base" : "payload-tail";
+            }
+            uint64_t schedulerDelayUs = 0;
+            uint64_t schedulerObservedGapUs = 0;
+            uint64_t lastSubmitUs = self.wifiTCPSchedulerLastSubmitUs;
+            if (schedulerSpacingUs > 0 && lastSubmitUs > 0 && enqueueUs > lastSubmitUs) {
+                schedulerObservedGapUs = enqueueUs - lastSubmitUs;
+                if (schedulerObservedGapUs < schedulerSpacingUs) {
+                    schedulerDelayUs = schedulerSpacingUs - schedulerObservedGapUs;
+                    OSAtomicIncrement32Barrier(&_wifiPerfTCPSchedulerDelays);
+                    OSAtomicAdd32Barrier((int32_t)MIN((uint64_t)INT32_MAX, schedulerDelayUs), &_wifiPerfTCPSchedulerDelayTotalUs);
+                    if ((int32_t)schedulerDelayUs > _wifiPerfTCPSchedulerDelayMaxUs) {
+                        _wifiPerfTCPSchedulerDelayMaxUs = (int32_t)MIN((uint64_t)INT32_MAX, schedulerDelayUs);
+                    }
+                    if (schedulerDelayUs >= 600 || burstWindowTail) {
+                        static int wifiTCPSchedulerShapeLogCount = 0;
+                        wifiTCPSchedulerShapeLogCount++;
+                        if (wifiTCPSchedulerShapeLogCount <= 20 || wifiTCPSchedulerShapeLogCount % 100 == 0) {
+                            os_log(sLog, "WiFi TCP scheduler shape: seq=%u payload=%zu inFlightBefore=%d burstWindowCount=%d tail=%{public}s gap=%lluus target=%lluus delay=%lluus reason=%{public}s sampled=%{public}s count=%d",
+                                   seq, payloadLen, inFlightBefore, burstWindowSendCount,
+                                   burstWindowTail ? "yes" : "no",
+                                   schedulerObservedGapUs, schedulerSpacingUs, schedulerDelayUs, schedulerReason,
+                                   schedulerDelayUs >= 1200 ? "forced" : "sampled",
+                                   wifiTCPSchedulerShapeLogCount);
+                        }
+                    }
+                    usleep((useconds_t)MIN((uint64_t)4000, schedulerDelayUs));
+                    enqueueUs = keydrd_host_time_us();
+                }
+            } else if (schedulerSpacingUs > 0 && lastSubmitUs > 0 && enqueueUs <= lastSubmitUs) {
+                schedulerObservedGapUs = 0;
+            }
+            self.wifiTCPSchedulerLastSubmitUs = enqueueUs;
             int32_t inFlight = OSAtomicIncrement32Barrier(&_wifiTCPMediaSendsInFlight);
             if (inFlight > _wifiPerfTCPInFlightPeak) {
                 _wifiPerfTCPInFlightPeak = inFlight;
             }
             if (inFlight <= 5 || inFlight % 30 == 0) {
-                os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu",
-                       seq, inFlight, len);
+                os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu scheduler[delay=%lluus gap=%lluus target=%lluus reason=%{public}s burstCount=%d]",
+                       seq, inFlight, len, schedulerDelayUs, schedulerObservedGapUs, schedulerSpacingUs,
+                       schedulerReason, burstWindowSendCount);
             }
             if (inFlight > kMaxMediaSendsInFlightWiFi) {
                 OSAtomicDecrement32Barrier(&_wifiTCPMediaSendsInFlight);
@@ -1320,11 +1401,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                     OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeSuppressed);
                 }
                 if (wifiTCPSendDropCount <= 10 || wifiTCPSendDropCount % 100 == 0) {
-                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d limit=%d totalDropped=%d action=%{public}s reqCooldownMs=%llums sinceLastReqMs=%llums",
+                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d limit=%d totalDropped=%d action=%{public}s reqCooldownMs=%llums sinceLastReqMs=%llums scheduler[delay=%lluus target=%lluus reason=%{public}s burstCount=%d]",
                            seq, inFlight - 1, kMaxMediaSendsInFlightWiFi, wifiTCPSendDropCount,
                            requestKeyframe ? "request-keyframe" : "cooldown-suppressed",
                            kWirelessTCPDropKeyframeCooldownMs,
-                           sinceLastReqMs == UINT64_MAX ? 0 : sinceLastReqMs);
+                           sinceLastReqMs == UINT64_MAX ? 0 : sinceLastReqMs,
+                           schedulerDelayUs, schedulerSpacingUs, schedulerReason, burstWindowSendCount);
                 }
                 return;
             }
@@ -1526,6 +1608,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfPreEncodeAgeTotalMs = 0;
     _wifiPerfBurstTailFrames = 0;
     _wifiPerfBurstSevereFrames = 0;
+    _wifiPerfTCPSchedulerDelays = 0;
+    _wifiPerfTCPSchedulerDelayMaxUs = 0;
+    _wifiPerfTCPSchedulerBurstWindows = 0;
+    _wifiPerfTCPSchedulerBurstSends = 0;
+    _wifiPerfTCPSchedulerDelayTotalUs = 0;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
@@ -1586,15 +1673,23 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t ageTotalMs = strongSelf->_wifiPerfPreEncodeAgeTotalMs;
         int32_t burstTailFrames = strongSelf->_wifiPerfBurstTailFrames;
         int32_t burstSevereFrames = strongSelf->_wifiPerfBurstSevereFrames;
+        int32_t schedulerDelays = strongSelf->_wifiPerfTCPSchedulerDelays;
+        int32_t schedulerDelayMaxUs = strongSelf->_wifiPerfTCPSchedulerDelayMaxUs;
+        int32_t schedulerBurstWindows = strongSelf->_wifiPerfTCPSchedulerBurstWindows;
+        int32_t schedulerBurstSends = strongSelf->_wifiPerfTCPSchedulerBurstSends;
+        int32_t schedulerDelayTotalUs = strongSelf->_wifiPerfTCPSchedulerDelayTotalUs;
+        double schedulerDelayAvgUs = schedulerDelays > 0 ? (double)schedulerDelayTotalUs / (double)schedulerDelays : 0.0;
         double avgPreEncodeAgeMs = ageSamples > 0 ? (double)ageTotalMs / (double)ageSamples : 0.0;
         double burstDensityRatio = avgKB > 0.0 ? ((double)maxFrameBytes / 1024.0) / avgKB : 0.0;
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB burst[tail=%d severe=%d density=%.2fx] preDrop=%d stalePreDrop=%d preAgeAvg=%.1fms preAgeMax=%dms queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d tcpStallRec=%d adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d healthyStreak=%d mildStreak=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB burst[tail=%d severe=%d density=%.2fx] preDrop=%d stalePreDrop=%d preAgeAvg=%.1fms preAgeMax=%dms queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d tcpStallRec=%d scheduler[delays=%d avg=%.0fus max=%dus burstWindows=%d burstSends=%d] adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d healthyStreak=%d mildStreak=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
                burstTailFrames, burstSevereFrames, burstDensityRatio,
-               preDrops, stalePreDrops, avgPreEncodeAgeMs, staleMaxAgeMs, queueDrops, tcpFallbacks, tcpSendDrops,
-               tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
+                preDrops, stalePreDrops, avgPreEncodeAgeMs, staleMaxAgeMs, queueDrops, tcpFallbacks, tcpSendDrops,
+                tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
                tcpDropKeyReq, tcpDropKeySupp, tcpStallRecoveries,
+               schedulerDelays, schedulerDelayAvgUs, schedulerDelayMaxUs,
+               schedulerBurstWindows, schedulerBurstSends,
                strongSelf->_wifiAdaptiveTargetFPS, strongSelf->_wifiAdaptiveTargetBitrate / 1000000,
                strongSelf->_wifiAdaptiveAppliedFPS, strongSelf->_wifiAdaptiveAppliedBitrate / 1000000,
                adaptiveDown, adaptiveUp, adaptiveHold, adaptiveFloor,
