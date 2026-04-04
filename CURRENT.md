@@ -1,5 +1,40 @@
 # CURRENT
 
+## Lane WiFi Iteration 31 (iteration9 canonical run triage + TCP completion-guard pacing)
+
+- Timestamp: 2026-04-04 19:29:58 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration9 synthetic emit-accounting guard for failed frame emission"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metrics + deltas vs iteration8:
+  - heavy-load: `fps 59.6` (`+0.2`), `pipe p95 105ms` (`flat`).
+  - sustained-stream: `avg/1%low 56.9/9.2` (`+0.4/-0.8`), `pipe p95 108ms` (`+5ms`), `glass p95 130ms` (`+4ms`).
+  - fps test: `avg 57.5` (`+0.5`), `jitter 22.5ms` (`+2.4ms` regression), `maxGap 167ms` (`better than iter8 375ms`).
+- Highest-impact bottleneck evidence:
+  - `/tmp/keyd-e2e-ipad.log`: starvation remains dominant (`starvationSignal=true` count `932`) while downstream remains empty (`rendererDepth=0`, `reasmPending=0`, `evicted=0`, `purged=0`) during many low-observed windows (`26–40fps` telemetry spikes).
+  - `/tmp/keyd-e2e-mac.log`: synthetic emit-accounting shows no failure storm (no dominant `Synthetic timer emit failure`/partial backlog growth), but WiFi TCP path still hits transient saturation:
+    - `WiFi pre-encode drop: reason=tcp-backpressure ... totalDropped=1..5`
+    - paired slow completions `elapsed=36/41/47/59/79ms`
+    - bursts of large payloads (`95KB`, `56KB`, `47KB`) preceding saturation.
+  - Recovery spacing is underpowered in these episodes: `WiFi TCP scheduler recovery decision: branch=apply ... recoveryTarget=4500/8500us` while send gaps are already ~`12–20ms`, so delay branch often remains effectively inactive.
+- Hypothesis tested:
+  - Primary remaining limiter is completion-tail saturation on WiFi TCP media path; current recovery spacing is too small to prevent in-flight pileups under large-frame bursts, causing source starvation windows despite clean receive/render queues.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added completion-latency scheduler guard constants:
+    - `kWirelessTCPSchedulerCompletionGuardModerateSpacingUs = 14000`
+    - `kWirelessTCPSchedulerCompletionGuardSevereSpacingUs = 24000`
+  - Added completion-guard decision branch with full apply/hold logging:
+    - `WiFi TCP scheduler completion guard: branch=apply ...`
+    - `WiFi TCP scheduler completion guard: branch=hold ...`
+  - Guard triggers only under active pressure indicators (`inFlightBefore>=1` plus slow completions/pre-drops/max completion signals), then can override weaker spacing to keep in-flight depth from saturating.
+- Next immediate move:
+  - Run canonical WiFi command next iteration and verify:
+    - fewer `WiFi pre-encode drop: reason=tcp-backpressure` and fewer `inFlight=3` spikes,
+    - reduced starvation events with `rendererDepth=0/reasmPending=0`,
+    - improved `1% low`, `frame-pacing`, and latency tails without fidelity/resolution regressions.
+
 ## Lane WiFi Iteration 30 (iteration8 canonical run triage + synthetic emit-accounting fix)
 
 - Timestamp: 2026-04-04 19:20:21 EDT

@@ -128,6 +128,13 @@ static const uint64_t kWirelessTCPSchedulerSevereSpacingUs = 2200;
  * default burst-window spacing never engages (delay metrics stay at zero). */
 static const uint64_t kWirelessTCPSchedulerRecoveryModerateSpacingUs = 4500;
 static const uint64_t kWirelessTCPSchedulerRecoverySevereSpacingUs = 8500;
+/* Completion-latency guard:
+ * recovery spacing can remain ineffective when submit gaps are already above
+ * 4.5-8.5ms while kernel completion latency is still 30-80ms. In that case,
+ * apply a stronger temporary spacing so in-flight sends drain before the
+ * pre-encode backpressure gate trips. */
+static const uint64_t kWirelessTCPSchedulerCompletionGuardModerateSpacingUs = 14000;
+static const uint64_t kWirelessTCPSchedulerCompletionGuardSevereSpacingUs = 24000;
 static const uint64_t kWirelessTCPSchedulerMaxSleepUs = 9000;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
@@ -1389,6 +1396,42 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                            baseSchedulerSpacingUs, recoverySpacingUs, schedulerReason,
                            (recentPreDrops >= 8 || recentMaxCompletionMs >= 180) ? "forced" : "sampled",
                            wifiTCPSchedulerRecoveryDecisionCount);
+                }
+            }
+            uint64_t completionGuardSpacingUs = 0;
+            const char *completionGuardReason = "none";
+            BOOL completionGuardEligible = (inFlightBefore >= 1) &&
+                                           (recentSlowCompletions > 0 || recentPreDrops > 0 || recentMaxCompletionMs >= 35);
+            if (completionGuardEligible) {
+                if (recentPreDrops >= 2 || recentMaxCompletionMs >= 60) {
+                    completionGuardSpacingUs = kWirelessTCPSchedulerCompletionGuardSevereSpacingUs;
+                    completionGuardReason = "completion-guard-severe";
+                } else if (recentPreDrops > 0 || recentSlowCompletions >= 1 || recentMaxCompletionMs >= 35) {
+                    completionGuardSpacingUs = kWirelessTCPSchedulerCompletionGuardModerateSpacingUs;
+                    completionGuardReason = "completion-guard-moderate";
+                }
+                if (completionGuardSpacingUs > 0) {
+                    static int wifiTCPSchedulerCompletionGuardDecisionCount = 0;
+                    wifiTCPSchedulerCompletionGuardDecisionCount++;
+                    if (completionGuardSpacingUs > schedulerSpacingUs) {
+                        schedulerSpacingUs = completionGuardSpacingUs;
+                        schedulerReason = completionGuardReason;
+                        if (wifiTCPSchedulerCompletionGuardDecisionCount <= 40 ||
+                            wifiTCPSchedulerCompletionGuardDecisionCount % 100 == 0) {
+                            os_log(sLog, "WiFi TCP scheduler completion guard: branch=apply seq=%u inFlightBefore=%d payload=%zu preDrop=%d slow=%d maxCompletion=%dms baseTarget=%lluus guardTarget=%lluus reason=%{public}s sampled=%{public}s count=%d",
+                                   seq, inFlightBefore, payloadLen, recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                                   baseSchedulerSpacingUs, completionGuardSpacingUs, completionGuardReason,
+                                   (recentPreDrops >= 3 || recentMaxCompletionMs >= 70) ? "forced" : "sampled",
+                                   wifiTCPSchedulerCompletionGuardDecisionCount);
+                        }
+                    } else if (wifiTCPSchedulerCompletionGuardDecisionCount <= 40 ||
+                               wifiTCPSchedulerCompletionGuardDecisionCount % 100 == 0) {
+                        os_log(sLog, "WiFi TCP scheduler completion guard: branch=hold seq=%u inFlightBefore=%d payload=%zu preDrop=%d slow=%d maxCompletion=%dms baseTarget=%lluus guardTarget=%lluus reason=%{public}s sampled=%{public}s count=%d",
+                               seq, inFlightBefore, payloadLen, recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                               schedulerSpacingUs, completionGuardSpacingUs, schedulerReason,
+                               (recentPreDrops >= 3 || recentMaxCompletionMs >= 70) ? "forced" : "sampled",
+                               wifiTCPSchedulerCompletionGuardDecisionCount);
+                    }
                 }
             }
             uint64_t schedulerDelayUs = 0;
