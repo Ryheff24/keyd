@@ -54,23 +54,23 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
-static const int kWirelessHEVCFPS = 60;
-static const int kWirelessHEVCBitrate = 4000000; /* 4 Mbps */
+static const int kWirelessHEVCFPS = 55;
+static const int kWirelessHEVCBitrate = 3500000; /* 3.5 Mbps stability-first baseline */
 static const int kWirelessAdaptiveMinFPS = 30;
 static const int kWirelessAdaptiveMidFPS = 45;
-static const int kWirelessAdaptiveMaxFPS = 60;
+static const int kWirelessAdaptiveMaxFPS = 55;
 static const int kWirelessAdaptiveMinBitrate = 2500000; /* 2.5 Mbps floor */
-static const int kWirelessAdaptiveMaxBitrate = 6000000; /* keep bounded to limit burst size */
+static const int kWirelessAdaptiveMaxBitrate = 5000000; /* cap burst amplitude to reduce oscillation */
 static const int kWirelessAdaptiveBitrateStepDown = 500000;
-static const int kWirelessAdaptiveBitrateStepUp = 125000;
+static const int kWirelessAdaptiveBitrateStepUp = 100000;
 static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 700;
-static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 2600;
-static const int kWirelessAdaptiveFPSStepUp = 5;
+static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 3600;
+static const int kWirelessAdaptiveFPSStepUp = 3;
 static const int kWirelessAdaptiveFPSStepDownMild = 10;
-static const int kWirelessAdaptiveUpshiftHealthyStreak = 3;
-static const int kWirelessAdaptiveMildCongestionStreak = 2;
-static const int kWirelessAdaptiveMaxUpshiftFPSDelta = 5;
-static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 200000;
+static const int kWirelessAdaptiveUpshiftHealthyStreak = 5;
+static const int kWirelessAdaptiveMildCongestionStreak = 3;
+static const int kWirelessAdaptiveMaxUpshiftFPSDelta = 3;
+static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 100000;
 static const int kWirelessAdaptiveMaxDownshiftFPSDelta = 15;
 static const int kWirelessAdaptiveMaxDownshiftBitrateDelta = 600000;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
@@ -95,6 +95,13 @@ static const uint64_t kWirelessTCPSlowCompletionThresholdMs = 25;
  * Prevents request spam during a short burst while still reducing
  * recovery dwell time when a rare send-side sequence hole occurs. */
 static const uint64_t kWirelessTCPDropKeyframeCooldownMs = 120;
+/* Detect and recover from Wi-Fi TCP in-flight saturation stalls where
+ * completion callbacks stop draining and pre-encode gate starves source frames. */
+static const uint64_t kWirelessTCPStallSaturationThresholdMs = 320;
+static const uint64_t kWirelessTCPStallNoCompletionThresholdMs = 260;
+static const uint64_t kWirelessTCPStallRecoveryCooldownMs = 1200;
+static const uint64_t kWirelessTCPPostRecoveryAdaptiveHoldMs = 2600;
+static const uint64_t kWirelessTCPStallLogIntervalMs = 500;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -200,7 +207,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPMaxCompletionMs;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPDropKeyframeRequests;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPDropKeyframeSuppressed;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPStallRecoveries;
 @property (atomic, assign) uint64_t wifiLastTCPDropKeyframeRequestUs;
+@property (atomic, assign) uint64_t wifiTCPLastCompletionUs;
+@property (atomic, assign) uint64_t wifiTCPInFlightSaturatedSinceUs;
+@property (atomic, assign) uint64_t wifiTCPLastStallRecoveryUs;
+@property (atomic, assign) uint64_t wifiTCPStallLastLogUs;
+@property (atomic, assign) uint32_t wifiTCPSendGeneration;
 @property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveDownshifts;
 @property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveUpshifts;
 @property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveHolds;
@@ -224,6 +237,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 - (void)resetWiFiAdaptiveControlState;
 - (void)evaluateWiFiAdaptiveRateControl;
 - (void)applyWiFiAdaptiveRateTargetsIfNeededWithReason:(NSString *)reason nowUs:(uint64_t)nowUs;
+- (BOOL)maybeRecoverWiFiTCPInFlightStallWithInFlight:(int32_t)inFlight nowUs:(uint64_t)nowUs reason:(const char *)reason;
 
 @end
 
@@ -807,6 +821,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
            _viewportReceived, _viewportWidth, _viewportHeight,
            _hevcEncoder.isActive);
     _tcpMediaSendsInFlight = 0;
+    _wifiTCPMediaSendsInFlight = 0;
+    _wifiTCPLastCompletionUs = 0;
+    _wifiTCPInFlightSaturatedSinceUs = 0;
+    _wifiTCPLastStallRecoveryUs = 0;
+    _wifiTCPStallLastLogUs = 0;
+    _wifiTCPSendGeneration += 1;
     _wirelessLastEncodeSubmitUs = 0;
     [self resetWiFiAdaptiveControlState];
     [self stopWirelessPerformanceTimer];
@@ -1028,6 +1048,13 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                 if (kWirelessUseTCPMedia) {
                     int32_t tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
                     if (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi) {
+                        uint64_t nowUs = keydrd_host_time_us();
+                        [strongSelf maybeRecoverWiFiTCPInFlightStallWithInFlight:tcpInFlightNow
+                                                                            nowUs:nowUs
+                                                                           reason:"pre-encode-gate"];
+                        tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
+                    }
+                    if (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi) {
                         OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfPreEncodeDrops);
                         static int wifiTCPPreEncodeDropCount = 0;
                         wifiTCPPreEncodeDropCount++;
@@ -1193,11 +1220,12 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             wifiTCPMediaLogCount++;
             uint32_t seq = originalHeader->seq;
             uint64_t enqueueUs = keydrd_host_time_us();
+            uint32_t sendGeneration = self.wifiTCPSendGeneration;
             int32_t inFlight = OSAtomicIncrement32Barrier(&_wifiTCPMediaSendsInFlight);
             if (inFlight > _wifiPerfTCPInFlightPeak) {
                 _wifiPerfTCPInFlightPeak = inFlight;
             }
-            if (inFlight <= 5 || inFlight % 10 == 0) {
+            if (inFlight <= 5 || inFlight % 30 == 0) {
                 os_log(sLog, "WiFi TCP send queued: seq=%u inFlight=%d bytes=%zu",
                        seq, inFlight, len);
             }
@@ -1230,19 +1258,58 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
                 SessionManager *strongSelf = weakSelf;
                 if (!strongSelf) return;
-                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_wifiTCPMediaSendsInFlight);
                 uint64_t doneUs = keydrd_host_time_us();
+                uint32_t activeGeneration = strongSelf.wifiTCPSendGeneration;
+                if (sendGeneration != activeGeneration) {
+                    static int wifiTCPStaleCompletionLogCount = 0;
+                    wifiTCPStaleCompletionLogCount++;
+                    if (!success || wifiTCPStaleCompletionLogCount <= 10 || wifiTCPStaleCompletionLogCount % 100 == 0) {
+                        os_log(sLog, "WiFi TCP stale completion ignored: seq=%u success=%{public}s elapsed=%llums sendGen=%u activeGen=%u sampled=%{public}s sampleCount=%d",
+                               seq, success ? "yes" : "no",
+                               doneUs > enqueueUs ? (doneUs - enqueueUs) / 1000 : 0,
+                               sendGeneration, activeGeneration,
+                               success ? "sampled" : "forced",
+                               wifiTCPStaleCompletionLogCount);
+                    }
+                    if (!success) {
+                        OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSendDrops);
+                    }
+                    return;
+                }
+                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_wifiTCPMediaSendsInFlight);
+                if (left < 0) {
+                    os_log_error(sLog, "WiFi TCP in-flight underflow clamp: seq=%u success=%{public}s left=%d action=reset-to-zero",
+                                 seq, success ? "yes" : "no", left);
+                    strongSelf->_wifiTCPMediaSendsInFlight = 0;
+                    left = 0;
+                }
+                strongSelf.wifiTCPLastCompletionUs = doneUs;
+                if (left < kMaxMediaSendsInFlightWiFi) {
+                    strongSelf.wifiTCPInFlightSaturatedSinceUs = 0;
+                }
                 uint64_t elapsedMs = doneUs > enqueueUs ? (doneUs - enqueueUs) / 1000 : 0;
                 if ((int32_t)elapsedMs > strongSelf->_wifiPerfTCPMaxCompletionMs) {
                     strongSelf->_wifiPerfTCPMaxCompletionMs = (int32_t)MIN(elapsedMs, (uint64_t)INT32_MAX);
                 }
+                static int wifiTCPSlowCompletionLogCount = 0;
+                static int wifiTCPCompletionLogCount = 0;
                 if (elapsedMs >= kWirelessTCPSlowCompletionThresholdMs) {
                     OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSlowCompletions);
-                    os_log(sLog, "WiFi TCP send slow completion: seq=%u success=%{public}s elapsed=%llums inFlightNow=%d",
-                           seq, success ? "yes" : "no", elapsedMs, left);
+                    wifiTCPSlowCompletionLogCount++;
+                    if (elapsedMs >= 45 || !success || wifiTCPSlowCompletionLogCount <= 10 || wifiTCPSlowCompletionLogCount % 25 == 0) {
+                        os_log(sLog, "WiFi TCP send slow completion: seq=%u success=%{public}s elapsed=%llums inFlightNow=%d sampled=%{public}s sampleCount=%d",
+                               seq, success ? "yes" : "no", elapsedMs, left,
+                               (elapsedMs >= 45 || !success) ? "forced" : "sampled",
+                               wifiTCPSlowCompletionLogCount);
+                    }
                 } else if (!success || left < 2) {
-                    os_log(sLog, "WiFi TCP send completion: seq=%u success=%{public}s elapsed=%llums inFlightNow=%d",
-                           seq, success ? "yes" : "no", elapsedMs, left);
+                    wifiTCPCompletionLogCount++;
+                    if (!success || wifiTCPCompletionLogCount <= 10 || wifiTCPCompletionLogCount % 80 == 0) {
+                        os_log(sLog, "WiFi TCP send completion: seq=%u success=%{public}s elapsed=%llums inFlightNow=%d sampled=%{public}s sampleCount=%d",
+                               seq, success ? "yes" : "no", elapsedMs, left,
+                               success ? "sampled" : "forced",
+                               wifiTCPCompletionLogCount);
+                    }
                 }
                 if (!success) {
                     OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSendDrops);
@@ -1374,6 +1441,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfTCPMaxCompletionMs = 0;
     _wifiPerfTCPDropKeyframeRequests = 0;
     _wifiPerfTCPDropKeyframeSuppressed = 0;
+    _wifiPerfTCPStallRecoveries = 0;
     _wifiPerfAdaptiveDownshifts = 0;
     _wifiPerfAdaptiveUpshifts = 0;
     _wifiPerfAdaptiveHolds = 0;
@@ -1422,6 +1490,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t tcpMaxCompletionMs = strongSelf->_wifiPerfTCPMaxCompletionMs;
         int32_t tcpDropKeyReq = strongSelf->_wifiPerfTCPDropKeyframeRequests;
         int32_t tcpDropKeySupp = strongSelf->_wifiPerfTCPDropKeyframeSuppressed;
+        int32_t tcpStallRecoveries = strongSelf->_wifiPerfTCPStallRecoveries;
         int32_t tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
         NSUInteger queuedNow = strongSelf->_wirelessTransport.queuedMediaChunkCount;
         double avgKB = encodedFrames > 0 ? ((double)encodedBytes / (double)encodedFrames) / 1024.0 : 0.0;
@@ -1432,11 +1501,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t adaptiveHold = strongSelf->_wifiPerfAdaptiveHolds;
         int32_t adaptiveFloor = strongSelf->_wifiPerfAdaptiveFloorGuards;
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d healthyStreak=%d mildStreak=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d tcpStallRec=%d adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d healthyStreak=%d mildStreak=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
                preDrops, queueDrops, tcpFallbacks, tcpSendDrops,
                tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
-               tcpDropKeyReq, tcpDropKeySupp,
+               tcpDropKeyReq, tcpDropKeySupp, tcpStallRecoveries,
                strongSelf->_wifiAdaptiveTargetFPS, strongSelf->_wifiAdaptiveTargetBitrate / 1000000,
                strongSelf->_wifiAdaptiveAppliedFPS, strongSelf->_wifiAdaptiveAppliedBitrate / 1000000,
                adaptiveDown, adaptiveUp, adaptiveHold, adaptiveFloor,
@@ -1490,6 +1559,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     int32_t preDrops = _wifiPerfPreEncodeDrops;
     int32_t tcpSendDrops = _wifiPerfTCPSendDrops;
     int32_t queueDrops = _wifiPerfQueueDrops;
+    uint64_t lastStallRecoveryUs = _wifiTCPLastStallRecoveryUs;
+    uint64_t sinceStallRecoveryMs = (lastStallRecoveryUs > 0 && nowUs > lastStallRecoveryUs)
+    ? (nowUs - lastStallRecoveryUs) / 1000 : UINT64_MAX;
 
     BOOL severeCongestion = (tcpSendDrops > 0) ||
                             (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi + 1) ||
@@ -1501,8 +1573,10 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                             (preDrops > 0) ||
                             (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi));
     BOOL healthy = !severeCongestion && !mildCongestion &&
-                   tcpSendDrops == 0 && queueDrops == 0 && preDrops == 0 &&
-                   tcpSlowCompletions == 0 && tcpInFlightNow <= 1 && tcpMaxCompletionMs < 18;
+                    tcpSendDrops == 0 && queueDrops == 0 && preDrops == 0 &&
+                    tcpSlowCompletions == 0 && tcpInFlightNow <= 1 && tcpMaxCompletionMs < 18;
+    BOOL postStallHold = (sinceStallRecoveryMs != UINT64_MAX &&
+                          sinceStallRecoveryMs < kWirelessTCPPostRecoveryAdaptiveHoldMs);
 
     int32_t prevFPS = _wifiAdaptiveTargetFPS;
     int32_t prevBitrate = _wifiAdaptiveTargetBitrate;
@@ -1546,6 +1620,14 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         reason = @"downshift-mild";
         OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveDownshifts);
     } else if (healthy) {
+        if (postStallHold) {
+            _wifiAdaptiveHealthyStreak = 0;
+            _wifiAdaptiveMildCongestionStreak = 0;
+            OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+            os_log(sLog, "WiFi adaptive hold: reason=post-stall-recovery target=%dfps/%dMbps sinceRecovery=%llums holdMs=%llums",
+                   prevFPS, prevBitrate / 1000000, sinceStallRecoveryMs, kWirelessTCPPostRecoveryAdaptiveHoldMs);
+            return;
+        }
         _wifiAdaptiveMildCongestionStreak = 0;
         _wifiAdaptiveHealthyStreak += 1;
         uint64_t sinceMs = (_wifiAdaptiveLastChangeUs > 0 && nowUs > _wifiAdaptiveLastChangeUs) ? (nowUs - _wifiAdaptiveLastChangeUs) / 1000 : UINT64_MAX;
@@ -1584,6 +1666,84 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiAdaptiveTargetFPS = targetFPS;
     _wifiAdaptiveTargetBitrate = targetBitrate;
     [self applyWiFiAdaptiveRateTargetsIfNeededWithReason:reason nowUs:nowUs];
+}
+
+- (BOOL)maybeRecoverWiFiTCPInFlightStallWithInFlight:(int32_t)inFlight nowUs:(uint64_t)nowUs reason:(const char *)reason {
+    if (inFlight < kMaxMediaSendsInFlightWiFi) {
+        self.wifiTCPInFlightSaturatedSinceUs = 0;
+        return NO;
+    }
+
+    @synchronized (self) {
+        uint64_t saturatedSinceUs = self.wifiTCPInFlightSaturatedSinceUs;
+        if (saturatedSinceUs == 0) {
+            self.wifiTCPInFlightSaturatedSinceUs = nowUs;
+            self.wifiTCPStallLastLogUs = nowUs;
+            os_log(sLog, "WiFi TCP saturation enter: reason=%{public}s inFlight=%d limit=%d",
+                   reason ?: "unknown", inFlight, kMaxMediaSendsInFlightWiFi);
+            return NO;
+        }
+
+        uint64_t saturatedMs = nowUs > saturatedSinceUs ? (nowUs - saturatedSinceUs) / 1000 : 0;
+        uint64_t lastCompletionUs = self.wifiTCPLastCompletionUs;
+        uint64_t noCompletionMs = (lastCompletionUs > 0 && nowUs > lastCompletionUs) ? (nowUs - lastCompletionUs) / 1000 : UINT64_MAX;
+        uint64_t lastRecoveryUs = self.wifiTCPLastStallRecoveryUs;
+        uint64_t sinceRecoveryMs = (lastRecoveryUs > 0 && nowUs > lastRecoveryUs) ? (nowUs - lastRecoveryUs) / 1000 : UINT64_MAX;
+
+        if (saturatedMs < kWirelessTCPStallSaturationThresholdMs ||
+            noCompletionMs < kWirelessTCPStallNoCompletionThresholdMs) {
+            uint64_t lastLogUs = self.wifiTCPStallLastLogUs;
+            if (lastLogUs == 0 || nowUs - lastLogUs >= kWirelessTCPStallLogIntervalMs * 1000) {
+                self.wifiTCPStallLastLogUs = nowUs;
+                os_log(sLog, "WiFi TCP saturation observe: reason=%{public}s inFlight=%d sat=%llums noCompletion=%llums thresholdSat=%llums thresholdNoCompletion=%llums",
+                       reason ?: "unknown", inFlight, saturatedMs,
+                       noCompletionMs == UINT64_MAX ? 0 : noCompletionMs,
+                       kWirelessTCPStallSaturationThresholdMs,
+                       kWirelessTCPStallNoCompletionThresholdMs);
+            }
+            return NO;
+        }
+
+        if (sinceRecoveryMs != UINT64_MAX && sinceRecoveryMs < kWirelessTCPStallRecoveryCooldownMs) {
+            uint64_t lastLogUs = self.wifiTCPStallLastLogUs;
+            if (lastLogUs == 0 || nowUs - lastLogUs >= kWirelessTCPStallLogIntervalMs * 1000) {
+                self.wifiTCPStallLastLogUs = nowUs;
+                os_log(sLog, "WiFi TCP stall recovery hold: reason=%{public}s inFlight=%d sat=%llums noCompletion=%llums sinceRecovery=%llums cooldown=%llums",
+                       reason ?: "unknown", inFlight, saturatedMs,
+                       noCompletionMs == UINT64_MAX ? 0 : noCompletionMs,
+                       sinceRecoveryMs, kWirelessTCPStallRecoveryCooldownMs);
+            }
+            return NO;
+        }
+
+        int32_t oldInFlight = _wifiTCPMediaSendsInFlight;
+        uint32_t oldGeneration = self.wifiTCPSendGeneration;
+        self.wifiTCPSendGeneration = oldGeneration + 1;
+        _wifiTCPMediaSendsInFlight = 0;
+        self.wifiTCPInFlightSaturatedSinceUs = 0;
+        self.wifiTCPLastStallRecoveryUs = nowUs;
+        self.wifiTCPStallLastLogUs = nowUs;
+        OSAtomicIncrement32Barrier(&_wifiPerfTCPStallRecoveries);
+
+        uint64_t lastKeyReqUs = self.wifiLastTCPDropKeyframeRequestUs;
+        uint64_t sinceLastReqMs = (lastKeyReqUs > 0 && nowUs > lastKeyReqUs) ? (nowUs - lastKeyReqUs) / 1000 : UINT64_MAX;
+        BOOL requestKeyframe = (lastKeyReqUs == 0 || sinceLastReqMs >= kWirelessTCPDropKeyframeCooldownMs);
+        if (requestKeyframe) {
+            self.wifiLastTCPDropKeyframeRequestUs = nowUs;
+            OSAtomicIncrement32Barrier(&_wifiPerfTCPDropKeyframeRequests);
+            [self->_hevcEncoder requestKeyframe];
+        } else {
+            OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeSuppressed);
+        }
+
+        os_log_error(sLog, "WiFi TCP stall recovery: reason=%{public}s action=reset-inflight oldInFlight=%d sat=%llums noCompletion=%llums gen=%u->%u keyframe=%{public}s cooldownMs=%llums",
+                     reason ?: "unknown", oldInFlight, saturatedMs,
+                     noCompletionMs == UINT64_MAX ? 0 : noCompletionMs,
+                     oldGeneration, self.wifiTCPSendGeneration,
+                     requestKeyframe ? "requested" : "cooldown-suppressed",
+                     kWirelessTCPStallRecoveryCooldownMs);
+        return YES;
+    }
 }
 
 - (void)applyWiFiAdaptiveRateTargetsIfNeededWithReason:(NSString *)reason nowUs:(uint64_t)nowUs {

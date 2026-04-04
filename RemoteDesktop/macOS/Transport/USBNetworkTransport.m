@@ -540,6 +540,7 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
     BOOL hasFrameSeq = NO;
     BOOL isHEVC = NO;
     BOOL shouldChunkHEVC = NO;
+    BOOL sampledEntryLog = NO;
     size_t payloadLen = 0;
     uint32_t seqForLogs = 0;
     uint64_t sendStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
@@ -553,12 +554,13 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
         shouldChunkHEVC = isHEVC && payloadLen > kUSBMediaTCPChunkThresholdBytes;
         static uint64_t mediaEntryLogCount = 0;
         mediaEntryLogCount += 1;
-        if (mediaEntryLogCount <= 10 || mediaEntryLogCount % kUSBMediaEntryLogInterval == 0) {
+        sampledEntryLog = (mediaEntryLogCount <= 10 || mediaEntryLogCount % kUSBMediaEntryLogInterval == 0);
+        if (sampledEntryLog) {
             os_log(transport_log(),
                    "USB media send entry: seq=%u bytes=%zu payload=%zu hevc=%{public}s chunkMode=%{public}s threshold=%zu sample=%llu",
-                   frameSeq, len, payloadLen, isHEVC ? "yes" : "no",
-                   shouldChunkHEVC ? "chunked" : "single-frame",
-                   kUSBMediaTCPChunkThresholdBytes, mediaEntryLogCount);
+                    frameSeq, len, payloadLen, isHEVC ? "yes" : "no",
+                    shouldChunkHEVC ? "chunked" : "single-frame",
+                    kUSBMediaTCPChunkThresholdBytes, mediaEntryLogCount);
         }
     }
 
@@ -593,7 +595,7 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
             [framedBatchData appendBytes:chunk length:chunkLen];
             chunkCount += 1;
             framedBytes += sizeof(uint32_t) + chunkLen;
-            if (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0) {
+            if (sampledEntryLog && (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0)) {
                 os_log(transport_log(),
                        "USB media chunk batch append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
                        frameSeq, (unsigned long)chunkCount, chunkLen, framedBytes);
@@ -620,23 +622,38 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
                 if (completion) completion(error == nil);
                 if (error) {
                     os_log_error(transport_log(),
-                             "USB media chunk batch send error: %{public}@ (seq=%u chunks=%lu elapsed=%llums)",
-                                 error, frameSeq, (unsigned long)chunkCount, elapsedMs);
+                              "USB media chunk batch send error: %{public}@ (seq=%u chunks=%lu elapsed=%llums)",
+                                  error, frameSeq, (unsigned long)chunkCount, elapsedMs);
                     return;
                 }
-                os_log(transport_log(),
-                        "USB media chunk batch send success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums",
-                        frameSeq, (unsigned long)chunkCount, framedBytes, elapsedMs);
+                static uint64_t usbChunkBatchSendSuccessCount = 0;
+                usbChunkBatchSendSuccessCount += 1;
+                if (usbChunkBatchSendSuccessCount <= 10 ||
+                    usbChunkBatchSendSuccessCount % kUSBMediaSendSuccessLogInterval == 0 ||
+                    elapsedMs >= kUSBMediaSendSlowThresholdMs) {
+                    os_log(transport_log(),
+                           "USB media chunk batch send success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums sample=%llu",
+                           frameSeq, (unsigned long)chunkCount, framedBytes, elapsedMs, usbChunkBatchSendSuccessCount);
+                }
             });
             return;
         }
         os_log_error(transport_log(), "USB media chunk batch empty: seq=%u payload=%zu", frameSeq, payloadLen);
     }
     if (hasFrameSeq) {
+        static uint64_t unchunkedLogCount = 0;
+        unchunkedLogCount += 1;
+        BOOL sampledUnchunkedLog =
+            (unchunkedLogCount <= 10) ||
+            (unchunkedLogCount % kUSBMediaEntryLogInterval == 0) ||
+            (isHEVC && payloadLen >= (kUSBMediaTCPChunkThresholdBytes * 3 / 4));
+        if (sampledUnchunkedLog) {
         os_log(transport_log(),
-               "USB media sending unchunked frame: seq=%u bytes=%zu payload=%zu hevc=%{public}s reason=%{public}s",
+               "USB media sending unchunked frame: seq=%u bytes=%zu payload=%zu hevc=%{public}s reason=%{public}s sample=%llu",
                frameSeq, len, payloadLen, isHEVC ? "yes" : "no",
-               isHEVC ? "payload-below-chunk-threshold" : "non-hevc");
+               isHEVC ? "payload-below-chunk-threshold" : "non-hevc",
+               unchunkedLogCount);
+        }
     }
 
     /* Build framed buffer in one allocation to reduce per-frame allocator churn. */
@@ -702,7 +719,8 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
     BOOL shouldChunkHEVC = isHEVC && payloadLen > kUSBMediaTCPChunkThresholdBytes;
     static uint64_t splitEntryLogCount = 0;
     splitEntryLogCount += 1;
-    if (splitEntryLogCount <= 10 || splitEntryLogCount % kUSBMediaEntryLogInterval == 0) {
+    BOOL sampledSplitEntryLog = (splitEntryLogCount <= 10 || splitEntryLogCount % kUSBMediaEntryLogInterval == 0);
+    if (sampledSplitEntryLog) {
         os_log(transport_log(),
                "USB media split-send entry: seq=%u payload=%zu hevc=%{public}s chunkMode=%{public}s sample=%llu",
                 seqForLogs, payloadLen, isHEVC ? "yes" : "no",
@@ -730,7 +748,7 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
             [framedBatchData appendBytes:chunk length:chunkLen];
             chunkCount += 1;
             framedBytes += sizeof(uint32_t) + chunkLen;
-            if (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0) {
+            if (sampledSplitEntryLog && (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0)) {
                 os_log(transport_log(),
                        "USB media split-send chunk append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
                         seqForLogs, (unsigned long)chunkCount, chunkLen, framedBytes);
@@ -758,9 +776,15 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
                              error, seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs);
                 return;
             }
-            os_log(transport_log(),
-                   "USB media split-send chunk success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums",
-                   seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs);
+            static uint64_t usbSplitChunkSendSuccessCount = 0;
+            usbSplitChunkSendSuccessCount += 1;
+            if (usbSplitChunkSendSuccessCount <= 10 ||
+                usbSplitChunkSendSuccessCount % kUSBMediaSendSuccessLogInterval == 0 ||
+                elapsedMs >= kUSBMediaSendSlowThresholdMs) {
+                os_log(transport_log(),
+                       "USB media split-send chunk success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums sample=%llu",
+                       seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs, usbSplitChunkSendSuccessCount);
+            }
         });
         return;
     }

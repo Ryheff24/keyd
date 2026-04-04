@@ -529,14 +529,37 @@ final class WirelessTransport {
 
         mediaConn.stateUpdateHandler = { [weak self] state in
             guard let self = self else { return }
+            let isActiveMediaConnection = (self.mediaConnection === mediaConn)
             switch state {
             case .ready:
+                guard isActiveMediaConnection else {
+                    print("[CONSOLE] WirelessTransport: ignoring READY from stale DTLS media connection")
+                    self.log.info("Ignoring READY from stale DTLS media connection")
+                    return
+                }
                 print("[CONSOLE] WirelessTransport: DTLS UDP media connection READY")
                 self.log.info("DTLS wireless media UDP connection ready")
                 self.scheduleMediaReceive(mediaConn)
             case .failed(let error):
+                guard isActiveMediaConnection else {
+                    print("[CONSOLE] WirelessTransport: stale DTLS media FAILED ignored: \(error)")
+                    self.log.info("Ignoring FAILED from stale DTLS media connection: \(error)")
+                    return
+                }
                 print("[CONSOLE] WirelessTransport: DTLS UDP media FAILED: \(error)")
                 self.log.error("DTLS wireless media UDP connection failed: \(error)")
+                self.mediaConnection = nil
+                self.handleActiveMediaPathLoss(reason: "media-failed", detail: "\(error)")
+            case .cancelled:
+                guard isActiveMediaConnection else {
+                    print("[CONSOLE] WirelessTransport: stale DTLS media CANCELLED ignored")
+                    self.log.info("Ignoring CANCELLED from stale DTLS media connection")
+                    return
+                }
+                print("[CONSOLE] WirelessTransport: DTLS UDP media connection CANCELLED")
+                self.log.info("DTLS wireless media UDP connection cancelled")
+                self.mediaConnection = nil
+                self.handleActiveMediaPathLoss(reason: "media-cancelled", detail: "dtls-state-cancelled")
             default:
                 break
             }
@@ -577,6 +600,12 @@ final class WirelessTransport {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
+            guard self.mediaConnection === connection else {
+                if error != nil || isComplete {
+                    print("[CONSOLE] WirelessTransport: stale media receive callback dropped (isComplete=\(isComplete), error=\(String(describing: error)))")
+                }
+                return
+            }
 
             if error == nil {
                 /* Keep the DTLS receive pipeline armed before we hand the
@@ -623,6 +652,12 @@ final class WirelessTransport {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
+            guard self.inputConnection === connection else {
+                if error != nil || isComplete {
+                    print("[CONSOLE] WirelessTransport: stale TCP receive callback dropped (isComplete=\(isComplete), error=\(String(describing: error)))")
+                }
+                return
+            }
 
             if let data = content, !data.isEmpty {
                 self.tcpBuffer.append(data)
@@ -754,6 +789,37 @@ final class WirelessTransport {
         }
         connectWatchdogWorkItem = workItem
         transportQueue.asyncAfter(deadline: .now() + 3.0, execute: workItem)
+    }
+
+    private func handleActiveMediaPathLoss(reason: String, detail: String) {
+        let hadInputConnection = (inputConnection != nil)
+        let wasConnected = isConnected
+        let wasAWDL = isAWDL
+        let shouldRecover = hadInputConnection || wasConnected
+
+        print("[CONSOLE] WirelessTransport: media path loss observed reason=\(reason) detail=\(detail) hadInputConnection=\(hadInputConnection) wasConnected=\(wasConnected) browsingRequested=\(browsingRequested)")
+        if !shouldRecover {
+            print("[CONSOLE] WirelessTransport: media path loss ignored (no active/pending session) reason=\(reason)")
+            log.info("Media path loss ignored: no active/pending session (\(reason))")
+            return
+        }
+
+        connectWatchdogWorkItem?.cancel()
+        connectWatchdogWorkItem = nil
+
+        let staleInputConnection = inputConnection
+        inputConnection = nil
+        staleInputConnection?.cancel()
+
+        connectedServiceName = nil
+        isConnected = false
+        isAWDL = false
+        tcpBuffer.removeAll()
+
+        print("[CONSOLE] WirelessTransport: media path loss recovery triggered reason=\(reason) wasAWDL=\(wasAWDL) -> forcing reconnect")
+        log.error("Media path loss recovery triggered (\(reason)); forcing reconnect")
+        onConnectionChanged?(false, wasAWDL)
+        scheduleBrowserRestart(reason: reason)
     }
 
     deinit {

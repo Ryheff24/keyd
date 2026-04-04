@@ -54,6 +54,16 @@ final class USBNetworkTransport {
     private var mediaReceiveErrorCount = 0
     private var mediaReceiveCompleteCount = 0
     private var inputReceiveConfigLogged = false
+    private var tcpRecvAppendLogCount = 0
+    private var tcpPartialLogCount = 0
+    private var tcpCompactLogCount = 0
+    private var tcpHoldLogCount = 0
+    private var tcpDrainDeliveredLogCount = 0
+    private static let tcpRecvAppendLogInterval = 64
+    private static let tcpPartialLogInterval = 16
+    private static let tcpCompactLogInterval = 16
+    private static let tcpHoldLogInterval = 8
+    private static let tcpDrainDeliveredLogInterval = 64
     private static let tcpCompactionMinConsumedBytes = 8 << 20
     private static let tcpReceiveMaxLength = 1 << 20
 
@@ -723,8 +733,13 @@ final class USBNetworkTransport {
                 self.tcpBuffer.append(data)
                 let afterCount = self.tcpBuffer.count
                 if beforeCount == 0 || afterCount >= (2 << 20) || afterCount % (1 << 20) < data.count {
-                    print("[CONSOLE] USBTransport: tcp-recv append=\(data.count)B buffer=\(afterCount)B readOffset=\(self.tcpBufferReadOffset)")
-                    self.log.info("USB TCP recv append=\(data.count, privacy: .public)B buffer=\(afterCount, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
+                    self.tcpRecvAppendLogCount += 1
+                    if self.tcpRecvAppendLogCount <= 10 ||
+                        self.tcpRecvAppendLogCount % Self.tcpRecvAppendLogInterval == 0 ||
+                        afterCount >= (4 << 20) {
+                        print("[CONSOLE] USBTransport: tcp-recv append=\(data.count)B buffer=\(afterCount)B readOffset=\(self.tcpBufferReadOffset) sample=\(self.tcpRecvAppendLogCount)")
+                        self.log.info("USB TCP recv append=\(data.count, privacy: .public)B buffer=\(afterCount, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public) sample=\(self.tcpRecvAppendLogCount, privacy: .public)")
+                    }
                 }
                 self.drainUSBTCPBuffer()
             }
@@ -772,8 +787,13 @@ final class USBNetworkTransport {
             guard (tcpBuffer.count - tcpBufferReadOffset) >= 4 + msgLen else {
                 let available = tcpBuffer.count - tcpBufferReadOffset
                 if available >= (1 << 20) {
-                    print("[CONSOLE] USBTransport: tcp-drain partial msgLen=\(msgLen) available=\(available)B buffer=\(tcpBuffer.count)B")
-                    self.log.info("USB TCP drain partial msgLen=\(msgLen, privacy: .public) available=\(available, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B")
+                    tcpPartialLogCount += 1
+                    if tcpPartialLogCount <= 10 ||
+                        tcpPartialLogCount % Self.tcpPartialLogInterval == 0 ||
+                        available >= (2 << 20) {
+                        print("[CONSOLE] USBTransport: tcp-drain partial msgLen=\(msgLen) available=\(available)B buffer=\(tcpBuffer.count)B sample=\(tcpPartialLogCount)")
+                        self.log.info("USB TCP drain partial msgLen=\(msgLen, privacy: .public) available=\(available, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B sample=\(self.tcpPartialLogCount, privacy: .public)")
+                    }
                 }
                 break
             }
@@ -805,17 +825,30 @@ final class USBNetworkTransport {
             tcpCompactionCount += 1
             let compactElapsedMs = (CFAbsoluteTimeGetCurrent() - compactStart) * 1000.0
             let mode = unreadBytes == 0 ? "reset" : "trim"
-            print("[CONSOLE] USBTransport: tcp-compact #\(tcpCompactionCount) mode=\(mode) consumed=\(consumedBytes)B unread=\(unreadBytes)B elapsed=\(String(format: "%.2f", compactElapsedMs))ms newBuffer=\(tcpBuffer.count)B threshold=\(Self.tcpCompactionMinConsumedBytes)B")
-            self.log.info("USB TCP compact #\(self.tcpCompactionCount, privacy: .public) mode=\(mode, privacy: .public) consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B elapsedMs=\(compactElapsedMs, privacy: .public) newBuffer=\(self.tcpBuffer.count, privacy: .public)B threshold=\(Self.tcpCompactionMinConsumedBytes, privacy: .public)B")
+            tcpCompactLogCount += 1
+            if tcpCompactLogCount <= 10 ||
+                tcpCompactLogCount % Self.tcpCompactLogInterval == 0 ||
+                compactElapsedMs > 4.0 {
+                print("[CONSOLE] USBTransport: tcp-compact #\(tcpCompactionCount) mode=\(mode) consumed=\(consumedBytes)B unread=\(unreadBytes)B elapsed=\(String(format: "%.2f", compactElapsedMs))ms newBuffer=\(tcpBuffer.count)B threshold=\(Self.tcpCompactionMinConsumedBytes)B sample=\(tcpCompactLogCount)")
+                self.log.info("USB TCP compact #\(self.tcpCompactionCount, privacy: .public) mode=\(mode, privacy: .public) consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B elapsedMs=\(compactElapsedMs, privacy: .public) newBuffer=\(self.tcpBuffer.count, privacy: .public)B threshold=\(Self.tcpCompactionMinConsumedBytes, privacy: .public)B sample=\(self.tcpCompactLogCount, privacy: .public)")
+            }
         } else if consumedBytes > 0 && (consumedBytes % (2 << 20) == 0) {
-            print("[CONSOLE] USBTransport: tcp-drain hold consumed=\(consumedBytes)B unread=\(unreadBytes)B buffer=\(tcpBuffer.count)B")
-            self.log.info("USB TCP drain hold consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B")
+            tcpHoldLogCount += 1
+            if tcpHoldLogCount <= 10 || tcpHoldLogCount % Self.tcpHoldLogInterval == 0 {
+                print("[CONSOLE] USBTransport: tcp-drain hold consumed=\(consumedBytes)B unread=\(unreadBytes)B buffer=\(tcpBuffer.count)B sample=\(tcpHoldLogCount)")
+                self.log.info("USB TCP drain hold consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B sample=\(self.tcpHoldLogCount, privacy: .public)")
+            }
         }
 
         let drainElapsedMs = (CFAbsoluteTimeGetCurrent() - drainStart) * 1000.0
         if deliveredThisDrain > 0 && (drainElapsedMs > 4.0 || deliveredThisDrain >= 8 || tcpDrainInvocationCount <= 8) {
-            print("[CONSOLE] USBTransport: tcp-drain delivered=\(deliveredThisDrain) elapsed=\(String(format: "%.2f", drainElapsedMs))ms start=\(startBufferCount)B/\(startReadOffset) end=\(tcpBuffer.count)B/\(tcpBufferReadOffset) totalMsgs=\(tcpMessagesDelivered)")
-            self.log.info("USB TCP drain delivered=\(deliveredThisDrain, privacy: .public) elapsedMs=\(drainElapsedMs, privacy: .public) startBuf=\(startBufferCount, privacy: .public)B startOffset=\(startReadOffset, privacy: .public) endBuf=\(self.tcpBuffer.count, privacy: .public)B endOffset=\(self.tcpBufferReadOffset, privacy: .public) totalMsgs=\(self.tcpMessagesDelivered, privacy: .public)")
+            tcpDrainDeliveredLogCount += 1
+            if tcpDrainDeliveredLogCount <= 10 ||
+                tcpDrainDeliveredLogCount % Self.tcpDrainDeliveredLogInterval == 0 ||
+                drainElapsedMs > 8.0 {
+                print("[CONSOLE] USBTransport: tcp-drain delivered=\(deliveredThisDrain) elapsed=\(String(format: "%.2f", drainElapsedMs))ms start=\(startBufferCount)B/\(startReadOffset) end=\(tcpBuffer.count)B/\(tcpBufferReadOffset) totalMsgs=\(tcpMessagesDelivered) sample=\(tcpDrainDeliveredLogCount)")
+                self.log.info("USB TCP drain delivered=\(deliveredThisDrain, privacy: .public) elapsedMs=\(drainElapsedMs, privacy: .public) startBuf=\(startBufferCount, privacy: .public)B startOffset=\(startReadOffset, privacy: .public) endBuf=\(self.tcpBuffer.count, privacy: .public)B endOffset=\(self.tcpBufferReadOffset, privacy: .public) totalMsgs=\(self.tcpMessagesDelivered, privacy: .public) sample=\(self.tcpDrainDeliveredLogCount, privacy: .public)")
+            }
         }
     }
 

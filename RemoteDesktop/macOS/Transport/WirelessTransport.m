@@ -787,8 +787,15 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t cState,
                                                          nw_error_t _Nullable cError) {
             if (cState == nw_connection_state_ready) {
-                os_log(wireless_log(), "DTLS wireless media UDP connection ready");
                 WirelessTransport *self3 = weakSelf;
+                BOOL isActiveMediaConnection = (self3 && self3->_mediaConnection == conn);
+                if (!isActiveMediaConnection) {
+                    os_log(wireless_log(),
+                           "Ignoring READY from stale DTLS media connection (activeMedia=%{public}p staleConnection=%{public}p)",
+                           self3 ? self3->_mediaConnection : nil, conn);
+                    return;
+                }
+                os_log(wireless_log(), "DTLS wireless media UDP connection ready");
                 if (self3) {
                     [self3 resetSendPacing];
                     [self3 scheduleMediaReceive:conn];
@@ -797,16 +804,36 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                     }
                 }
             } else if (cState == nw_connection_state_failed) {
+                WirelessTransport *self3 = weakSelf;
+                BOOL isActiveMediaConnection = (self3 && self3->_mediaConnection == conn);
+                if (!isActiveMediaConnection) {
+                    os_log(wireless_log(),
+                           "Ignoring FAILED from stale DTLS media connection (error=%{public}@ activeMedia=%{public}p staleConnection=%{public}p)",
+                           cError ?: (nw_error_t)@"unknown",
+                           self3 ? self3->_mediaConnection : nil, conn);
+                    return;
+                }
                 os_log_error(wireless_log(), "DTLS wireless media connection failed: %{public}@",
                              cError ?: (nw_error_t)@"unknown");
-                WirelessTransport *self3 = weakSelf;
-                if (self3 && self3->_mediaConnection == conn) {
+                if (self3) {
                     self3->_mediaConnection = nil;
+                    [self3 handleActiveMediaPathLossWithReason:"media-failed"
+                                                         detail:cError ?: (nw_error_t)@"unknown"];
                 }
             } else if (cState == nw_connection_state_cancelled) {
                 WirelessTransport *self3 = weakSelf;
-                if (self3 && self3->_mediaConnection == conn) {
+                BOOL isActiveMediaConnection = (self3 && self3->_mediaConnection == conn);
+                if (!isActiveMediaConnection) {
+                    os_log(wireless_log(),
+                           "Ignoring CANCELLED from stale DTLS media connection (activeMedia=%{public}p staleConnection=%{public}p)",
+                           self3 ? self3->_mediaConnection : nil, conn);
+                    return;
+                }
+                os_log(wireless_log(), "DTLS wireless media connection cancelled");
+                if (self3) {
                     self3->_mediaConnection = nil;
+                    [self3 handleActiveMediaPathLossWithReason:"media-cancelled"
+                                                         detail:(nw_error_t)@"dtls-state-cancelled"];
                 }
             }
         });
@@ -826,6 +853,20 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                                                    nw_error_t _Nullable error) {
         WirelessTransport *self2 = weakSelf;
         if (!self2) return;
+        if (self2->_mediaConnection != connection) {
+            if (error || is_complete) {
+                os_log(wireless_log(),
+                       "Dropping stale media receive callback (activeMedia=%{public}p staleConnection=%{public}p is_complete=%{public}d error=%{public}@)",
+                       self2->_mediaConnection, connection, is_complete, error ?: (nw_error_t)@"none");
+            }
+            return;
+        }
+
+        if (!error) {
+            /* Keep DTLS receive armed before media processing to avoid
+             * callback starvation during heavy decode/reassembly work. */
+            [self2 scheduleMediaReceive:connection];
+        }
 
         if (content && dispatch_data_get_size(content) > 0) {
             dispatch_data_apply(content, ^bool(dispatch_data_t _Nonnull region,
@@ -839,8 +880,20 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
             });
         }
 
-        if (error || is_complete) return;
-        [self2 scheduleMediaReceive:connection];
+        if (error) {
+            os_log_error(wireless_log(),
+                         "DTLS media receive error on active connection: %{public}@",
+                         error);
+            self2->_mediaConnection = nil;
+            [self2 handleActiveMediaPathLossWithReason:"media-receive-error" detail:error];
+            return;
+        }
+        if (is_complete) {
+            os_log(wireless_log(),
+                   "DTLS media receive delivered is_complete=1 on active connection; treating as datagram completion and keeping receive loop armed");
+        }
+        /* For DTLS/UDP: is_complete marks datagram boundary and is not
+         * a connection-closed signal. */
     });
 }
 
@@ -852,6 +905,14 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                                                   nw_error_t _Nullable error) {
         WirelessTransport *self2 = weakSelf;
         if (!self2) return;
+        if (self2->_inputConnection != connection) {
+            if (error || is_complete) {
+                os_log(wireless_log(),
+                       "Dropping stale input receive callback (activeInput=%{public}p staleConnection=%{public}p is_complete=%{public}d error=%{public}@)",
+                       self2->_inputConnection, connection, is_complete, error ?: (nw_error_t)@"none");
+            }
+            return;
+        }
 
         if (content && dispatch_data_get_size(content) > 0) {
             self2->_lastInputActivityTicks = mach_absolute_time();
@@ -866,7 +927,16 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
             });
         }
 
-        if (error || is_complete) return;
+        if (error) {
+            os_log_error(wireless_log(), "TCP input receive error on active connection: %{public}@", error);
+            nw_connection_cancel(connection);
+            return;
+        }
+        if (is_complete) {
+            os_log(wireless_log(), "TCP input receive completed (EOF) on active connection; cancelling to force lifecycle transition");
+            nw_connection_cancel(connection);
+            return;
+        }
         [self2 scheduleInputReceive:connection];
     });
 }
@@ -893,6 +963,57 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     _lastInputActivityTicks = 0;
     _isConnected = NO;
     _isAWDL = NO;
+}
+
+- (void)handleActiveMediaPathLossWithReason:(const char *)reason detail:(nw_error_t _Nullable)detail {
+    BOOL hadInputConnection = (_inputConnection != nil);
+    BOOL wasConnected = _isConnected;
+    BOOL wasAWDL = _isAWDL;
+    BOOL shouldRecover = hadInputConnection || wasConnected;
+
+    os_log(wireless_log(),
+           "Media path loss observed: reason=%{public}s detail=%{public}@ hadInputConnection=%{public}d wasConnected=%{public}d advertisingRequested=%{public}d",
+           reason,
+           detail ?: (nw_error_t)@"none",
+           hadInputConnection,
+           wasConnected,
+           _advertisingRequested);
+    if (!shouldRecover) {
+        os_log(wireless_log(),
+               "Media path loss ignored (no active/pending session): reason=%{public}s",
+               reason);
+        return;
+    }
+
+    nw_connection_t staleInput = _inputConnection;
+    _inputConnection = nil;
+    if (staleInput) {
+        nw_connection_cancel(staleInput);
+    }
+    _allowReconnectTakeover = NO;
+    _inputAcceptedAtTicks = 0;
+    _inputReadyAtTicks = 0;
+    _lastInputActivityTicks = 0;
+    _isConnected = NO;
+    _isAWDL = NO;
+
+    os_log_error(wireless_log(),
+                 "Media path loss recovery triggered: reason=%{public}s wasAWDL=%{public}d -> forcing reconnect",
+                 reason,
+                 wasAWDL);
+    if (self.onConnectionChanged) {
+        self.onConnectionChanged(NO, wasAWDL);
+    }
+    if (_advertisingRequested && !_bonjourListener) {
+        os_log(wireless_log(),
+               "Media path loss recovery: starting Bonjour listener for reconnect discovery");
+        [self startAdvertising];
+    } else {
+        os_log(wireless_log(),
+               "Media path loss recovery: listener restart skipped (advertisingRequested=%{public}d listener=%{public}p)",
+               _advertisingRequested,
+               _bonjourListener);
+    }
 }
 
 @end
