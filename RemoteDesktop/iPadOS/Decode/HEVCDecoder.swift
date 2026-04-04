@@ -38,10 +38,29 @@ final class HEVCDecoder {
     private var decodeLogCount = 0
 
     func decode(data: Data, header: MediaFrameHeader) -> CVPixelBuffer? {
+        return decode(frameData: data,
+                      payloadOffset: 0,
+                      payloadLength: data.count,
+                      header: header)
+    }
+
+    func decode(frameData: Data,
+                payloadOffset: Int,
+                payloadLength: Int,
+                header: MediaFrameHeader) -> CVPixelBuffer? {
+        guard payloadOffset >= 0,
+              payloadLength >= 0,
+              payloadOffset + payloadLength <= frameData.count else {
+            os_log(.error, log: Self.log,
+                   "Invalid HEVC payload bounds: offset=%d length=%d frame=%d",
+                   payloadOffset, payloadLength, frameData.count)
+            return nil
+        }
+
         // If this is a keyframe, extract SPS/PPS and ensure session exists
         if header.isKeyframe {
-            if !ensureSession(from: data) {
-                print("[CONSOLE] HEVCDecoder: ensureSession FAILED for keyframe (data=\(data.count) bytes)")
+            if !ensureSession(from: frameData, payloadOffset: payloadOffset, payloadLength: payloadLength) {
+                print("[CONSOLE] HEVCDecoder: ensureSession FAILED for keyframe (data=\(payloadLength) bytes)")
                 return nil
             }
             if decodeLogCount < 3 {
@@ -60,12 +79,13 @@ final class HEVCDecoder {
 
         // Create CMBlockBuffer from encoded data
         var blockBuffer: CMBlockBuffer?
-        let dataCount = data.count
-        var status = data.withUnsafeBytes { rawBuffer -> OSStatus in
+        let dataCount = payloadLength
+        var status = frameData.withUnsafeBytes { rawBuffer -> OSStatus in
             guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+            let payloadBase = baseAddress.advanced(by: payloadOffset)
             return CMBlockBufferCreateWithMemoryBlock(
                 allocator: kCFAllocatorDefault,
-                memoryBlock: UnsafeMutableRawPointer(mutating: baseAddress),
+                memoryBlock: UnsafeMutableRawPointer(mutating: payloadBase),
                 blockLength: dataCount,
                 blockAllocator: kCFAllocatorNull, // data owns the memory
                 customBlockSource: nil,
@@ -155,12 +175,14 @@ final class HEVCDecoder {
 
     /// Extract SPS/PPS from keyframe data and create/recreate the decompression session.
     /// Returns true if session is ready for decoding.
-    private func ensureSession(from data: Data) -> Bool {
+    private func ensureSession(from data: Data, payloadOffset: Int, payloadLength: Int) -> Bool {
         // Extract parameter sets (SPS, PPS) from HEVC keyframe
-        guard let fmtDesc = createFormatDescription(from: data) else {
+        guard let fmtDesc = createFormatDescription(from: data, payloadOffset: payloadOffset, payloadLength: payloadLength) else {
             // Log first few bytes for debugging NAL unit format
-            let preview = data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("[CONSOLE] HEVCDecoder: createFormatDescription FAILED, data[\(data.count)]= \(preview)...")
+            let safeStart = payloadOffset
+            let safeEnd = min(data.count, payloadOffset + min(payloadLength, 20))
+            let preview = data[safeStart..<safeEnd].map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("[CONSOLE] HEVCDecoder: createFormatDescription FAILED, payload[\(payloadLength)]= \(preview)...")
             return false
         }
 
@@ -205,9 +227,12 @@ final class HEVCDecoder {
     ///
     /// Scans encoded data for VPS (type 32), SPS (type 33), PPS (type 34)
     /// NAL units using 4-byte Annex-B start codes (00 00 00 01).
-    private func createFormatDescription(from data: Data) -> CMVideoFormatDescription? {
+    private func createFormatDescription(from data: Data, payloadOffset: Int, payloadLength: Int) -> CMVideoFormatDescription? {
+        let payloadRange = payloadOffset..<(payloadOffset + payloadLength)
+        let payloadData = data.subdata(in: payloadRange)
+
         // Find NAL units with Annex-B start codes
-        let nalUnits = extractNALUnits(from: data)
+        let nalUnits = extractNALUnits(from: payloadData)
 
         var vps: Data?
         var sps: Data?
@@ -228,7 +253,7 @@ final class HEVCDecoder {
         guard let vpsData = vps, let spsData = sps, let ppsData = pps else {
             // Not all parameter sets found -- this may be a non-keyframe or
             // the data uses length-prefix format rather than start codes
-            return createFormatDescriptionFromLengthPrefixed(data)
+            return createFormatDescriptionFromLengthPrefixed(payloadData)
         }
 
         // Build parameter set pointers for CMVideoFormatDescriptionCreateFromHEVCParameterSets

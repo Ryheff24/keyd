@@ -39,7 +39,7 @@ typedef NS_ENUM(NSInteger, SessionState) {
 /** Whether running in test mode (skips permissions, no real capture). */
 @property (nonatomic, assign, readonly) BOOL testMode;
 
-/** Whether running in automation mode (auto-shows QR and writes payload file). */
+/** Whether running in automation mode (test mode writes payload + starts listener without showing QR window). */
 @property (nonatomic, assign, readonly) BOOL automationMode;
 
 /** Wired-only mode: disables WiFi/AWDL transport and Bonjour advertising. */

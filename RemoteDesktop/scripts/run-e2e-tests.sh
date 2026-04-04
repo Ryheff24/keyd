@@ -790,7 +790,7 @@ if [ -n "$CAPTURE_FILE" ] && [ "$REAL_CAPTURE" = true ]; then
   exit 1
 fi
 
-MAC_LAUNCH_ARGS=(--test-mode)
+MAC_LAUNCH_ARGS=(--test-mode --automation-mode)
 if [ "$WIRED_ONLY" = true ]; then
   MAC_LAUNCH_ARGS+=(--wired-only)
 elif [ "$WIRELESS_ONLY" = true ]; then
@@ -831,7 +831,7 @@ SAW_QR_SHOWN_LOG=false
 SAW_QR_READY_LOG=false
 for i in $(seq 1 15); do
   if [ "$SAW_QR_SHOWN_LOG" = false ] && grep -q "$QR_SHOWN_LOG" "$MAC_LOG_FILE" 2>/dev/null; then
-    log_progress "Mac log reported QR presentation"
+    log_progress "Mac log reported QR pairing setup"
     SAW_QR_SHOWN_LOG=true
   fi
   if [ "$SAW_QR_READY_LOG" = false ] && grep -q "$QR_READY_LOG" "$MAC_LOG_FILE" 2>/dev/null; then

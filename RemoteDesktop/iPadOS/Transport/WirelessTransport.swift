@@ -35,6 +35,9 @@ final class WirelessTransport {
     private var browser: NWBrowser?
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.wireless.transport")
     private let mediaProcessingQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.wireless.media-processing")
+    private var browsingRequested = false
+    private var browserRestartAttempt = 0
+    private var connectWatchdogWorkItem: DispatchWorkItem?
 
     private var mediaConnection: NWConnection?
     private var inputConnection: NWConnection?
@@ -246,6 +249,7 @@ final class WirelessTransport {
     /// Start browsing for the Mac's Bonjour service.
     /// Enables peer-to-peer (AWDL) discovery.
     func startBrowsing() {
+        browsingRequested = true
         guard browser == nil else {
             print("[CONSOLE] WirelessTransport: startBrowsing skipped (browser already active, connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected))")
             log.info("startBrowsing skipped: browser already active")
@@ -267,17 +271,24 @@ final class WirelessTransport {
             case .ready:
                 print("[CONSOLE] Bonjour browser ready for \(keydrdService)")
                 self.log.info("Bonjour browser ready")
+                self.browserRestartAttempt = 0
             case .failed(let error):
                 print("[CONSOLE] Bonjour browser FAILED: \(error)")
                 self.log.error("Bonjour browser failed: \(error)")
                 if self.browser === newBrowser {
                     print("[CONSOLE] Bonjour browser failure on active instance (connectedServiceName=\(self.connectedServiceName ?? "nil"), isConnected=\(self.isConnected))")
+                    self.browser = nil
+                    self.scheduleBrowserRestart(reason: "browser-failed")
                 } else {
                     print("[CONSOLE] Bonjour browser failure from stale instance ignored")
                 }
             case .cancelled:
                 print("[CONSOLE] Bonjour browser cancelled")
                 self.log.info("Bonjour browser cancelled")
+                if self.browser === newBrowser {
+                    self.browser = nil
+                    self.scheduleBrowserRestart(reason: "browser-cancelled")
+                }
             default:
                 print("[CONSOLE] Bonjour browser state: \(state)")
                 break
@@ -342,8 +353,11 @@ final class WirelessTransport {
 
     /// Stop browsing and tear down all connections.
     func stopBrowsing() {
+        browsingRequested = false
         let hadBrowser = (browser != nil)
         print("[CONSOLE] WirelessTransport: stopBrowsing entry hadBrowser=\(hadBrowser) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
+        connectWatchdogWorkItem?.cancel()
+        connectWatchdogWorkItem = nil
         browser?.cancel()
         browser = nil
         tearDownConnections(reason: "stopBrowsing")
@@ -387,12 +401,21 @@ final class WirelessTransport {
 
         let inputConn = NWConnection(to: endpoint, using: tcpParams)
         inputConnection = inputConn
+        scheduleConnectWatchdog(for: inputConn)
 
         inputConn.stateUpdateHandler = { [weak self] state in
             guard let self = self else { return }
+            let isActiveConnection = (self.inputConnection === inputConn)
 
             switch state {
             case .ready:
+                guard isActiveConnection else {
+                    print("[CONSOLE] WirelessTransport: ignoring READY from stale TCP connection (currentInput=\(String(describing: self.inputConnection)))")
+                    self.log.info("Ignoring READY from stale TCP connection")
+                    return
+                }
+                self.connectWatchdogWorkItem?.cancel()
+                self.connectWatchdogWorkItem = nil
                 print("[CONSOLE] WirelessTransport: TLS TCP connection READY")
                 self.log.info("TLS wireless TCP connection ready")
 
@@ -409,6 +432,13 @@ final class WirelessTransport {
                 self.establishMediaConnection(from: inputConn)
 
             case .failed(let error):
+                guard isActiveConnection else {
+                    print("[CONSOLE] WirelessTransport: stale TCP connection FAILED ignored: \(error)")
+                    self.log.info("Ignoring FAILED from stale TCP connection: \(error)")
+                    return
+                }
+                self.connectWatchdogWorkItem?.cancel()
+                self.connectWatchdogWorkItem = nil
                 print("[CONSOLE] WirelessTransport: TLS TCP connection FAILED: \(error)")
                 self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
@@ -416,8 +446,16 @@ final class WirelessTransport {
                 self.connectedServiceName = nil
                 self.isConnected = false
                 self.onConnectionChanged?(false, self.isAWDL)
+                self.scheduleBrowserRestart(reason: "tcp-failed")
 
             case .cancelled:
+                guard isActiveConnection else {
+                    print("[CONSOLE] WirelessTransport: stale TCP connection CANCELLED ignored")
+                    self.log.info("Ignoring CANCELLED from stale TCP connection")
+                    return
+                }
+                self.connectWatchdogWorkItem?.cancel()
+                self.connectWatchdogWorkItem = nil
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED, clearing service latch (\(self.connectedServiceName ?? "nil"))")
                 self.inputConnection = nil
                 self.connectedServiceName = nil
@@ -426,6 +464,7 @@ final class WirelessTransport {
                 }
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED exit isConnected=\(self.isConnected) mediaConnectionActive=\(self.mediaConnection != nil)")
                 self.log.info("TLS wireless TCP connection cancelled")
+                self.scheduleBrowserRestart(reason: "tcp-cancelled")
 
             default:
                 break
@@ -620,6 +659,8 @@ final class WirelessTransport {
 
     private func tearDownConnections(clearServiceName: Bool = true, reason: String = "unspecified") {
         print("[CONSOLE] WirelessTransport: tearDownConnections reason=\(reason) clearServiceName=\(clearServiceName) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
+        connectWatchdogWorkItem?.cancel()
+        connectWatchdogWorkItem = nil
         mediaConnection?.cancel()
         mediaConnection = nil
         inputConnection?.cancel()
@@ -631,6 +672,71 @@ final class WirelessTransport {
         isConnected = false
         isAWDL = false
         print("[CONSOLE] WirelessTransport: tearDownConnections exit reason=\(reason) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
+    }
+
+    private func scheduleBrowserRestart(reason: String) {
+        guard browsingRequested else {
+            print("[CONSOLE] WirelessTransport: browser restart skipped (\(reason)) browsingRequested=false")
+            log.info("Browser restart skipped: browsing not requested (\(reason))")
+            return
+        }
+        guard !isConnected, inputConnection == nil else {
+            print("[CONSOLE] WirelessTransport: browser restart skipped (\(reason)) isConnected=\(isConnected) inputActive=\(inputConnection != nil)")
+            log.info("Browser restart skipped: session active/pending (\(reason))")
+            return
+        }
+        guard browser == nil else {
+            print("[CONSOLE] WirelessTransport: browser restart skipped (\(reason)) browser already active")
+            return
+        }
+
+        browserRestartAttempt += 1
+        let cappedAttempt = min(browserRestartAttempt, 4)
+        let delay = 0.25 * pow(2.0, Double(cappedAttempt - 1))
+        print("[CONSOLE] WirelessTransport: scheduling browser restart attempt=\(browserRestartAttempt) reason=\(reason) delay=\(String(format: "%.2f", delay))s connectedServiceName=\(connectedServiceName ?? "nil")")
+        log.info("Scheduling browser restart attempt=\(self.browserRestartAttempt) reason=\(reason)")
+
+        transportQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self else { return }
+            guard self.browsingRequested else {
+                print("[CONSOLE] WirelessTransport: browser restart aborted (\(reason)) browsingRequested=false")
+                return
+            }
+            guard self.browser == nil else {
+                print("[CONSOLE] WirelessTransport: browser restart aborted (\(reason)) browser already active")
+                return
+            }
+            if self.isConnected || self.inputConnection != nil {
+                print("[CONSOLE] WirelessTransport: browser restart aborted (\(reason)) isConnected=\(self.isConnected) inputActive=\(self.inputConnection != nil)")
+                return
+            }
+            print("[CONSOLE] WirelessTransport: browser restart firing attempt=\(self.browserRestartAttempt) reason=\(reason)")
+            self.startBrowsing()
+        }
+    }
+
+    private func scheduleConnectWatchdog(for connection: NWConnection) {
+        connectWatchdogWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            guard self.inputConnection === connection else {
+                print("[CONSOLE] WirelessTransport: connect watchdog ignored (stale connection)")
+                return
+            }
+            guard !self.isConnected else {
+                print("[CONSOLE] WirelessTransport: connect watchdog skipped (already connected)")
+                return
+            }
+
+            print("[CONSOLE] WirelessTransport: connect watchdog timeout; cancelling pending TCP connection and clearing latch (connectedServiceName=\(self.connectedServiceName ?? "nil"))")
+            self.log.error("Connect watchdog timed out; cancelling pending wireless TCP connection")
+            connection.cancel()
+            self.inputConnection = nil
+            self.connectedServiceName = nil
+            self.scheduleBrowserRestart(reason: "connect-watchdog-timeout")
+        }
+        connectWatchdogWorkItem = workItem
+        transportQueue.asyncAfter(deadline: .now() + 3.0, execute: workItem)
     }
 
     deinit {

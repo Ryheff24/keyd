@@ -56,6 +56,15 @@ static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
 static const int kWirelessHEVCFPS = 60;
 static const int kWirelessHEVCBitrate = 4000000; /* 4 Mbps */
+static const int kWirelessAdaptiveMinFPS = 30;
+static const int kWirelessAdaptiveMidFPS = 45;
+static const int kWirelessAdaptiveMaxFPS = 60;
+static const int kWirelessAdaptiveMinBitrate = 2500000; /* 2.5 Mbps floor */
+static const int kWirelessAdaptiveMaxBitrate = 6000000; /* keep bounded to limit burst size */
+static const int kWirelessAdaptiveBitrateStepDown = 500000;
+static const int kWirelessAdaptiveBitrateStepUp = 250000;
+static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 900;
+static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 1500;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
 /* Keep wireless media on the established TLS/TCP stream. This removes the
@@ -184,6 +193,15 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPDropKeyframeRequests;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPDropKeyframeSuppressed;
 @property (atomic, assign) uint64_t wifiLastTCPDropKeyframeRequestUs;
+@property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveDownshifts;
+@property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveUpshifts;
+@property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveHolds;
+@property (nonatomic, assign) volatile int32_t wifiPerfAdaptiveFloorGuards;
+@property (nonatomic, assign) int32_t wifiAdaptiveTargetFPS;
+@property (nonatomic, assign) int32_t wifiAdaptiveTargetBitrate;
+@property (nonatomic, assign) int32_t wifiAdaptiveAppliedFPS;
+@property (nonatomic, assign) int32_t wifiAdaptiveAppliedBitrate;
+@property (atomic, assign) uint64_t wifiAdaptiveLastChangeUs;
 
 /* QR code display window */
 @property (nonatomic, strong, nullable) NSWindow *qrWindow;
@@ -193,6 +211,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 - (void)sendMediaFrameHeaderToiPad:(const MediaFrameHeader *)header
                            payload:(const void *)payload
                      payloadLength:(size_t)payloadLen;
+- (void)resetWiFiAdaptiveControlState;
+- (void)evaluateWiFiAdaptiveRateControl;
+- (void)applyWiFiAdaptiveRateTargetsIfNeededWithReason:(NSString *)reason nowUs:(uint64_t)nowUs;
 
 @end
 
@@ -242,6 +263,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         _usbTransport = [[USBNetworkTransport alloc] init];
         _wirelessTransport = [[WirelessTransport alloc] init];
         _pairing = [[PairingManager alloc] init];
+        _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
+        _wifiAdaptiveTargetBitrate = kWirelessHEVCBitrate;
+        _wifiAdaptiveAppliedFPS = 0;
+        _wifiAdaptiveAppliedBitrate = 0;
+        _wifiAdaptiveLastChangeUs = 0;
     }
     return self;
 }
@@ -416,6 +442,24 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         }
     }
 
+    /* Wire pairing completion callback before starting listener (with or without QR UI). */
+    __weak SessionManager *weakSelf = self;
+    _pairing.onPairingComplete = ^{
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        os_log(sLog, "Pairing complete -- closing QR window and starting transport");
+        [strongSelf.qrWindow close];
+        strongSelf.qrWindow = nil;
+        [strongSelf transitionTo:SESSION_CONNECTING];
+        [strongSelf startTransportMonitoring];
+    };
+
+    if (_testMode && _automationMode) {
+        os_log(sLog, "Test mode: QR window suppressed (--automation-mode)");
+        [_pairing startPairingListener];
+        return;
+    }
+
     /* Generate QR code image using CIFilter */
     NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
     CIFilter *qrFilter = [CIFilter filterWithName:@"CIQRCodeGenerator"];
@@ -476,18 +520,6 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     [_qrWindow center];
     [_qrWindow makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
-
-    /* Wire pairing completion callback */
-    __weak SessionManager *weakSelf = self;
-    _pairing.onPairingComplete = ^{
-        SessionManager *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        os_log(sLog, "Pairing complete -- closing QR window and starting transport");
-        [strongSelf.qrWindow close];
-        strongSelf.qrWindow = nil;
-        [strongSelf transitionTo:SESSION_CONNECTING];
-        [strongSelf startTransportMonitoring];
-    };
 
     /* Start TLS listener so iPad can connect after scanning */
     [_pairing startPairingListener];
@@ -764,6 +796,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
            _hevcEncoder.isActive);
     _tcpMediaSendsInFlight = 0;
     _wirelessLastEncodeSubmitUs = 0;
+    [self resetWiFiAdaptiveControlState];
     [self stopWirelessPerformanceTimer];
     [self transitionTo:SESSION_STREAMING];
 
@@ -1329,6 +1362,10 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfTCPMaxCompletionMs = 0;
     _wifiPerfTCPDropKeyframeRequests = 0;
     _wifiPerfTCPDropKeyframeSuppressed = 0;
+    _wifiPerfAdaptiveDownshifts = 0;
+    _wifiPerfAdaptiveUpshifts = 0;
+    _wifiPerfAdaptiveHolds = 0;
+    _wifiPerfAdaptiveFloorGuards = 0;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
@@ -1367,12 +1404,20 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         NSUInteger queuedNow = strongSelf->_wirelessTransport.queuedMediaChunkCount;
         double avgKB = encodedFrames > 0 ? ((double)encodedBytes / (double)encodedFrames) / 1024.0 : 0.0;
         const char *pacingMode = queuedNow >= 320 ? "congested" : (queuedNow <= 96 ? "fast" : "default");
+        [strongSelf evaluateWiFiAdaptiveRateControl];
+        int32_t adaptiveDown = strongSelf->_wifiPerfAdaptiveDownshifts;
+        int32_t adaptiveUp = strongSelf->_wifiPerfAdaptiveUpshifts;
+        int32_t adaptiveHold = strongSelf->_wifiPerfAdaptiveHolds;
+        int32_t adaptiveFloor = strongSelf->_wifiPerfAdaptiveFloorGuards;
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d adaptive[target=%dfps/%dMbps applied=%dfps/%dMbps down=%d up=%d hold=%d floor=%d] queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
                preDrops, queueDrops, tcpFallbacks, tcpSendDrops,
                tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
                tcpDropKeyReq, tcpDropKeySupp,
+               strongSelf->_wifiAdaptiveTargetFPS, strongSelf->_wifiAdaptiveTargetBitrate / 1000000,
+               strongSelf->_wifiAdaptiveAppliedFPS, strongSelf->_wifiAdaptiveAppliedBitrate / 1000000,
+               adaptiveDown, adaptiveUp, adaptiveHold, adaptiveFloor,
                (unsigned long)queuedNow, peakQueued, pacingMode);
 
         [strongSelf resetWirelessPerformanceWindow];
@@ -1383,6 +1428,131 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     [_wirelessPerformanceTimer invalidate];
     _wirelessPerformanceTimer = nil;
     [self resetWirelessPerformanceWindow];
+}
+
+- (void)resetWiFiAdaptiveControlState {
+    _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
+    _wifiAdaptiveTargetBitrate = kWirelessHEVCBitrate;
+    _wifiAdaptiveAppliedFPS = 0;
+    _wifiAdaptiveAppliedBitrate = 0;
+    _wifiAdaptiveLastChangeUs = 0;
+    os_log(sLog, "WiFi adaptive control reset: target=%dfps/%dMbps",
+           _wifiAdaptiveTargetFPS, _wifiAdaptiveTargetBitrate / 1000000);
+}
+
+- (void)evaluateWiFiAdaptiveRateControl {
+    if (_sessionState != SESSION_STREAMING || !_wirelessTransport.isConnected || _usbTransport.isConnected || !_hevcEncoder.isActive) {
+        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+        os_log(sLog, "WiFi adaptive hold: reason=inactive-path state=%{public}s wifi=%{public}d usb=%{public}d hevc=%{public}d",
+               [self sessionStateName:_sessionState], _wirelessTransport.isConnected, _usbTransport.isConnected, _hevcEncoder.isActive);
+        return;
+    }
+
+    uint64_t nowUs = keydrd_host_time_us();
+    int32_t tcpInFlightNow = _wifiTCPMediaSendsInFlight;
+    int32_t tcpSlowCompletions = _wifiPerfTCPSlowCompletions;
+    int32_t tcpMaxCompletionMs = _wifiPerfTCPMaxCompletionMs;
+    int32_t preDrops = _wifiPerfPreEncodeDrops;
+    int32_t tcpSendDrops = _wifiPerfTCPSendDrops;
+    int32_t queueDrops = _wifiPerfQueueDrops;
+
+    BOOL severeCongestion = (tcpSendDrops > 0) ||
+                            (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi + 1) ||
+                            (tcpMaxCompletionMs >= 60) ||
+                            (preDrops >= 4);
+    BOOL mildCongestion = !severeCongestion &&
+                          ((tcpSlowCompletions >= 2) ||
+                           (tcpMaxCompletionMs >= 30) ||
+                           (preDrops > 0) ||
+                           (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi));
+    BOOL healthy = !severeCongestion && !mildCongestion &&
+                   tcpSendDrops == 0 && queueDrops == 0 && preDrops == 0 &&
+                   tcpSlowCompletions == 0 && tcpInFlightNow <= 1 && tcpMaxCompletionMs < 18;
+
+    int32_t prevFPS = _wifiAdaptiveTargetFPS;
+    int32_t prevBitrate = _wifiAdaptiveTargetBitrate;
+    int32_t targetFPS = prevFPS;
+    int32_t targetBitrate = prevBitrate;
+    NSString *reason = @"hold-stable";
+
+    if (severeCongestion) {
+        uint64_t sinceMs = (_wifiAdaptiveLastChangeUs > 0 && nowUs > _wifiAdaptiveLastChangeUs) ? (nowUs - _wifiAdaptiveLastChangeUs) / 1000 : UINT64_MAX;
+        if (sinceMs != UINT64_MAX && sinceMs < kWirelessAdaptiveDownshiftCooldownMs) {
+            OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+            os_log(sLog, "WiFi adaptive hold: reason=severe-cooldown floor=%dfps target=%dfps/%dMbps sinceLast=%llums",
+                   kWirelessAdaptiveMinFPS, prevFPS, prevBitrate / 1000000, sinceMs);
+            return;
+        }
+        targetFPS = kWirelessAdaptiveMinFPS;
+        targetBitrate = MAX(kWirelessAdaptiveMinBitrate, prevBitrate - kWirelessAdaptiveBitrateStepDown);
+        reason = @"downshift-severe";
+        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveDownshifts);
+    } else if (mildCongestion) {
+        uint64_t sinceMs = (_wifiAdaptiveLastChangeUs > 0 && nowUs > _wifiAdaptiveLastChangeUs) ? (nowUs - _wifiAdaptiveLastChangeUs) / 1000 : UINT64_MAX;
+        if (sinceMs != UINT64_MAX && sinceMs < kWirelessAdaptiveDownshiftCooldownMs) {
+            OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+            os_log(sLog, "WiFi adaptive hold: reason=mild-cooldown floor=%dfps target=%dfps/%dMbps sinceLast=%llums",
+                   kWirelessAdaptiveMinFPS, prevFPS, prevBitrate / 1000000, sinceMs);
+            return;
+        }
+        targetFPS = MAX(kWirelessAdaptiveMidFPS, prevFPS - 15);
+        targetBitrate = MAX(kWirelessAdaptiveMinBitrate, prevBitrate - kWirelessAdaptiveBitrateStepDown);
+        reason = @"downshift-mild";
+        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveDownshifts);
+    } else if (healthy) {
+        uint64_t sinceMs = (_wifiAdaptiveLastChangeUs > 0 && nowUs > _wifiAdaptiveLastChangeUs) ? (nowUs - _wifiAdaptiveLastChangeUs) / 1000 : UINT64_MAX;
+        if (sinceMs != UINT64_MAX && sinceMs < kWirelessAdaptiveRecoveryHoldMs) {
+            OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+            os_log(sLog, "WiFi adaptive hold: reason=recovery-hold target=%dfps/%dMbps sinceLast=%llums",
+                   prevFPS, prevBitrate / 1000000, sinceMs);
+            return;
+        }
+        if (prevFPS < kWirelessAdaptiveMaxFPS) {
+            targetFPS = MIN(kWirelessAdaptiveMaxFPS, prevFPS + 15);
+        }
+        if (prevBitrate < kWirelessAdaptiveMaxBitrate) {
+            targetBitrate = MIN(kWirelessAdaptiveMaxBitrate, prevBitrate + kWirelessAdaptiveBitrateStepUp);
+        }
+        reason = @"recovery-upshift";
+        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveUpshifts);
+    } else {
+        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+        os_log(sLog, "WiFi adaptive hold: reason=transitional target=%dfps/%dMbps slow=%d maxMs=%d preDrop=%d sendDrop=%d",
+               prevFPS, prevBitrate / 1000000, tcpSlowCompletions, tcpMaxCompletionMs, preDrops, tcpSendDrops);
+        return;
+    }
+
+    targetFPS = MAX(kWirelessAdaptiveMinFPS, MIN(kWirelessAdaptiveMaxFPS, targetFPS));
+    if (targetFPS == kWirelessAdaptiveMinFPS) {
+        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveFloorGuards);
+    }
+    targetBitrate = MAX(kWirelessAdaptiveMinBitrate, MIN(kWirelessAdaptiveMaxBitrate, targetBitrate));
+
+    _wifiAdaptiveTargetFPS = targetFPS;
+    _wifiAdaptiveTargetBitrate = targetBitrate;
+    [self applyWiFiAdaptiveRateTargetsIfNeededWithReason:reason nowUs:nowUs];
+}
+
+- (void)applyWiFiAdaptiveRateTargetsIfNeededWithReason:(NSString *)reason nowUs:(uint64_t)nowUs {
+    int32_t targetFPS = MAX(kWirelessAdaptiveMinFPS, _wifiAdaptiveTargetFPS);
+    int32_t targetBitrate = MAX(kWirelessAdaptiveMinBitrate, _wifiAdaptiveTargetBitrate);
+    BOOL fpsChanged = (_wifiAdaptiveAppliedFPS != targetFPS);
+    BOOL bitrateChanged = (_wifiAdaptiveAppliedBitrate != targetBitrate);
+    if (!fpsChanged && !bitrateChanged) {
+        return;
+    }
+
+    _capture.captureFPS = (uint32_t)targetFPS;
+    if (_captureWidth > 0 && _captureHeight > 0) {
+        [_capture updateCaptureResolution:_captureWidth height:_captureHeight];
+    }
+    [_hevcEncoder updateStreamingRateWithFPS:targetFPS bitrate:targetBitrate reason:reason];
+
+    _wifiAdaptiveAppliedFPS = targetFPS;
+    _wifiAdaptiveAppliedBitrate = targetBitrate;
+    _wifiAdaptiveLastChangeUs = nowUs;
+    os_log(sLog, "WiFi adaptive apply: reason=%{public}s fps=%d bitrate=%dMbps floor=%dfps",
+           reason.UTF8String ?: "none", targetFPS, targetBitrate / 1000000, kWirelessAdaptiveMinFPS);
 }
 
 #pragma mark - Latency Probe
@@ -1736,12 +1906,18 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         fps = 120;
         _capture.captureFPS = 120;
         self.wirelessLastEncodeSubmitUs = 0;
+        [self resetWiFiAdaptiveControlState];
     } else {
         bitrate = kWirelessHEVCBitrate;
         quality = 0.0f;     /* bitrate-based */
         fps = kWirelessHEVCFPS;
         _capture.captureFPS = fps;
         self.wirelessLastEncodeSubmitUs = 0;
+        _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
+        _wifiAdaptiveTargetBitrate = kWirelessHEVCBitrate;
+        _wifiAdaptiveAppliedFPS = fps;
+        _wifiAdaptiveAppliedBitrate = bitrate;
+        _wifiAdaptiveLastChangeUs = keydrd_host_time_us();
         keydrd_limit_size(_viewportWidth, _viewportHeight,
                           kWirelessMaxEncodeWidth, kWirelessMaxEncodeHeight,
                           &encodeWidth, &encodeHeight);

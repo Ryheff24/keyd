@@ -597,8 +597,8 @@ final class SessionManager {
             return
         }
 
-        // Extract payload (everything after the 24-byte header)
-        let payload = data.subdata(in: MediaFrameHeader.size..<data.count)
+        let payloadOffset = MediaFrameHeader.size
+        let payloadLength = data.count - payloadOffset
 
         frameRecvCount += 1
         testRunner?.noteReceivedFrameHeader(header)
@@ -617,7 +617,7 @@ final class SessionManager {
         }
 
         if frameRecvCount <= 3 {
-            print("[CONSOLE] handleReceivedFrame: seq=\(header.seq) flags=0x\(String(header.flags, radix: 16)) payload=\(payload.count) isHEVC=\(header.isHEVC) isKey=\(header.isKeyframe)")
+            print("[CONSOLE] handleReceivedFrame: seq=\(header.seq) flags=0x\(String(header.flags, radix: 16)) payload=\(payloadLength) isHEVC=\(header.isHEVC) isKey=\(header.isKeyframe)")
         }
 
         // Route to decoder based on flags
@@ -625,7 +625,10 @@ final class SessionManager {
         let decodeStart = CACurrentMediaTime()
         if header.isHEVC {
             // HEVC decode path (wireless/eco mode)
-            guard let pixelBuffer = hevcDecoder.decode(data: payload, header: header) else {
+            guard let pixelBuffer = hevcDecoder.decode(frameData: data,
+                                                       payloadOffset: payloadOffset,
+                                                       payloadLength: payloadLength,
+                                                       header: header) else {
                 testRunner?.noteHEVCDecodeFailure(seq: header.seq)
                 if frameRecvCount <= 5 {
                     print("[CONSOLE] handleReceivedFrame: HEVC decode FAILED for seq=\(header.seq)")
@@ -661,11 +664,13 @@ final class SessionManager {
                 return
             }
 
-            guard let pixels = decompressor.decompress(data: payload,
-                                                        header: header,
-                                                        frameBytes: frameBytes) else {
+            guard let pixels = decompressor.decompress(frameData: data,
+                                                       payloadOffset: payloadOffset,
+                                                       payloadLength: payloadLength,
+                                                       header: header,
+                                                       frameBytes: frameBytes) else {
                 if frameRecvCount <= 20 || frameRecvCount % 500 == 0 {
-                    print("[CONSOLE] LZ4: decompress returned nil, frameBytes=\(frameBytes) payload=\(payload.count) seq=\(header.seq)")
+                    print("[CONSOLE] LZ4: decompress returned nil, frameBytes=\(frameBytes) payload=\(payloadLength) seq=\(header.seq)")
                 }
                 return
             }
@@ -676,6 +681,10 @@ final class SessionManager {
             testRunner?.reportDecodedFrameDimensions(width: macDisplayWidth, height: macDisplayHeight)
 
             metalRenderer.updateFrame(pixels, width: macDisplayWidth, height: macDisplayHeight, captureTimestampUs: header.tsUs)
+        }
+        let decodeMs = (CACurrentMediaTime() - decodeStart) * 1000.0
+        if frameRecvCount <= 10 || frameRecvCount % 240 == 0 || decodeMs > 6.0 {
+            print("[CONSOLE] USBTransport: frame-pipeline seq=\(header.seq) transport=\(currentTransport.rawValue) hevc=\(header.isHEVC) payload=\(payloadLength)B decodeMs=\(String(format: "%.2f", decodeMs)) recvCount=\(frameRecvCount)")
         }
 
         // Record frame timestamp for FPS calculation

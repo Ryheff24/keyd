@@ -67,6 +67,27 @@ final class LZ4Decompressor {
     ///   The pointer is valid until the next call to `decompress` or until
     ///   this LZ4Decompressor is deallocated.
     func decompress(data: Data, header: MediaFrameHeader, frameBytes: Int) -> UnsafeRawPointer? {
+        return decompress(frameData: data,
+                          payloadOffset: 0,
+                          payloadLength: data.count,
+                          header: header,
+                          frameBytes: frameBytes)
+    }
+
+    func decompress(frameData: Data,
+                    payloadOffset: Int,
+                    payloadLength: Int,
+                    header: MediaFrameHeader,
+                    frameBytes: Int) -> UnsafeRawPointer? {
+        guard payloadOffset >= 0,
+              payloadLength >= 0,
+              payloadOffset + payloadLength <= frameData.count else {
+            os_log(.error, log: Self.log,
+                   "Invalid payload bounds: offset=%d length=%d frame=%d",
+                   payloadOffset, payloadLength, frameData.count)
+            return nil
+        }
+
         guard frameBytes <= self.frameBytes else {
             os_log(.error, log: Self.log,
                    "Frame too large for buffer: capacity %d, requested %d", self.frameBytes, frameBytes)
@@ -74,9 +95,15 @@ final class LZ4Decompressor {
         }
 
         if header.isKeyframe {
-            return decompressKeyframe(data: data, expectedBytes: frameBytes)
+            return decompressKeyframe(frameData: frameData,
+                                      payloadOffset: payloadOffset,
+                                      payloadLength: payloadLength,
+                                      expectedBytes: frameBytes)
         } else if header.isDelta {
-            return decompressDelta(data: data, expectedBytes: frameBytes)
+            return decompressDelta(frameData: frameData,
+                                   payloadOffset: payloadOffset,
+                                   payloadLength: payloadLength,
+                                   expectedBytes: frameBytes)
         } else {
             os_log(.error, log: Self.log, "Unknown frame type: flags=0x%02x", header.flags)
             return nil
@@ -86,12 +113,16 @@ final class LZ4Decompressor {
     // MARK: - Private
 
     /// Decompress a keyframe: LZ4 decompress, update keyframe reference.
-    private func decompressKeyframe(data: Data, expectedBytes: Int) -> UnsafeRawPointer? {
-        let compressedSize = data.count
-        let result = data.withUnsafeBytes { buffer -> Int32 in
+    private func decompressKeyframe(frameData: Data,
+                                    payloadOffset: Int,
+                                    payloadLength: Int,
+                                    expectedBytes: Int) -> UnsafeRawPointer? {
+        let compressedSize = payloadLength
+        let result = frameData.withUnsafeBytes { buffer -> Int32 in
             guard let src = buffer.baseAddress else { return -1 }
+            let payloadBase = src.advanced(by: payloadOffset)
             return LZ4_decompress_safe(
-                src.assumingMemoryBound(to: CChar.self),
+                payloadBase.assumingMemoryBound(to: CChar.self),
                 decompressBuffer.assumingMemoryBound(to: CChar.self),
                 Int32(compressedSize),
                 Int32(expectedBytes)
@@ -112,14 +143,18 @@ final class LZ4Decompressor {
     }
 
     /// Decompress a delta frame: LZ4 decompress delta, apply XOR against reference.
-    private func decompressDelta(data: Data, expectedBytes: Int) -> UnsafeRawPointer? {
-        let compressedSize = data.count
+    private func decompressDelta(frameData: Data,
+                                 payloadOffset: Int,
+                                 payloadLength: Int,
+                                 expectedBytes: Int) -> UnsafeRawPointer? {
+        let compressedSize = payloadLength
 
         // Step 1: LZ4 decompress the delta data into tempDeltaBuffer
-        let result = data.withUnsafeBytes { buffer -> Int32 in
+        let result = frameData.withUnsafeBytes { buffer -> Int32 in
             guard let src = buffer.baseAddress else { return -1 }
+            let payloadBase = src.advanced(by: payloadOffset)
             return LZ4_decompress_safe(
-                src.assumingMemoryBound(to: CChar.self),
+                payloadBase.assumingMemoryBound(to: CChar.self),
                 tempDeltaBuffer.assumingMemoryBound(to: CChar.self),
                 Int32(compressedSize),
                 Int32(expectedBytes)

@@ -28,6 +28,8 @@ static const size_t kUSBMediaTCPChunkMTU = 64 * 1024;
 static const size_t kUSBMediaTCPChunkThresholdBytes = 512 * 1024;
 static const NSUInteger kUSBMediaEntryLogInterval = 240;
 static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
+static const NSUInteger kUSBMediaSendSuccessLogInterval = 240;
+static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
 
 @interface USBNetworkTransport ()
 @property (nonatomic) dispatch_queue_t monitorQueue;
@@ -539,11 +541,13 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
     BOOL isHEVC = NO;
     BOOL shouldChunkHEVC = NO;
     size_t payloadLen = 0;
+    uint32_t seqForLogs = 0;
     uint64_t sendStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
     if (len >= sizeof(MediaFrameHeader)) {
         originalHeader = (const MediaFrameHeader *)data;
         frameSeq = originalHeader->seq;
         hasFrameSeq = YES;
+        seqForLogs = frameSeq;
         isHEVC = (originalHeader->flags & KEYDRD_FLAG_HEVC) != 0;
         payloadLen = len - sizeof(MediaFrameHeader);
         shouldChunkHEVC = isHEVC && payloadLen > kUSBMediaTCPChunkThresholdBytes;
@@ -654,15 +658,21 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
         if (completion) {
             completion(error == nil);
         }
+        uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
+        static uint64_t usbMediaSendSuccessCount = 0;
         if (!error && hasFrameSeq) {
-            uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
-            os_log(transport_log(), "USB media send success: seq=%u bytes=%zu elapsed=%llums",
-                   frameSeq, len, elapsedMs);
+            usbMediaSendSuccessCount += 1;
+            if (usbMediaSendSuccessCount <= 10 ||
+                usbMediaSendSuccessCount % kUSBMediaSendSuccessLogInterval == 0 ||
+                elapsedMs >= kUSBMediaSendSlowThresholdMs) {
+                os_log(transport_log(),
+                       "USB media send success: seq=%u bytes=%zu elapsed=%llums sample=%llu",
+                       seqForLogs, len, elapsedMs, usbMediaSendSuccessCount);
+            }
         }
         if (error) {
-            uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
             os_log_error(transport_log(), "Media TCP send error: %{public}@ (seq=%u bytes=%zu elapsed=%llums)",
-                         error, frameSeq, len, elapsedMs);
+                         error, seqForLogs, len, elapsedMs);
         }
     });
 }
@@ -687,6 +697,7 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
     }
 
     uint64_t sendStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
+    const uint32_t seqForLogs = header->seq;
     BOOL isHEVC = (header->flags & KEYDRD_FLAG_HEVC) != 0;
     BOOL shouldChunkHEVC = isHEVC && payloadLen > kUSBMediaTCPChunkThresholdBytes;
     static uint64_t splitEntryLogCount = 0;
@@ -694,8 +705,8 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
     if (splitEntryLogCount <= 10 || splitEntryLogCount % kUSBMediaEntryLogInterval == 0) {
         os_log(transport_log(),
                "USB media split-send entry: seq=%u payload=%zu hevc=%{public}s chunkMode=%{public}s sample=%llu",
-               header->seq, payloadLen, isHEVC ? "yes" : "no",
-               shouldChunkHEVC ? "chunked" : "single-frame", splitEntryLogCount);
+                seqForLogs, payloadLen, isHEVC ? "yes" : "no",
+                shouldChunkHEVC ? "chunked" : "single-frame", splitEntryLogCount);
     }
 
     if (shouldChunkHEVC) {
@@ -706,14 +717,14 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
         NSMutableData *framedBatchData = [NSMutableData dataWithCapacity:estimatedFramedBytes];
         if (!framedBatchData) {
             os_log_error(transport_log(), "USB media split-send chunk allocation failed: seq=%u estimate=%zu",
-                         header->seq, estimatedFramedBytes);
+                         seqForLogs, estimatedFramedBytes);
             if (completion) completion(NO);
             return;
         }
 
         __block NSUInteger chunkCount = 0;
         __block size_t framedBytes = 0;
-        chunk_frame(payload, payloadLen, header->seq, tcpChunkMTU, header, ^(const void *chunk, size_t chunkLen) {
+        chunk_frame(payload, payloadLen, seqForLogs, tcpChunkMTU, header, ^(const void *chunk, size_t chunkLen) {
             uint32_t netLen = htonl((uint32_t)chunkLen);
             [framedBatchData appendBytes:&netLen length:sizeof(uint32_t)];
             [framedBatchData appendBytes:chunk length:chunkLen];
@@ -722,13 +733,13 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
             if (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0) {
                 os_log(transport_log(),
                        "USB media split-send chunk append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
-                       header->seq, (unsigned long)chunkCount, chunkLen, framedBytes);
+                        seqForLogs, (unsigned long)chunkCount, chunkLen, framedBytes);
             }
         });
 
         if (chunkCount == 0 || framedBatchData.length == 0) {
             os_log_error(transport_log(), "USB media split-send chunk batch empty: seq=%u payload=%zu",
-                         header->seq, payloadLen);
+                         seqForLogs, payloadLen);
             if (completion) completion(NO);
             return;
         }
@@ -744,12 +755,12 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
             if (error) {
                 os_log_error(transport_log(),
                              "USB media split-send chunk error: %{public}@ (seq=%u chunks=%lu framedBytes=%zu elapsed=%llums)",
-                             error, header->seq, (unsigned long)chunkCount, framedBytes, elapsedMs);
+                             error, seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs);
                 return;
             }
             os_log(transport_log(),
                    "USB media split-send chunk success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums",
-                   header->seq, (unsigned long)chunkCount, framedBytes, elapsedMs);
+                   seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs);
         });
         return;
     }
@@ -759,7 +770,7 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
     if (!framedCopy) {
         os_log_error(transport_log(),
                      "USB media split-send skipped: allocation failed framedLen=%zu seq=%u payload=%zu",
-                     sizeof(uint32_t) + totalLen, header->seq, payloadLen);
+                     sizeof(uint32_t) + totalLen, seqForLogs, payloadLen);
         if (completion) completion(NO);
         return;
     }
@@ -779,12 +790,18 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
         if (error) {
             os_log_error(transport_log(),
                          "USB media split-send error: %{public}@ (seq=%u total=%zu payload=%zu elapsed=%llums)",
-                         error, header->seq, totalLen, payloadLen, elapsedMs);
+                         error, seqForLogs, totalLen, payloadLen, elapsedMs);
             return;
         }
-        os_log(transport_log(),
-               "USB media split-send success: seq=%u total=%zu payload=%zu elapsed=%llums",
-               header->seq, totalLen, payloadLen, elapsedMs);
+        static uint64_t usbSplitSendSuccessCount = 0;
+        usbSplitSendSuccessCount += 1;
+        if (usbSplitSendSuccessCount <= 10 ||
+            usbSplitSendSuccessCount % kUSBMediaSendSuccessLogInterval == 0 ||
+            elapsedMs >= kUSBMediaSendSlowThresholdMs) {
+            os_log(transport_log(),
+                   "USB media split-send success: seq=%u total=%zu payload=%zu elapsed=%llums sample=%llu",
+                   seqForLogs, totalLen, payloadLen, elapsedMs, usbSplitSendSuccessCount);
+        }
     });
 }
 

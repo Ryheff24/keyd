@@ -36,6 +36,7 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
     /* ---- Detect --test-mode / transport mode flags ---- */
     NSArray *args = [NSProcessInfo processInfo].arguments;
     _testMode = [args containsObject:@"--test-mode"];
+    _automationMode = _testMode && [args containsObject:@"--automation-mode"];
     BOOL wiredOnly = [args containsObject:@"--wired-only"];
     BOOL wirelessOnly = [args containsObject:@"--wireless-only"];
     _testCaptureFilePath = [valueForArgument(args, @"--test-capture-file") copy];
@@ -43,10 +44,11 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
     BOOL explicitStressCapture = [args containsObject:@"--stress-capture"];
     _testCaptureStressMode = _testMode && !_realCaptureMode && (_testCaptureFilePath.length == 0 || explicitStressCapture);
     if (_testMode) {
-        os_log(sLog, "Running in test mode%{public}s%{public}s%{public}s",
+        os_log(sLog, "Running in test mode%{public}s%{public}s%{public}s%{public}s",
                wiredOnly ? " (wired-only)" : "",
                _testCaptureFilePath ? " with synthetic capture file" : "",
-               _testCaptureStressMode ? " with stress capture" : "");
+               _testCaptureStressMode ? " with stress capture" : "",
+               _automationMode ? " with hidden QR window" : "");
         if (wirelessOnly) {
             os_log(sLog, "Wireless-only mode enabled");
         }
@@ -113,7 +115,11 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
 
     /* ---- Test mode: auto-show QR for iPad auto-pair ---- */
     if (_testMode) {
-        os_log(sLog, "Test mode: auto-showing QR (writes payload to /tmp/keydrd-test-qr.json)");
+        if (_automationMode) {
+            os_log(sLog, "Test mode: auto-showing QR skipped in automation mode (writes payload to /tmp/keydrd-test-qr.json)");
+        } else {
+            os_log(sLog, "Test mode: auto-showing QR (writes payload to /tmp/keydrd-test-qr.json)");
+        }
         /* Delay slightly to ensure TLS identity is ready */
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{

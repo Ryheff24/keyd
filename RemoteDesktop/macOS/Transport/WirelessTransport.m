@@ -596,9 +596,16 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                                                           nw_error_t _Nullable error) {
         WirelessTransport *self2 = weakSelf;
         if (!self2) return;
+        BOOL isActiveConnection = (self2.inputConnection == connection);
 
         switch (state) {
         case nw_connection_state_ready: {
+            if (!isActiveConnection) {
+                os_log(wireless_log(),
+                       "Ignoring READY from stale wireless connection (activeInput=%{public}p staleConnection=%{public}p isConnected=%{public}d)",
+                       self2.inputConnection, connection, self2.isConnected);
+                break;
+            }
             /* Determine if connection is AWDL or Wi-Fi via interface type */
             nw_path_t path = nw_connection_copy_current_path(connection);
             BOOL detectedAWDL = NO;
@@ -652,7 +659,19 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         }
         case nw_connection_state_failed:
         case nw_connection_state_cancelled:
-            os_log(wireless_log(), "TLS wireless connection ended");
+            if (!isActiveConnection) {
+                os_log(wireless_log(),
+                       "Ignoring end-state from stale wireless connection (state=%{public}d error=%{public}@ activeInput=%{public}p staleConnection=%{public}p isConnected=%{public}d)",
+                       (int)state,
+                       error ?: (nw_error_t)@"none",
+                       self2.inputConnection, connection, self2.isConnected);
+                break;
+            }
+            os_log(wireless_log(),
+                   "TLS wireless connection ended (state=%{public}d error=%{public}@ wasAWDL=%{public}d)",
+                   (int)state,
+                   error ?: (nw_error_t)@"none",
+                   self2.isAWDL);
             if (self2.inputConnection == connection) {
                 self2.inputConnection = nil;
                 self2.isConnected = NO;

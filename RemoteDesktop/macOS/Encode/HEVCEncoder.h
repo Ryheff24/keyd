@@ -59,6 +59,12 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 /// Request that the next submitted frame be encoded as a keyframe.
 - (void)requestKeyframe;
 
+/// Update active streaming rate targets without recreating the encoder session.
+/// @param fps     Expected frame rate hint (capture cadence target).
+/// @param bitrate Average bitrate in bits per second (bitrate mode only).
+/// @param reason  Logging tag explaining why this adaptation was applied.
+- (void)updateStreamingRateWithFPS:(int)fps bitrate:(int)bitrate reason:(nullable NSString *)reason;
+
 /// Stop the encoder and release the compression session.
 - (void)stop;
 

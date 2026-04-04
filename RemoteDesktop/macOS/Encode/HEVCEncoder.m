@@ -194,6 +194,49 @@ static const int kEcoMaxHeight720 = 720;
     atomic_store_explicit(&_forceNextKeyframe, true, memory_order_relaxed);
 }
 
+- (void)updateStreamingRateWithFPS:(int)fps bitrate:(int)bitrate reason:(NSString *)reason {
+    if (!_isActive || !_session) {
+        os_log(hevc_log(), "HEVC adaptive update skipped: inactive session (fps=%d bitrate=%d reason=%{public}s)",
+               fps, bitrate, reason.UTF8String ?: "none");
+        return;
+    }
+
+    int clampedFPS = MAX(1, fps);
+    int clampedBitrate = MAX(250000, bitrate);
+
+    BOOL changed = NO;
+    if (clampedFPS != _currentFPS) {
+        CFNumberRef fpsRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &clampedFPS);
+        OSStatus fpsStatus = VTSessionSetProperty(_session, kVTCompressionPropertyKey_ExpectedFrameRate, fpsRef);
+        CFRelease(fpsRef);
+        if (fpsStatus == noErr) {
+            _currentFPS = clampedFPS;
+            changed = YES;
+        } else {
+            os_log_error(hevc_log(), "HEVC adaptive fps update failed: status=%d targetFPS=%d reason=%{public}s",
+                         (int)fpsStatus, clampedFPS, reason.UTF8String ?: "none");
+        }
+    }
+
+    if (_currentQuality <= 0.0f && clampedBitrate != _currentBitrate) {
+        CFNumberRef bitrateRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &clampedBitrate);
+        OSStatus bitrateStatus = VTSessionSetProperty(_session, kVTCompressionPropertyKey_AverageBitRate, bitrateRef);
+        CFRelease(bitrateRef);
+        if (bitrateStatus == noErr) {
+            _currentBitrate = clampedBitrate;
+            changed = YES;
+        } else {
+            os_log_error(hevc_log(), "HEVC adaptive bitrate update failed: status=%d targetBitrate=%d reason=%{public}s",
+                         (int)bitrateStatus, clampedBitrate, reason.UTF8String ?: "none");
+        }
+    }
+
+    if (changed) {
+        os_log_info(hevc_log(), "HEVC adaptive update applied: fps=%d bitrate=%d reason=%{public}s",
+                    _currentFPS, _currentBitrate, reason.UTF8String ?: "none");
+    }
+}
+
 #pragma mark - Encoding
 
 - (void)encodePixelBuffer:(CVPixelBufferRef)pixelBuffer timestamp:(CMTime)timestamp captureTimestampUs:(uint64_t)captureTimestampUs {

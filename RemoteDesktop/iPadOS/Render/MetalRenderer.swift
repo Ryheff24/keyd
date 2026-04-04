@@ -35,10 +35,16 @@ final class MetalRenderer: NSObject {
         let pendingDepth: Int
         let adaptiveCatchupCount: Int
         let adaptiveCatchupDropFrames: Int
+        let adaptiveSoftCatchupCount: Int
+        let adaptiveHardCatchupCount: Int
+        let adaptiveSoftCatchupDropFrames: Int
+        let adaptiveHardCatchupDropFrames: Int
     }
 
     private static let maxPendingFrames = 3
-    private static let adaptiveQueueDelayThresholdMs = 12.0
+    private static let adaptiveQueueDelayThresholdMs = 16.0
+    private static let softCatchupQueueDelayThresholdMs = 16.0
+    private static let hardCatchupQueueDelayThresholdMs = 30.0
 
     // MARK: - Properties
 
@@ -89,6 +95,10 @@ final class MetalRenderer: NSObject {
     private var renderQueueDelayLogCount = 0
     private var adaptiveCatchupCount = 0
     private var adaptiveCatchupDropFrames = 0
+    private var adaptiveSoftCatchupCount = 0
+    private var adaptiveHardCatchupCount = 0
+    private var adaptiveSoftCatchupDropFrames = 0
+    private var adaptiveHardCatchupDropFrames = 0
 
     /// Mac display dimensions, set during session handshake.
     /// Used for aspect ratio computation and texture sizing.
@@ -388,7 +398,11 @@ final class MetalRenderer: NSObject {
             hasPendingFrame: !pendingFrames.isEmpty,
             pendingDepth: pendingFrames.count,
             adaptiveCatchupCount: adaptiveCatchupCount,
-            adaptiveCatchupDropFrames: adaptiveCatchupDropFrames
+            adaptiveCatchupDropFrames: adaptiveCatchupDropFrames,
+            adaptiveSoftCatchupCount: adaptiveSoftCatchupCount,
+            adaptiveHardCatchupCount: adaptiveHardCatchupCount,
+            adaptiveSoftCatchupDropFrames: adaptiveSoftCatchupDropFrames,
+            adaptiveHardCatchupDropFrames: adaptiveHardCatchupDropFrames
         )
     }
 
@@ -475,20 +489,32 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         }
         let pendingBefore = pendingFrames.count
         let oldestDelayMs = Double(dequeueNowUs &- pendingFrames[0].enqueuedAtUs) / 1000.0
-        let shouldCatchUp = pendingBefore >= Self.maxPendingFrames || oldestDelayMs >= Self.adaptiveQueueDelayThresholdMs
+        let shouldHardCatchUp = pendingBefore >= Self.maxPendingFrames || oldestDelayMs >= Self.hardCatchupQueueDelayThresholdMs
+        let shouldSoftCatchUp = !shouldHardCatchUp && pendingBefore >= 2 && oldestDelayMs >= Self.softCatchupQueueDelayThresholdMs
 
         let frame: PendingRenderFrame
         let dequeueMode: String
         var droppedStaleFrames = 0
-        if shouldCatchUp && pendingBefore > 1 {
+        if shouldHardCatchUp && pendingBefore > 1 {
             frame = pendingFrames.removeLast()
             droppedStaleFrames = pendingFrames.count
             if droppedStaleFrames > 0 {
                 pendingFrames.removeAll(keepingCapacity: true)
                 adaptiveCatchupDropFrames += droppedStaleFrames
+                adaptiveHardCatchupDropFrames += droppedStaleFrames
             }
             adaptiveCatchupCount += 1
-            dequeueMode = pendingBefore >= Self.maxPendingFrames ? "catchup-depth" : "catchup-delay"
+            adaptiveHardCatchupCount += 1
+            dequeueMode = pendingBefore >= Self.maxPendingFrames ? "catchup-hard-depth" : "catchup-hard-delay"
+        } else if shouldSoftCatchUp && pendingBefore > 1 {
+            _ = pendingFrames.removeFirst()
+            droppedStaleFrames = 1
+            adaptiveCatchupDropFrames += droppedStaleFrames
+            adaptiveSoftCatchupDropFrames += droppedStaleFrames
+            adaptiveCatchupCount += 1
+            adaptiveSoftCatchupCount += 1
+            frame = pendingFrames.removeFirst()
+            dequeueMode = "catchup-soft-single"
         } else {
             frame = pendingFrames.removeFirst()
             dequeueMode = "fifo"
@@ -499,7 +525,7 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         let queueDelayMs = Double(dequeueNowUs &- frame.enqueuedAtUs) / 1000.0
         renderQueueDelayLogCount += 1
         if droppedStaleFrames > 0 {
-            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms threshold=\(String(format: "%.2f", Self.adaptiveQueueDelayThresholdMs))ms droppedStale=\(droppedStaleFrames) catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames)")
+            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms droppedStale=\(droppedStaleFrames) catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames) softCatchup=\(adaptiveSoftCatchupCount)/\(adaptiveSoftCatchupDropFrames) hardCatchup=\(adaptiveHardCatchupCount)/\(adaptiveHardCatchupDropFrames)")
         }
         if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= 20.0 || droppedStaleFrames > 0 {
             print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms captureTsUs=\(frame.captureTimestampUs)")
