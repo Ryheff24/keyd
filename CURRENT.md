@@ -1,5 +1,35 @@
 # CURRENT
 
+## Lane WiFi Iteration 30 (iteration8 canonical run triage + synthetic emit-accounting fix)
+
+- Timestamp: 2026-04-04 19:20:21 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration8 synthetic timer catch-up after capture cadence lag"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metrics + deltas vs iteration7:
+  - heavy-load: `fps 59.4` (`+0.4`), `pipe p95 105ms` (`-2ms`).
+  - sustained-stream: `avg/1%low 56.5/10.0` (`-0.7/+0.8`), `pipe p95 103ms` (`-5ms`), `glass p95 126ms` (`-4ms`).
+  - fps test: `avg 57.0` (`-0.9`), `jitter 20.1ms` (`-2.3ms`), `maxGap 375ms` (`+225ms` regression).
+- High-signal evidence:
+  - `/tmp/keyd-e2e-ipad.log`: low-FPS windows occur with empty downstream queues (`renderer depth=0`, `pending=0`, `reasm pending=0`, `evicted=0`, `purged=0`) → starvation originates upstream of iPad render/reassembly.
+  - `/tmp/keyd-e2e-mac.log`: no dominant WiFi pressure during starvation windows (`tcpSendDrop=0`, `preDrop≈0`, `tcpInFlightPeak<=2` in low-encoded windows), while synthetic timer shows only small catch-up events (`backlog=2`, no capped events), indicating schedule accounting can drift from actual emitted frames.
+  - Existing instrumentation: `encodePixelBuffer: SKIPPED frame` reached `total skipped=5`.
+- Hypothesis tested:
+  - Current highest-impact bottleneck is synthetic capture emission accounting: the timer advances schedule state even when synthetic frame emission fails, masking real undersupply and preventing backlog recovery during starvation windows.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Capture/ScreenCapture.m`):
+  - `_emitSyntheticFrameAtIndex` now returns success/failure; all failure exits log explicit reason (`invalid-dimensions`, `video-source-unavailable`, `create-pixelbuffer-failed`, `create-samplebuffer-failed`).
+  - Synthetic timer now tracks `emit[attempts/failures/consecutive]`, logs branch-complete failure + partial-tick diagnostics, and **only** advances `frameIndex`/`_syntheticEmittedFrames` on successful emission.
+  - Added recovery log when emission resumes after failures, plus stop-summary log with catch-up + emit counters for run-to-run causality.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and confirm:
+    - non-zero/diagnostic `Synthetic timer emit failure` signals only when source truly fails,
+    - lower starvation windows with `renderer depth=0 & reasm pending=0`,
+    - improved `fps avg`, `1% low`, and `maxGap` without fidelity/transport regressions.
+
 ## Lane WiFi Iteration 29 (iteration7 canonical run triage + synthetic catch-up recovery)
 
 - Timestamp: 2026-04-04 19:12:08 EDT

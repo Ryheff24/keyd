@@ -207,6 +207,9 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     uint64_t _syntheticCatchupEvents;
     uint64_t _syntheticCatchupFrames;
     uint64_t _syntheticCatchupCappedEvents;
+    uint64_t _syntheticEmitAttempts;
+    uint64_t _syntheticEmitFailures;
+    uint64_t _syntheticEmitConsecutiveFailures;
 
     /* Cached background for static-image mode.
      * CGContextDrawImage is CPU-only and takes ~24ms at 2752x1786.
@@ -250,6 +253,9 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         _syntheticCatchupEvents = 0;
         _syntheticCatchupFrames = 0;
         _syntheticCatchupCappedEvents = 0;
+        _syntheticEmitAttempts = 0;
+        _syntheticEmitFailures = 0;
+        _syntheticEmitConsecutiveFailures = 0;
 
         dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
             DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
@@ -497,13 +503,25 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     _syntheticAsset = nil;
     _syntheticSourceFPS = 0;
     _syntheticIsVideo = NO;
+
+    os_log_info(sc_log(),
+                "Screen capture stopped (synthetic emitted=%llu catchup[events=%llu frames=%llu capped=%llu] emit[attempts=%llu failures=%llu consecutive=%llu])",
+                _syntheticEmittedFrames,
+                _syntheticCatchupEvents,
+                _syntheticCatchupFrames,
+                _syntheticCatchupCappedEvents,
+                _syntheticEmitAttempts,
+                _syntheticEmitFailures,
+                _syntheticEmitConsecutiveFailures);
+
     _syntheticScheduleStartUs = 0;
     _syntheticEmittedFrames = 0;
     _syntheticCatchupEvents = 0;
     _syntheticCatchupFrames = 0;
     _syntheticCatchupCappedEvents = 0;
-
-    os_log_info(sc_log(), "Screen capture stopped");
+    _syntheticEmitAttempts = 0;
+    _syntheticEmitFailures = 0;
+    _syntheticEmitConsecutiveFailures = 0;
 }
 
 - (void)updateCaptureResolution:(uint32_t)width height:(uint32_t)height {
@@ -1067,16 +1085,18 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     return sampleBuffer;
 }
 
-- (void)_emitSyntheticFrameAtIndex:(uint64_t)frameIndex {
+- (BOOL)_emitSyntheticFrameAtIndex:(uint64_t)frameIndex {
     if (!_isCapturing) {
-        return;
+        return NO;
     }
 
     size_t pixelWidth = 0;
     size_t pixelHeight = 0;
     [self _resolveSyntheticDimensionsWidth:&pixelWidth height:&pixelHeight];
     if (pixelWidth == 0 || pixelHeight == 0) {
-        return;
+        os_log_error(sc_log(), "Synthetic emit failed: frame=%llu reason=invalid-dimensions width=%lu height=%lu",
+                     frameIndex, (unsigned long)pixelWidth, (unsigned long)pixelHeight);
+        return NO;
     }
 
     CVPixelBufferRef pixelBuffer = NULL;
@@ -1087,7 +1107,8 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     } else if (_syntheticIsVideo) {
         CVPixelBufferRef sourcePixelBuffer = [self _copyNextSyntheticVideoFrame];
         if (!sourcePixelBuffer) {
-            return;
+            os_log_error(sc_log(), "Synthetic emit failed: frame=%llu reason=video-source-unavailable", frameIndex);
+            return NO;
         }
         pixelBuffer = [self _createSyntheticVideoPixelBufferWithWidth:pixelWidth
                                                                height:pixelHeight
@@ -1095,14 +1116,16 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         CVPixelBufferRelease(sourcePixelBuffer);
     } else {
         if (!_syntheticImage) {
-            return;
+            os_log_error(sc_log(), "Synthetic emit failed: frame=%llu reason=missing-static-image", frameIndex);
+            return NO;
         }
         pixelBuffer = [self _createSyntheticPixelBufferWithWidth:pixelWidth
                                                           height:pixelHeight
                                                       frameIndex:frameIndex];
     }
     if (!pixelBuffer) {
-        return;
+        os_log_error(sc_log(), "Synthetic emit failed: frame=%llu reason=create-pixelbuffer-failed", frameIndex);
+        return NO;
     }
 
     if (frameIndex < 10 || frameIndex % 120 == 0) {
@@ -1117,11 +1140,13 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
                                                                             frameIndex:frameIndex];
     CVPixelBufferRelease(pixelBuffer);
     if (!sampleBuffer) {
-        return;
+        os_log_error(sc_log(), "Synthetic emit failed: frame=%llu reason=create-samplebuffer-failed", frameIndex);
+        return NO;
     }
 
     [self _handleCapturedSampleBuffer:sampleBuffer ofType:SCStreamOutputTypeScreen];
     CFRelease(sampleBuffer);
+    return YES;
 }
 
 - (void)_startSyntheticCapture {
@@ -1159,6 +1184,9 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     _syntheticCatchupEvents = 0;
     _syntheticCatchupFrames = 0;
     _syntheticCatchupCappedEvents = 0;
+    _syntheticEmitAttempts = 0;
+    _syntheticEmitFailures = 0;
+    _syntheticEmitConsecutiveFailures = 0;
     _syntheticTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _captureQueue);
     dispatch_source_set_timer(_syntheticTimer,
                               dispatch_time(DISPATCH_TIME_NOW, 0),
@@ -1217,10 +1245,51 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
                    expectedFrames > emittedFrames ? (expectedFrames - emittedFrames) * timerIntervalUs : 0);
         }
 
+        uint64_t emittedThisTick = 0;
         for (uint64_t i = 0; i < framesThisTick; i++) {
-            [strongSelf _emitSyntheticFrameAtIndex:frameIndex];
+            strongSelf->_syntheticEmitAttempts++;
+            BOOL emitted = [strongSelf _emitSyntheticFrameAtIndex:frameIndex];
+            if (!emitted) {
+                strongSelf->_syntheticEmitFailures++;
+                strongSelf->_syntheticEmitConsecutiveFailures++;
+                os_log_error(sc_log(),
+                             "Synthetic timer emit failure: frame=%llu tickAttempt=%llu/%llu expected=%llu emitted=%llu backlog=%llu lagUs=%llu emit[attempts=%llu failures=%llu consecutive=%llu]",
+                             frameIndex,
+                             i + 1,
+                             framesThisTick,
+                             expectedFrames,
+                             strongSelf->_syntheticEmittedFrames,
+                             backlogFrames,
+                             expectedFrames > strongSelf->_syntheticEmittedFrames ? (expectedFrames - strongSelf->_syntheticEmittedFrames) * timerIntervalUs : 0,
+                             strongSelf->_syntheticEmitAttempts,
+                             strongSelf->_syntheticEmitFailures,
+                             strongSelf->_syntheticEmitConsecutiveFailures);
+                break;
+            }
+            if (strongSelf->_syntheticEmitConsecutiveFailures > 0) {
+                os_log(sc_log(),
+                       "Synthetic timer emit recovered: frame=%llu consecutiveFailures=%llu expected=%llu emitted=%llu",
+                       frameIndex,
+                       strongSelf->_syntheticEmitConsecutiveFailures,
+                       expectedFrames,
+                       strongSelf->_syntheticEmittedFrames);
+                strongSelf->_syntheticEmitConsecutiveFailures = 0;
+            }
             frameIndex++;
             strongSelf->_syntheticEmittedFrames++;
+            emittedThisTick++;
+        }
+        if (emittedThisTick < framesThisTick) {
+            os_log_error(sc_log(),
+                         "Synthetic timer partial tick: expected=%llu emitted=%llu backlog=%llu attempted=%llu succeeded=%llu lagUs=%llu emit[attempts=%llu failures=%llu]",
+                         expectedFrames,
+                         strongSelf->_syntheticEmittedFrames,
+                         backlogFrames,
+                         framesThisTick,
+                         emittedThisTick,
+                         expectedFrames > strongSelf->_syntheticEmittedFrames ? (expectedFrames - strongSelf->_syntheticEmittedFrames) * timerIntervalUs : 0,
+                         strongSelf->_syntheticEmitAttempts,
+                         strongSelf->_syntheticEmitFailures);
         }
     });
     dispatch_resume(_syntheticTimer);
