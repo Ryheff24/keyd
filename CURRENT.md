@@ -1,5 +1,65 @@
 # CURRENT
 
+## Lane C Iteration 18 (Wi‑Fi tail/jitter stabilization, non‑E2E)
+
+- Timestamp: 2026-04-04 12:38:23 EDT
+- Scope: tune Wi‑Fi adaptive sender behavior for sustained tail quality/continuity without reducing floor below 30fps; no E2E run per constraint.
+- Commands:
+  - `xcodebuild -workspace keyd.xcworkspace -scheme KeydAgent -configuration Debug -sdk macosx build`
+  - `xcodebuild -workspace keyd.xcworkspace -scheme KeydAgentTests -configuration Debug -sdk macosx test -destination 'platform=macOS'` (not configured for test action)
+  - `xcodebuild -workspace keyd.xcworkspace -scheme KeydApp -configuration Debug -destination 'platform=iOS Simulator,name=iPad Pro (11-inch) (4th generation)' test` (destination unavailable)
+  - `xcodebuild -workspace keyd.xcworkspace -scheme KeydApp -configuration Debug -destination 'generic/platform=iOS' build` (blocked by provisioning profile)
+- Result:
+  - KeydAgent build ✅
+  - Targeted tests/build attempts outside macOS lane ⚠️ blocked by scheme/test-action config, simulator destination mismatch, and signing constraints (no semantic code-test failures observed for touched path).
+- Hypothesis: post-iter17 stream spends long periods in mid‑50s fps but still suffers completion-tail spikes and jitter due controller overreaction/rebound; continuity-first tail shaping should prioritize bitrate-first pressure relief, slower upshift, and escalation hysteresis.
+- Instrumentation/behavior added (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added sampled/forced adaptive classification telemetry:
+    - `WiFi adaptive eval: severe=... mild=... tailRisk=... healthy=... metrics[...] streaks[...]`
+    - sampled every 30 evals, forced on severe/tail-risk/drop events.
+  - Added severe-congestion escalation state (`wifiAdaptiveSevereCongestionStreak`) with explicit branch logging and reset semantics.
+  - Added tail-risk branch for completion-tail control (`tcpSlow>=2` or `tcpMaxCompletion>=32ms`) before hard severe behavior.
+  - Adaptation smoothing adjusted to reduce oscillation:
+    - upshift slowed (`+2fps`, `+75kbps`, healthy streak 8, recovery hold 5200ms),
+    - mild path now bitrate-only downshift (`downshift-mild-bitrate`) to preserve continuity/fps floor,
+    - severe now two-stage (`downshift-severe-soft` then `downshift-severe-hard`) to avoid abrupt floor dives unless persistent.
+  - Floor protection preserved at 30fps (`kWirelessAdaptiveMinFPS` unchanged and still clamped).
+- Expected effect:
+  - Lower p95 completion/jitter tails by reacting earlier to tail-risk signals while avoiding frequent FPS toggles.
+  - Better 1% low stability via continuity-first bitrate trims and slower rebound.
+- Residual risk:
+  - If congestion turns abruptly hard, two-step severe escalation may delay full clamp by one interval.
+  - No lane-C renderer change this iteration to keep causality clear at sender/control surface.
+
+## Lane B Iteration 18 (USB guardrail + decode correctness)
+
+- Timestamp: 2026-04-04 12:39:00 EDT
+- Scope: USB-only regression guardrail and telemetry hygiene (no Wi‑Fi logic edits, no E2E run).
+- Commands:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -destination "platform=macOS,arch=arm64" build`
+  - `xcodebuild -project RemoteDesktop/iPadOS/RemoteDesktopApp.xcodeproj -scheme RemoteDesktopApp -destination "generic/platform=iOS" build`
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgentTests -destination "platform=macOS,arch=arm64" -only-testing:RemoteDesktopAgentTests/TransportFSMTests -only-testing:RemoteDesktopAgentTests/TransportNetworkTests test`
+- Result:
+  - macOS build ✅
+  - iPadOS build ✅
+  - targeted transport tests ❌ blocked by pre-existing unrelated compile failure in `RemoteDesktop/macOS/Transport/WirelessTransport.m` (`nw_connection_get_state` undeclared)
+- USB review summary:
+  - Re-checked:
+    - `RemoteDesktop/macOS/Transport/USBNetworkTransport.m`
+    - `RemoteDesktop/iPadOS/Transport/USBNetworkTransport.swift`
+    - `RemoteDesktop/iPadOS/Decode/HEVCDecoder.swift`
+    - `RemoteDesktop/iPadOS/Decode/LZ4Decompressor.swift`
+  - Found one high-confidence correctness gap in LZ4 path: accepted short successful decode lengths (`result > 0`) and then applied delta/reference copy over full expected frame.
+  - Fix applied in `LZ4Decompressor.swift`:
+    - Added strict decoded-size check (`Int(result) == expectedBytes`) for both keyframe and delta branches.
+    - Added explicit error logs for keyframe/delta size mismatch branches.
+- Expected USB impact:
+  - Prevents propagating partially decoded wired frames into keyframe reference/delta reconstruction.
+  - Improves fail-fast behavior and diagnosis on malformed/truncated USB payloads without changing normal-path behavior.
+- Residual risk:
+  - Existing Wi‑Fi-targeted compile break in `WirelessTransport.m` currently blocks macOS test execution despite USB lane changes being isolated.
+  - USB transport hot-path logging remains sampled/controlled; no additional high-risk hot-path logging changes made this iteration.
+
 ## Lane A Iteration 17 (Reconnect/liveness silent-stall guardrails)
 
 - Timestamp: 2026-04-04 12:26:10 EDT

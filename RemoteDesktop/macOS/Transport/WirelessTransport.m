@@ -34,6 +34,16 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     return ((newerTicks - olderTicks) * timebase.numer) / timebase.denom;
 }
 
+static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
+    if (!detail) {
+        return NO;
+    }
+    NSString *detailString = [NSString stringWithFormat:@"%@", detail];
+    NSRange range = [detailString rangeOfString:@"No message available on STREAM"
+                                         options:NSCaseInsensitiveSearch];
+    return range.location != NSNotFound;
+}
+
 @interface WirelessTransport () {
     dispatch_queue_t _sendPacingQueue;     // serial queue for paced UDP sends
     uint64_t _pacingFastIntervalTicks;     // low-backlog chunk spacing
@@ -881,6 +891,28 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         }
 
         if (error) {
+            BOOL hasInputConnection = (self2->_inputConnection != nil);
+            BOOL inputReady = (self2->_inputReadyAtTicks > 0);
+            uint64_t inputIdleNs = 0;
+            BOOL recentInputActivity = NO;
+            if (self2->_lastInputActivityTicks > 0) {
+                inputIdleNs = keydrd_mach_delta_ns(mach_absolute_time(), self2->_lastInputActivityTicks);
+                recentInputActivity = (inputIdleNs <= kDuplicateReplaceIdleThresholdNs);
+            }
+            BOOL controlPathHealthy = hasInputConnection &&
+                                      self2->_isConnected &&
+                                      (recentInputActivity || inputReady);
+            if (controlPathHealthy && keydrd_is_transient_dtls_gap(error)) {
+                os_log(wireless_log(),
+                       "Media path loss decision=ignored reason=transient-dtls-recv-gap detail=%{public}@ controlPathHealthy=%{public}d inputReady=%{public}d recentInput=%{public}d inputIdleMs=%{public}llums",
+                       error,
+                       controlPathHealthy,
+                       inputReady,
+                       recentInputActivity,
+                       inputIdleNs / 1000000ULL);
+                [self2 scheduleMediaReceive:connection];
+                return;
+            }
             os_log_error(wireless_log(),
                          "DTLS media receive error on active connection: %{public}@",
                          error);
@@ -970,6 +1002,16 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     BOOL wasConnected = _isConnected;
     BOOL wasAWDL = _isAWDL;
     BOOL shouldRecover = hadInputConnection || wasConnected;
+    BOOL inputReady = (_inputReadyAtTicks > 0);
+    uint64_t inputIdleNs = 0;
+    BOOL recentInputActivity = NO;
+    if (_lastInputActivityTicks > 0) {
+        inputIdleNs = keydrd_mach_delta_ns(mach_absolute_time(), _lastInputActivityTicks);
+        recentInputActivity = (inputIdleNs <= kDuplicateReplaceIdleThresholdNs);
+    }
+    BOOL controlPathHealthy = hadInputConnection &&
+                              wasConnected &&
+                              (recentInputActivity || inputReady);
 
     os_log(wireless_log(),
            "Media path loss observed: reason=%{public}s detail=%{public}@ hadInputConnection=%{public}d wasConnected=%{public}d advertisingRequested=%{public}d",
@@ -978,9 +1020,18 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
            hadInputConnection,
            wasConnected,
            _advertisingRequested);
+    if (controlPathHealthy) {
+        os_log(wireless_log(),
+               "Media path loss decision=degraded reason=control-path-healthy detail=%{public}@ inputReady=%{public}d recentInput=%{public}d inputIdleMs=%{public}llums action=preserve-session-no-reconnect",
+               detail ?: (nw_error_t)@"none",
+               inputReady,
+               recentInputActivity,
+               inputIdleNs / 1000000ULL);
+        return;
+    }
     if (!shouldRecover) {
         os_log(wireless_log(),
-               "Media path loss ignored (no active/pending session): reason=%{public}s",
+               "Media path loss decision=ignored reason=no-active-session mediaReason=%{public}s",
                reason);
         return;
     }
@@ -998,9 +1049,12 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     _isAWDL = NO;
 
     os_log_error(wireless_log(),
-                 "Media path loss recovery triggered: reason=%{public}s wasAWDL=%{public}d -> forcing reconnect",
+                 "Media path loss decision=reconnect-triggered reason=%{public}s wasAWDL=%{public}d inputReady=%{public}d recentInput=%{public}d inputIdleMs=%{public}llums",
                  reason,
-                 wasAWDL);
+                 wasAWDL,
+                 inputReady,
+                 recentInputActivity,
+                 inputIdleNs / 1000000ULL);
     if (self.onConnectionChanged) {
         self.onConnectionChanged(NO, wasAWDL);
     }

@@ -132,6 +132,12 @@ final class LZ4Decompressor {
         guard result > 0 else {
             os_log(.error, log: Self.log,
                    "LZ4_decompress_safe failed for keyframe: result=%d, compressed=%d, expected=%d",
+                    result, compressedSize, expectedBytes)
+            return nil
+        }
+        guard Int(result) == expectedBytes else {
+            os_log(.error, log: Self.log,
+                   "LZ4 keyframe size mismatch: decoded=%d compressed=%d expected=%d",
                    result, compressedSize, expectedBytes)
             return nil
         }
@@ -164,6 +170,12 @@ final class LZ4Decompressor {
         guard result > 0 else {
             os_log(.error, log: Self.log,
                    "LZ4_decompress_safe failed for delta: result=%d, compressed=%d, expected=%d",
+                    result, compressedSize, expectedBytes)
+            return nil
+        }
+        guard Int(result) == expectedBytes else {
+            os_log(.error, log: Self.log,
+                   "LZ4 delta size mismatch: decoded=%d compressed=%d expected=%d",
                    result, compressedSize, expectedBytes)
             return nil
         }

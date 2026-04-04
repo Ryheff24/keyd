@@ -595,6 +595,9 @@ final class WirelessTransport {
     // MARK: - Private: Receive Loops
 
     private var mediaRecvCount = 0
+    private func isTransientDTLSGap(_ detail: String) -> Bool {
+        detail.localizedCaseInsensitiveContains("No message available on STREAM")
+    }
 
     private func scheduleMediaReceive(_ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
@@ -637,6 +640,25 @@ final class WirelessTransport {
             }
 
             if let error = error {
+                let detail = "\(error)"
+                let hasInputConnection = (self.inputConnection != nil)
+                let inputReady: Bool
+                if let inputConnection = self.inputConnection {
+                    if case .ready = inputConnection.state {
+                        inputReady = true
+                    } else {
+                        inputReady = false
+                    }
+                } else {
+                    inputReady = false
+                }
+                let controlPathHealthy = hasInputConnection && self.isConnected && inputReady
+                if controlPathHealthy && self.isTransientDTLSGap(detail) {
+                    print("[CONSOLE] WirelessTransport: media path loss decision=ignored reason=transient-dtls-recv-gap detail=\(detail) controlPathHealthy=\(controlPathHealthy)")
+                    self.log.info("Media path loss decision=ignored reason=transient-dtls-recv-gap detail=\(detail)")
+                    self.scheduleMediaReceive(connection)
+                    return
+                }
                 print("[CONSOLE] WirelessTransport: UDP media recv error: \(error)")
                 return
             }
@@ -796,11 +818,27 @@ final class WirelessTransport {
         let wasConnected = isConnected
         let wasAWDL = isAWDL
         let shouldRecover = hadInputConnection || wasConnected
+        let inputReady: Bool
+        if let inputConnection = inputConnection {
+            if case .ready = inputConnection.state {
+                inputReady = true
+            } else {
+                inputReady = false
+            }
+        } else {
+            inputReady = false
+        }
+        let controlPathHealthy = hadInputConnection && wasConnected && inputReady
 
         print("[CONSOLE] WirelessTransport: media path loss observed reason=\(reason) detail=\(detail) hadInputConnection=\(hadInputConnection) wasConnected=\(wasConnected) browsingRequested=\(browsingRequested)")
+        if controlPathHealthy {
+            print("[CONSOLE] WirelessTransport: media path loss decision=degraded reason=control-path-healthy detail=\(detail) action=preserve-session-no-reconnect")
+            log.info("Media path loss decision=degraded reason=control-path-healthy detail=\(detail)")
+            return
+        }
         if !shouldRecover {
-            print("[CONSOLE] WirelessTransport: media path loss ignored (no active/pending session) reason=\(reason)")
-            log.info("Media path loss ignored: no active/pending session (\(reason))")
+            print("[CONSOLE] WirelessTransport: media path loss decision=ignored reason=no-active-session mediaReason=\(reason)")
+            log.info("Media path loss decision=ignored reason=no-active-session mediaReason=\(reason)")
             return
         }
 
@@ -816,8 +854,8 @@ final class WirelessTransport {
         isAWDL = false
         tcpBuffer.removeAll()
 
-        print("[CONSOLE] WirelessTransport: media path loss recovery triggered reason=\(reason) wasAWDL=\(wasAWDL) -> forcing reconnect")
-        log.error("Media path loss recovery triggered (\(reason)); forcing reconnect")
+        print("[CONSOLE] WirelessTransport: media path loss decision=reconnect-triggered reason=\(reason) wasAWDL=\(wasAWDL) inputReady=\(inputReady)")
+        log.error("Media path loss decision=reconnect-triggered reason=\(reason) inputReady=\(inputReady)")
         onConnectionChanged?(false, wasAWDL)
         scheduleBrowserRestart(reason: reason)
     }
