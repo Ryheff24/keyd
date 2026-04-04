@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.172` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `34 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `106 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `48 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `59 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `129 ms` | `27 ms` | `25 ms` | ❌ |
+| FPS | `55.3 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.263` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `30 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `146 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `50 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `52 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `172 ms` | `27 ms` | `25 ms` | ❌ |
 | Glass-to-glass latency avg | `73 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `39 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `110 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load FPS | `58.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `27 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `136 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -96,3 +96,4 @@ Rules:
 | 2026-04-04 | 16:30:25 EDT | `a004b1d` | `2752x1786` | `2496x1620` | `58.1 fps` | `1.200` | `29/140/46 ms` | `52/167/71 ms` | `59.8 fps, 26/135 ms` | `1` | `26/33` | wifi: validate less aggressive severe-downshift thresholds |
 | 2026-04-04 | 16:36:59 EDT | `4ff41aa` | `2752x1786` | `2496x1620` | `57.9 fps` | `1.300` | `36/110/52 ms` | `66/132/79 ms` | `60.1 fps, 35/103 ms` | `1` | `26/33` | wifi: render cadence bottleneck follow-up |
 | 2026-04-04 | 16:43:20 EDT | `3e854b6` | `2752x1786` | `2496x1620` | `57.8 fps` | `1.172` | `34/106/48 ms` | `59/129/73 ms` | `59.2 fps, 39/110 ms` | `1` | `26/33` | wifi: validate renderer early catchup + cadence telemetry |
+| 2026-04-04 | 16:51:06 EDT | `5f524af` | `2752x1786` | `2496x1620` | `55.3 fps` | `1.263` | `30/146/50 ms` | `52/172/73 ms` | `58.0 fps, 27/136 ms` | `1` | `26/33` | wifi: decode handoff latency focus |
