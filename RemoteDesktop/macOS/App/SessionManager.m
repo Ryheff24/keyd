@@ -120,6 +120,12 @@ static const int32_t kWirelessTCPSchedulerBurstWindowTailThreshold = 3;
 static const uint64_t kWirelessTCPSchedulerBaseSpacingUs = 800;
 static const uint64_t kWirelessTCPSchedulerTailSpacingUs = 1400;
 static const uint64_t kWirelessTCPSchedulerSevereSpacingUs = 2200;
+/* Escalate scheduler spacing when 1s perf window shows completion spikes and
+ * pre-encode drop pressure; this targets stuttery starvation tails where the
+ * default burst-window spacing never engages (delay metrics stay at zero). */
+static const uint64_t kWirelessTCPSchedulerRecoveryModerateSpacingUs = 4500;
+static const uint64_t kWirelessTCPSchedulerRecoverySevereSpacingUs = 8500;
+static const uint64_t kWirelessTCPSchedulerMaxSleepUs = 9000;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
 static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 95;
@@ -1344,6 +1350,44 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                 schedulerSpacingUs = kWirelessTCPSchedulerBaseSpacingUs;
                 schedulerReason = inFlightBefore >= 1 ? "inflight-base" : "payload-tail";
             }
+            uint64_t baseSchedulerSpacingUs = schedulerSpacingUs;
+            int32_t recentPreDrops = _wifiPerfPreEncodeDrops;
+            int32_t recentSlowCompletions = _wifiPerfTCPSlowCompletions;
+            int32_t recentMaxCompletionMs = _wifiPerfTCPMaxCompletionMs;
+            uint64_t recoverySpacingUs = 0;
+            const char *recoveryReason = "none";
+            if (recentPreDrops >= 3 || recentMaxCompletionMs >= 120) {
+                recoverySpacingUs = kWirelessTCPSchedulerRecoverySevereSpacingUs;
+                recoveryReason = "recovery-severe";
+            } else if (recentPreDrops > 0 ||
+                       recentSlowCompletions >= 2 ||
+                       recentMaxCompletionMs >= 45) {
+                recoverySpacingUs = kWirelessTCPSchedulerRecoveryModerateSpacingUs;
+                recoveryReason = "recovery-moderate";
+            }
+            if (recoverySpacingUs > 0) {
+                static int wifiTCPSchedulerRecoveryDecisionCount = 0;
+                wifiTCPSchedulerRecoveryDecisionCount++;
+                if (recoverySpacingUs > schedulerSpacingUs) {
+                    schedulerSpacingUs = recoverySpacingUs;
+                    schedulerReason = recoveryReason;
+                    if (wifiTCPSchedulerRecoveryDecisionCount <= 30 ||
+                        wifiTCPSchedulerRecoveryDecisionCount % 120 == 0) {
+                        os_log(sLog, "WiFi TCP scheduler recovery decision: branch=apply seq=%u inFlightBefore=%d preDrop=%d slow=%d maxCompletion=%dms baseTarget=%lluus recoveryTarget=%lluus reason=%{public}s sampled=%{public}s count=%d",
+                               seq, inFlightBefore, recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                               baseSchedulerSpacingUs, recoverySpacingUs, recoveryReason,
+                               (recentPreDrops >= 8 || recentMaxCompletionMs >= 180) ? "forced" : "sampled",
+                               wifiTCPSchedulerRecoveryDecisionCount);
+                    }
+                } else if (wifiTCPSchedulerRecoveryDecisionCount <= 30 ||
+                           wifiTCPSchedulerRecoveryDecisionCount % 120 == 0) {
+                    os_log(sLog, "WiFi TCP scheduler recovery decision: branch=hold seq=%u inFlightBefore=%d preDrop=%d slow=%d maxCompletion=%dms baseTarget=%lluus recoveryTarget=%lluus reason=%{public}s sampled=%{public}s count=%d",
+                           seq, inFlightBefore, recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                           baseSchedulerSpacingUs, recoverySpacingUs, schedulerReason,
+                           (recentPreDrops >= 8 || recentMaxCompletionMs >= 180) ? "forced" : "sampled",
+                           wifiTCPSchedulerRecoveryDecisionCount);
+                }
+            }
             uint64_t schedulerDelayUs = 0;
             uint64_t schedulerObservedGapUs = 0;
             uint64_t lastSubmitUs = self.wifiTCPSchedulerLastSubmitUs;
@@ -1368,7 +1412,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                                    wifiTCPSchedulerShapeLogCount);
                         }
                     }
-                    usleep((useconds_t)MIN((uint64_t)4000, schedulerDelayUs));
+                    usleep((useconds_t)MIN(kWirelessTCPSchedulerMaxSleepUs, schedulerDelayUs));
                     enqueueUs = keydrd_host_time_us();
                 }
             } else if (schedulerSpacingUs > 0 && lastSubmitUs > 0 && enqueueUs <= lastSubmitUs) {

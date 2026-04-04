@@ -1,5 +1,46 @@
 # CURRENT
 
+## Lane WiFi Iteration 27 (iteration5 burst-severe escalation guard follow-up)
+
+- Timestamp: 2026-04-04 18:54:21 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration5 burst-severe escalation guard"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metrics + deltas vs most recent available WiFi full run (18:44, same lane history):
+  - heavy-load: `fps 58.6 -> 55.8`, `pipe med/p95 28/135ms -> 65/328ms` (regressed).
+  - fps test: `avg 56.9 -> 55.4`, `1% low 10.6 -> 9.2`, `jitter 20.8ms -> 26.6ms`, `maxGap 283ms -> 558ms` (regressed tails).
+  - pipeline-latency: `med/p95 28/101ms -> 44/141ms` (regressed).
+  - glass-to-glass: `med/p95 50/134ms -> 77/159ms` (regressed).
+  - throughput/frame-loss remained non-blocking (`2.8 Mbps`, `0.0%` frame loss).
+- High-signal evidence:
+  - `/tmp/keyd-e2e-ipad.log`: long-tail stalls with no transport loss (`frame-loss PASS 0.0%`) but severe pacing collapse (`frame-pacing FAIL cv=1.475`, `fps FAIL maxGap=558ms`, sustained `1% low=8.6fps`).
+  - `/tmp/keyd-e2e-mac.log`:
+    - repeated pressure spikes with large pre-encode drops and slow TCP completions:
+      - `WiFi perf 1s ... preDrop=47 tcpSlow=7 tcpMaxCompletion=380ms`
+      - `WiFi perf 1s ... preDrop=35 tcpSlow=3 tcpMaxCompletion=314ms`
+    - scheduler shaping remained effectively inactive during failures:
+      - `scheduler[delays=0 ... burstSends=0]` across spike windows.
+    - burst escalation mostly held until pressure was already severe (`WiFi adaptive burst escalation: branch=hold ...` then delayed `branch=trigger`).
+- Hypothesis tested:
+  - Current dominant bottleneck is not packet loss; it is WiFi TCP completion-tail pressure causing pre-encode drop bursts and starvation gaps, while existing send scheduler spacing is too weak to engage under this workload.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added recovery-aware scheduler escalation branch with explicit decision logs:
+    - `WiFi TCP scheduler recovery decision: branch=apply|hold ... preDrop slow maxCompletion baseTarget recoveryTarget reason`.
+  - Added moderate/severe recovery spacing tiers driven by measured pressure in current 1s window:
+    - moderate: `4500us` when `preDrop>0` or `slow>=2` or `maxCompletion>=45ms`
+    - severe: `8500us` when `preDrop>=3` or `maxCompletion>=120ms`
+  - Increased scheduler max sleep cap `4000us -> 9000us` so recovery spacing can actually apply.
+  - Kept existing drop/error/success path logs intact (`pre-encode drop`, `send queued`, `send slow completion`, `backpressure drop`) for causality.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - scheduler recovery branches activate during pressure windows,
+    - `scheduler[delays]` becomes non-zero when `preDrop/tcpMaxCompletion` spikes,
+    - reductions in `preDrop` burst windows and tail metrics (`fps maxGap`, sustained `1% low`, pipeline p95) without resolution/fidelity changes.
+
 ## Lane WiFi Iteration 26 (orchestrator run blocked at iPad launch tunnel/provider failure)
 
 - Timestamp: 2026-04-04 18:39:33 EDT
