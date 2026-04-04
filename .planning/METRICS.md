@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `53.2 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.242` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `30 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `145 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `49 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `52 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `169 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `73 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `54.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `26 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `137 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `53.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.603` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `28 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `53 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `32 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `49 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `78 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `54 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `54.9 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `25 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `36 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.4%` | `100.0%` | `100.0%` | ❌ |
 
@@ -87,3 +87,4 @@ Rules:
 | 2026-04-04 | 12:01:49 EDT | `c952113` | `2752x1786` | `2496x1620` | `56.5 fps` | `1.367` | `36/111/56 ms` | `63/132/79 ms` | `57.2 fps, 31/104 ms` | `1` | `26/33` | iter15 rerun complete metrics collection |
 | 2026-04-04 | 12:31:23 EDT | `bc54a2f` | `2752x1786` | `2496x1620` | `53.7 fps` | `1.262` | `31/144/50 ms` | `53/168/75 ms` | `54.0 fps, 29/146 ms` | `1` | `26/33` | iter17 integrated A/B/C stall-recovery reconnect-liveness usb-guard |
 | 2026-04-04 | 12:45:25 EDT | `49ba719` | `2752x1786` | `2496x1620` | `53.2 fps` | `1.242` | `30/145/49 ms` | `52/169/73 ms` | `54.1 fps, 26/137 ms` | `1` | `29/37` | iter18 integrated rerun after compile-fix no-nw_connection_get_state |
+| 2026-04-04 | 13:25:19 EDT | `3855de7` | `2752x1786` | `2496x1620` | `53.9 fps` | `0.603` | `28/53/32 ms` | `49/78/54 ms` | `54.9 fps, 25/36 ms` | `1` | `29/37` | iter19 rerun with unlocked ipad |
