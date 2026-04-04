@@ -436,6 +436,12 @@ static const size_t kUSBMediaTCPChunkThresholdBytes = 512 * 1024;
 - (void)sendInputEvent:(const void *)data length:(size_t)len {
     nw_connection_t conn = _inputConnection;
     if (!conn) return;
+    if (len > UINT32_MAX) {
+        os_log_error(transport_log(),
+                     "Input send skipped: payload too large for TCP length prefix (%zu bytes)",
+                     len);
+        return;
+    }
 
     /* Build a single contiguous framed buffer to avoid concat/allocation churn
      * on high-frequency input events. */
@@ -514,6 +520,13 @@ static const size_t kUSBMediaTCPChunkThresholdBytes = 512 * 1024;
     nw_connection_t conn = _inputConnection;
     if (!conn) {
         os_log_error(transport_log(), "USB media send skipped: no TCP input connection");
+        if (completion) completion(NO);
+        return;
+    }
+    if (len > UINT32_MAX) {
+        os_log_error(transport_log(),
+                     "USB media send skipped: payload too large for TCP length prefix (%zu bytes)",
+                     len);
         if (completion) completion(NO);
         return;
     }

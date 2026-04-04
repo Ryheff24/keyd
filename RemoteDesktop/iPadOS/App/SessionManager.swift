@@ -261,6 +261,7 @@ final class SessionManager {
     /// Pause session when app goes to background.
     func pauseForBackground() {
         Self.log.info("App backgrounded -- pausing")
+        udpReassembler.resetForNewStreamSession(reason: "app-background")
         fpsUpdateTimer?.invalidate()
         latencyProbeTimer?.invalidate()
         reconnectTimer?.invalidate()
@@ -271,6 +272,7 @@ final class SessionManager {
     func resetPairingAndShowQR() {
         print("[CONSOLE] resetPairingAndShowQR: clearing pairing and returning to QR")
         Self.log.info("User requested pairing reset")
+        udpReassembler.resetForNewStreamSession(reason: "reset-pairing")
         reconnectTimer?.invalidate()
         fpsUpdateTimer?.invalidate()
         latencyProbeTimer?.invalidate()
@@ -294,6 +296,7 @@ final class SessionManager {
             guard let self = self, self.state == .connecting else { return }
             print("[CONSOLE] Connecting timeout -- pairing likely stale, falling back to QR (usb=\(self.usbTransport.isConnected), wifi=\(self.wirelessTransport.isConnected), pairedHost=\(self.qrPairing.pairedHost ?? "nil"))")
             Self.log.info("Connecting timeout expired -- resetting stale pairing (usb=\(self.usbTransport.isConnected), wifi=\(self.wirelessTransport.isConnected), pairedHostPresent=\((self.qrPairing.pairedHost?.isEmpty == false)))")
+            self.udpReassembler.resetForNewStreamSession(reason: "connecting-timeout")
             self.usbTransport.stopMonitoring()
             self.wirelessTransport.stopBrowsing()
             self.qrPairing.resetPairing()
@@ -304,6 +307,7 @@ final class SessionManager {
     /// Disconnect and clean up the session.
     func disconnectSession() {
         Self.log.info("Disconnecting session")
+        udpReassembler.resetForNewStreamSession(reason: "disconnect-session")
         state = .disconnected
         reconnectTimer?.invalidate()
         fpsUpdateTimer?.invalidate()
@@ -321,6 +325,7 @@ final class SessionManager {
     /// Disconnect all transports and reset state for a new transport test.
     func disconnectAllTransports() {
         Self.log.info("Disconnecting all transports for transport rotation")
+        udpReassembler.resetForNewStreamSession(reason: "disconnect-all-transports")
         usbTransport.stopMonitoring()
         wirelessTransport.stopBrowsing()
         latencyProbeTimer?.invalidate()
@@ -333,6 +338,7 @@ final class SessionManager {
     /// Start only USB NCM transport monitoring (disables wireless).
     func startUSBOnly() {
         Self.log.info("Starting USB NCM only")
+        udpReassembler.resetForNewStreamSession(reason: "start-usb-only")
         wirelessTransport.stopBrowsing()
         usbTransport.startMonitoring()
     }
@@ -340,6 +346,7 @@ final class SessionManager {
     /// Start only wireless transport browsing (disables USB).
     func startWirelessOnly() {
         Self.log.info("Starting wireless only")
+        udpReassembler.resetForNewStreamSession(reason: "start-wireless-only")
         usbTransport.stopMonitoring()
         wirelessTransport.startBrowsing()
     }
@@ -1077,6 +1084,7 @@ final class SessionManager {
         )
 
         Self.log.info("Scheduling reconnect attempt \(self.reconnectAttempt + 1) in \(delay)s")
+        udpReassembler.resetForNewStreamSession(reason: "schedule-reconnect-attempt-\(reconnectAttempt + 1)")
 
         reconnectTimer?.invalidate()
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in

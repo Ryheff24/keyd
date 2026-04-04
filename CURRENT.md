@@ -1,5 +1,17 @@
 # CURRENT
 
+## Lane B Iteration (USB hardening)
+
+- Timestamp: 2026-04-04 02:19:10 EDT
+- Command: `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination "platform=macOS,arch=arm64" -derivedDataPath .build/DerivedData build && xcodebuild -project RemoteDesktop/iPadOS/RemoteDesktopApp.xcodeproj -scheme RemoteDesktopApp -configuration Debug -destination "generic/platform=iOS" -derivedDataPath .build/DerivedData build`
+- Result: macOS + iPadOS builds ✅
+- Hypothesis: harden USB TCP framing safety and improve USB receive-loop failure observability without changing wire behavior.
+- Instrumentation added:
+  - iPad USB media receive: explicit error/complete branch logs + counters.
+  - iPad USB TCP receive: explicit error/complete branch logs + counters + buffer/readOffset context.
+  - Mac USB TCP sends: explicit oversized payload guard logs before 32-bit length framing.
+- Next move: validate new USB logs under orchestrator-run traffic to confirm whether failures are transport-close churn vs parse/backlog pressure.
+
 ## Active Objective
 
 - Lane: wifi (lane C Objective-C)

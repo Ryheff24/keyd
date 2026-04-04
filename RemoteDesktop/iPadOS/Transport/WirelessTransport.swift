@@ -303,14 +303,24 @@ final class WirelessTransport {
                     print("[CONSOLE] Bonjour service LOST: \(result.endpoint.debugDescription)")
                     self.log.info("Bonjour service lost: \(result.endpoint.debugDescription)")
 
-                    // Only tear down if the removed service is the one we are connected to.
-                    if case .service(let name, _, _, _) = result.endpoint,
-                       name == self.connectedServiceName {
-                        print("[CONSOLE] Bonjour: connected service '\(name)' removed — tearing down")
-                        self.log.info("Connected service removed — tearing down")
-                        self.tearDownConnections()
-                        self.onConnectionChanged?(false, false)
+                    guard case .service(let name, _, _, _) = result.endpoint else { continue }
+                    guard name == self.connectedServiceName else {
+                        print("[CONSOLE] Bonjour: removed service '\(name)' ignored (current latch=\(self.connectedServiceName ?? "nil"))")
+                        self.log.info("Bonjour removed service ignored: not current latch")
+                        continue
                     }
+
+                    let hasActiveOrPendingSession =
+                        self.inputConnection != nil || self.mediaConnection != nil || self.isConnected
+                    if hasActiveOrPendingSession {
+                        print("[CONSOLE] Bonjour: connected service '\(name)' removed but session is active/pending (isConnected=\(self.isConnected), input=\(self.inputConnection != nil), media=\(self.mediaConnection != nil)) — keeping transport up")
+                        self.log.info("Bonjour removed current service while session active/pending — preserving live connection")
+                        continue
+                    }
+
+                    print("[CONSOLE] Bonjour: current service '\(name)' removed with no active session — clearing service latch")
+                    self.log.info("Bonjour removed current service with no active session — clearing latch")
+                    self.connectedServiceName = nil
 
                 default:
                     break

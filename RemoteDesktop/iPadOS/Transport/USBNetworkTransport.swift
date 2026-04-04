@@ -49,6 +49,10 @@ final class USBNetworkTransport {
     private var tcpDrainInvocationCount = 0
     private var tcpCompactionCount = 0
     private var tcpMessagesDelivered = 0
+    private var tcpReceiveErrorCount = 0
+    private var tcpReceiveCompleteCount = 0
+    private var mediaReceiveErrorCount = 0
+    private var mediaReceiveCompleteCount = 0
     private static let tcpCompactionMinConsumedBytes = 2 << 20
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
@@ -685,7 +689,18 @@ final class USBNetworkTransport {
                 self.onMediaReceived?(data)
             }
 
-            if error != nil || isComplete { return }
+            if let error = error {
+                self.mediaReceiveErrorCount += 1
+                print("[CONSOLE] USBTransport: media-recv error=\(error) count=\(self.mediaReceiveErrorCount)")
+                self.log.error("USB media recv error=\(String(describing: error), privacy: .public) count=\(self.mediaReceiveErrorCount, privacy: .public)")
+                return
+            }
+            if isComplete {
+                self.mediaReceiveCompleteCount += 1
+                print("[CONSOLE] USBTransport: media-recv complete count=\(self.mediaReceiveCompleteCount)")
+                self.log.info("USB media recv complete count=\(self.mediaReceiveCompleteCount, privacy: .public)")
+                return
+            }
             self.scheduleMediaReceive(connection)
         }
     }
@@ -707,7 +722,18 @@ final class USBNetworkTransport {
                 self.drainUSBTCPBuffer()
             }
 
-            if error != nil || isComplete { return }
+            if let error = error {
+                self.tcpReceiveErrorCount += 1
+                print("[CONSOLE] USBTransport: tcp-recv error=\(error) count=\(self.tcpReceiveErrorCount) buffer=\(self.tcpBuffer.count)B readOffset=\(self.tcpBufferReadOffset)")
+                self.log.error("USB TCP recv error=\(String(describing: error), privacy: .public) count=\(self.tcpReceiveErrorCount, privacy: .public) buffer=\(self.tcpBuffer.count, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
+                return
+            }
+            if isComplete {
+                self.tcpReceiveCompleteCount += 1
+                print("[CONSOLE] USBTransport: tcp-recv complete count=\(self.tcpReceiveCompleteCount) buffer=\(self.tcpBuffer.count)B readOffset=\(self.tcpBufferReadOffset)")
+                self.log.info("USB TCP recv complete count=\(self.tcpReceiveCompleteCount, privacy: .public) buffer=\(self.tcpBuffer.count, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
+                return
+            }
             self.scheduleInputReceive(connection)
         }
     }

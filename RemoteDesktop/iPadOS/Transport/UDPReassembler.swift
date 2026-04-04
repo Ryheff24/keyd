@@ -94,6 +94,7 @@ final class UDPReassembler {
     private var droppedUntilKeyframeCount = 0
     private var recoveryEnterCount = 0
     private var recoveryExitCount = 0
+    private var staleFrameDropCount = 0
 
     /// Stats logging interval counter (counts purge timer ticks).
     private var statsTickCount = 0
@@ -150,6 +151,33 @@ final class UDPReassembler {
             framesEvicted = 0
             framesPurged = 0
             return rate
+        }
+    }
+
+    /// Reset sequence/recovery state when a media session boundary occurs
+    /// (e.g. reconnect, transport handoff, explicit disconnect).
+    func resetForNewStreamSession(reason: String) {
+        queue.async {
+            let pendingBefore = self.pendingFrames.count
+            let outOfOrderBefore = self.outOfOrderBuffer.count
+            let hadBaseline = self.hasDeliveredFirstFrame
+            let lastSeqBefore = self.lastDeliveredSeq
+            let awaitingBefore = self.awaitingKeyframeAfterLoss
+
+            print("[CONSOLE] UDPReassembler: reset-for-new-session entry reason=\(reason) hasBaseline=\(hadBaseline) lastSeq=\(lastSeqBefore) pending=\(pendingBefore) ooo=\(outOfOrderBefore) awaitingKeyframe=\(awaitingBefore)")
+            Self.log.info("reset-for-new-session entry reason=\(reason, privacy: .public) hasBaseline=\(hadBaseline, privacy: .public) lastSeq=\(lastSeqBefore, privacy: .public) pending=\(pendingBefore, privacy: .public) ooo=\(outOfOrderBefore, privacy: .public) awaitingKeyframe=\(awaitingBefore, privacy: .public)")
+
+            self.pendingFrames.removeAll(keepingCapacity: true)
+            self.insertionOrder.removeAll(keepingCapacity: true)
+            self.outOfOrderBuffer.removeAll(keepingCapacity: true)
+            self.hasDeliveredFirstFrame = false
+            self.lastDeliveredSeq = 0
+            self.awaitingKeyframeAfterLoss = false
+            self.droppedUntilKeyframeCount = 0
+            self.staleFrameDropCount = 0
+
+            print("[CONSOLE] UDPReassembler: reset-for-new-session complete reason=\(reason) pending=\(self.pendingFrames.count) ooo=\(self.outOfOrderBuffer.count) hasBaseline=\(self.hasDeliveredFirstFrame)")
+            Self.log.info("reset-for-new-session complete reason=\(reason, privacy: .public) pending=\(self.pendingFrames.count, privacy: .public) ooo=\(self.outOfOrderBuffer.count, privacy: .public) hasBaseline=\(self.hasDeliveredFirstFrame, privacy: .public)")
         }
     }
 
@@ -358,8 +386,17 @@ final class UDPReassembler {
         if distance == 0 || distance > 32768 {
             // distance == 0: duplicate of last delivered frame
             // distance > 32768: seq is BEHIND lastDeliveredSeq (wrapped backward), old/stale frame
+            staleFrameDropCount += 1
+            if staleFrameDropCount <= 10 || staleFrameDropCount % 50 == 0 {
+                let staleReason = distance == 0 ? "duplicate" : "behind-last-seq"
+                print("[CONSOLE] UDPReassembler: stale-frame-drop seq=\(seq) last=\(lastDeliveredSeq) distance=\(distance) reason=\(staleReason) count=\(staleFrameDropCount) source=\(sourceLabel)")
+            }
         } else if distance == 1 {
             // Next in sequence — deliver immediately
+            if staleFrameDropCount > 0 {
+                print("[CONSOLE] UDPReassembler: stale-drop streak ended count=\(staleFrameDropCount) resume_seq=\(seq)")
+            }
+            staleFrameDropCount = 0
             lastDeliveredSeq = seq
             framesDelivered += 1
             enqueueReassembledFrame(frameData)
@@ -371,6 +408,10 @@ final class UDPReassembler {
             // Reliable ordered source (TCP media path): a forward sequence gap means
             // sender-side drop, not network reordering. Missing seq will never arrive.
             if header.isKeyframe {
+                if staleFrameDropCount > 0 {
+                    print("[CONSOLE] UDPReassembler: stale-drop streak ended via ordered-keyframe count=\(staleFrameDropCount) seq=\(seq)")
+                }
+                staleFrameDropCount = 0
                 outOfOrderBuffer.removeAll()
                 lastDeliveredSeq = seq
                 framesDelivered += 1
@@ -395,6 +436,10 @@ final class UDPReassembler {
             // Only skip ahead if the new frame is a keyframe that can restart
             // decoder state cleanly. Otherwise, freeze until the next keyframe.
             if header.isKeyframe {
+                if staleFrameDropCount > 0 {
+                    print("[CONSOLE] UDPReassembler: stale-drop streak ended via gap-skip keyframe count=\(staleFrameDropCount) seq=\(seq)")
+                }
+                staleFrameDropCount = 0
                 outOfOrderBuffer.removeAll()
                 lastDeliveredSeq = seq
                 framesDelivered += 1
