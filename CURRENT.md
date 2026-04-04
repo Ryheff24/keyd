@@ -1,5 +1,36 @@
 # CURRENT
 
+## Lane WiFi Iteration 23 (renderer dequeue/catchup policy probe, reverted)
+
+- Timestamp: 2026-04-04 17:14:51 EDT
+- Commands:
+  - Baseline: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: baseline renderer dequeue oscillation confirm"`
+  - Validation: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate renderer dequeue/catchup policy"`
+- Pass/Fail:
+  - Baseline: `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Validation: `[TEST] COMPLETE: 26/33 passed, 7 failed`
+- Hypothesis tested:
+  - pending-depth (4-5) hard catchup oscillation was the dominant render tail and could be reduced with depth-trigger hysteresis/cooldown.
+- Instrumentation added/refined (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`, `RemoteDesktop/iPadOS/App/SessionManager.swift`):
+  - Pending-depth transition logs (`low/mid/high`) on enqueue/dequeue with reason and stale-drop count.
+  - Dequeue aging telemetry (`oldestDelay`, `queueDelay`, `dequeueAgeDelta`) and catchup branch reason fields.
+  - Session handoff present telemetry now includes `pending`, `dequeueToPresent`, `postDequeuePipeline`, plus dequeue/present correlation by capture timestamp.
+- Evidence:
+  - Baseline showed hard-depth catchup oscillation at shallow age: `pending=5->2`, `oldestDelay≈25ms`, repeated `mode=catchup-hard-depth`.
+  - Validation still showed severe tail bursts despite reduced tail hard-depth events:
+    - `STREAM-TELEMETRY t=141.0s ... observed=90fps rendered=74fps ... pipeline ... p95=779ms ... glass ... p95=816ms ... overwrites+12 pending=0`
+    - `STREAM-TELEMETRY t=140.0s ... observed=17fps rendered=19fps ... glass p95=733ms`
+  - Worst dequeue queueDelay in validation remained FIFO and low-depth (`pending=2->1`, `queueDelay=36.44ms`), indicating dominant spikes are not depth-4/5 dequeue policy alone.
+- Metric deltas (validation vs baseline):
+  - heavy-load: `fps 59.5 -> 58.1`, `pipe med/p95 37/110ms -> 77/237ms` (worse)
+  - sustained-stream: `fps avg 56.3 -> 54.9`, `1% low 9.2 -> 8.6`, `maxGap 292ms -> 617ms`, `pipe med/avg/p95 41/55/111ms -> 42/60/126ms` (worse)
+  - fps test: `avg 56.8 -> 56.0`, `maxGap 292ms -> 617ms` (worse), `jitter 22.8ms -> 22.0ms` (slightly better but still failing)
+- Outcome:
+  - Non-improving; renderer policy change reverted.
+  - Telemetry refinements retained for next hypothesis.
+- Next move:
+  - Instrument and correlate renderer overwrite bursts with upstream arrival burst windows (sequence burst density + enqueue overflow + render starvation windows) to distinguish transport burstiness vs render tick starvation before any next policy change.
+
 ## Lane WiFi Iteration 22 (renderer early-catchup + present telemetry)
 
 - Timestamp: 2026-04-04 16:45:46 EDT
