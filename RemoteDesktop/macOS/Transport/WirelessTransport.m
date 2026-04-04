@@ -19,6 +19,19 @@ static os_log_t wireless_log(void) {
 /* Port number as C string for NWListener */
 static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
+static const uint64_t kDuplicateReplaceIdleThresholdNs = 2000000000ULL;
+
+static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
+    if (newerTicks <= olderTicks) {
+        return 0;
+    }
+    static mach_timebase_info_data_t timebase;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mach_timebase_info(&timebase);
+    });
+    return ((newerTicks - olderTicks) * timebase.numer) / timebase.denom;
+}
 
 @interface WirelessTransport () {
     dispatch_queue_t _sendPacingQueue;     // serial queue for paced UDP sends
@@ -26,6 +39,8 @@ static const char *kInputPortStr = "14568";
     uint64_t _pacingDefaultIntervalTicks;  // nominal chunk spacing
     uint64_t _pacingCongestedIntervalTicks;// high-backlog chunk spacing
     uint64_t _nextSendTime;               // next allowed send time (mach absolute time)
+    uint64_t _inputReadyAtTicks;          // when the current input connection reached ready
+    uint64_t _lastInputActivityTicks;     // last time bytes were received on input connection
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
 }
@@ -464,18 +479,31 @@ static const char *kInputPortStr = "14568";
 - (void)handleNewConnection:(nw_connection_t)connection {
     os_log(wireless_log(), "TLS wireless connection accepted from iPad");
 
-    /* Ignore duplicate candidates while an existing session is still alive.
-     * Replacing a healthy connection causes avoidable EOFs on the iPad and
-     * was tearing down long-running Wi-Fi tests near completion. A genuine
-     * reconnect will arrive after the old connection has already ended. */
+    /* Ignore duplicate candidates while an existing session is still active.
+     * During reconnect/rotation, the old TCP socket can remain "connected" for
+     * a while after the iPad has moved on. Replace stale sockets once they have
+     * been idle long enough so reconnect can complete without waiting for TCP timeout. */
     if (_inputConnection) {
+        uint64_t nowTicks = mach_absolute_time();
+        uint64_t idleNs = _lastInputActivityTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _lastInputActivityTicks) : UINT64_MAX;
+        uint64_t ageNs = _inputReadyAtTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _inputReadyAtTicks) : 0;
+        BOOL staleByIdle = (_lastInputActivityTicks > 0) && (idleNs >= kDuplicateReplaceIdleThresholdNs);
+        BOOL staleByNoInput = (_lastInputActivityTicks == 0) &&
+                              (_inputReadyAtTicks > 0) &&
+                              (ageNs >= kDuplicateReplaceIdleThresholdNs);
+        BOOL shouldReplace = (!_isConnected) || staleByIdle || staleByNoInput;
+
         os_log(wireless_log(),
-               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d",
-               _inputConnection, _isConnected, _isAWDL);
-        if (!_isConnected) {
-            os_log(wireless_log(), "Existing input connection appears stale -- replacing with new candidate");
+               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d idle=%.2fs age=%.2fs shouldReplace=%{public}d",
+               _inputConnection, _isConnected, _isAWDL,
+               (double)idleNs / 1000000000.0, (double)ageNs / 1000000000.0, shouldReplace);
+        if (shouldReplace) {
+            const char *reason = !_isConnected ? "not-connected" : (staleByIdle ? "idle-timeout" : "no-input-timeout");
+            os_log(wireless_log(), "Replacing stale wireless input connection (%{public}s)", reason);
             nw_connection_cancel(_inputConnection);
             _inputConnection = nil;
+            _inputReadyAtTicks = 0;
+            _lastInputActivityTicks = 0;
         } else {
             os_log(wireless_log(), "Ignoring duplicate wireless candidate while an existing session is active");
             nw_connection_cancel(connection);
@@ -518,6 +546,8 @@ static const char *kInputPortStr = "14568";
 
             self2.isAWDL = detectedAWDL;
             self2.isConnected = YES;
+            self2->_inputReadyAtTicks = mach_absolute_time();
+            self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
 
             if (self2.onConnectionChanged) {
@@ -537,6 +567,8 @@ static const char *kInputPortStr = "14568";
             if (self2.inputConnection == connection) {
                 self2.inputConnection = nil;
                 self2.isConnected = NO;
+                self2->_inputReadyAtTicks = 0;
+                self2->_lastInputActivityTicks = 0;
                 if (self2.onConnectionChanged) {
                     self2.onConnectionChanged(NO, self2.isAWDL);
                 }
@@ -624,6 +656,15 @@ static const char *kInputPortStr = "14568";
             } else if (cState == nw_connection_state_failed) {
                 os_log_error(wireless_log(), "DTLS wireless media connection failed: %{public}@",
                              cError ?: (nw_error_t)@"unknown");
+                WirelessTransport *self3 = weakSelf;
+                if (self3 && self3->_mediaConnection == conn) {
+                    self3->_mediaConnection = nil;
+                }
+            } else if (cState == nw_connection_state_cancelled) {
+                WirelessTransport *self3 = weakSelf;
+                if (self3 && self3->_mediaConnection == conn) {
+                    self3->_mediaConnection = nil;
+                }
             }
         });
         nw_connection_start(conn);
@@ -670,6 +711,7 @@ static const char *kInputPortStr = "14568";
         if (!self2) return;
 
         if (content && dispatch_data_get_size(content) > 0) {
+            self2->_lastInputActivityTicks = mach_absolute_time();
             dispatch_data_apply(content, ^bool(dispatch_data_t _Nonnull region,
                                                 size_t offset,
                                                 const void *_Nonnull buffer,
@@ -702,6 +744,8 @@ static const char *kInputPortStr = "14568";
         nw_connection_cancel(_inputConnection);
         _inputConnection = nil;
     }
+    _inputReadyAtTicks = 0;
+    _lastInputActivityTicks = 0;
     _isConnected = NO;
     _isAWDL = NO;
 }

@@ -58,7 +58,10 @@ static const int kWirelessHEVCFPS = 60;
 static const int kWirelessHEVCBitrate = 4000000; /* 4 Mbps */
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
-static const BOOL kWirelessUseTCPMedia = NO;
+/* Keep wireless media on the established TLS/TCP stream. This removes the
+ * paced-DTLS chunk backlog that was inflating tail latency/jitter on Wi-Fi
+ * and keeps reconnect/rotation behavior aligned to a single transport socket. */
+static const BOOL kWirelessUseTCPMedia = YES;
 static const NSUInteger kWirelessLargeFrameChunkThreshold = 320;
 static const NSUInteger kWirelessMaxQueuedChunks = 384;
 static const NSUInteger kWirelessMildCongestionChunkThreshold = 128;

@@ -33,7 +33,7 @@ final class MetalRenderer: NSObject {
         let hasPendingFrame: Bool
     }
 
-    private static let maxPendingFrames = 3
+    private static let maxPendingFrames = 2
 
     // MARK: - Properties
 
