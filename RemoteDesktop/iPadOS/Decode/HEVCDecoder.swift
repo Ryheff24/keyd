@@ -228,32 +228,33 @@ final class HEVCDecoder {
     /// Scans encoded data for VPS (type 32), SPS (type 33), PPS (type 34)
     /// NAL units using 4-byte Annex-B start codes (00 00 00 01).
     private func createFormatDescription(from data: Data, payloadOffset: Int, payloadLength: Int) -> CMVideoFormatDescription? {
-        let payloadRange = payloadOffset..<(payloadOffset + payloadLength)
-        let payloadData = data.subdata(in: payloadRange)
-
         // Find NAL units with Annex-B start codes
-        let nalUnits = extractNALUnits(from: payloadData)
+        let nalRanges = extractNALRanges(from: data, payloadOffset: payloadOffset, payloadLength: payloadLength)
 
         var vps: Data?
         var sps: Data?
         var pps: Data?
 
-        for nal in nalUnits {
-            guard nal.count > 2 else { continue }
-            // HEVC NAL unit type is in bits 1-6 of the first byte
-            let nalType = (nal[0] >> 1) & 0x3F
-            switch nalType {
-            case 32: vps = nal  // VPS
-            case 33: sps = nal  // SPS
-            case 34: pps = nal  // PPS
-            default: break
+        data.withUnsafeBytes { buffer in
+            guard let bytes = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for range in nalRanges where range.count > 2 {
+                // HEVC NAL unit type is in bits 1-6 of the first byte
+                let nalType = (bytes[range.lowerBound] >> 1) & 0x3F
+                switch nalType {
+                case 32: vps = Data(data[range])  // VPS
+                case 33: sps = Data(data[range])  // SPS
+                case 34: pps = Data(data[range])  // PPS
+                default: break
+                }
             }
         }
 
         guard let vpsData = vps, let spsData = sps, let ppsData = pps else {
             // Not all parameter sets found -- this may be a non-keyframe or
             // the data uses length-prefix format rather than start codes
-            return createFormatDescriptionFromLengthPrefixed(payloadData)
+            return createFormatDescriptionFromLengthPrefixed(data,
+                                                             payloadOffset: payloadOffset,
+                                                             payloadLength: payloadLength)
         }
 
         // Build parameter set pointers for CMVideoFormatDescriptionCreateFromHEVCParameterSets
@@ -331,17 +332,20 @@ final class HEVCDecoder {
         }
     }
 
-    /// Extract NAL units from Annex-B formatted data (00 00 00 01 prefix).
-    private func extractNALUnits(from data: Data) -> [Data] {
-        var nalUnits: [Data] = []
-        var searchOffset = 0
-        let count = data.count
+    /// Extract NAL ranges from Annex-B formatted payload data (00 00 00 01 prefix).
+    /// Returned ranges are absolute indices into `data`.
+    private func extractNALRanges(from data: Data,
+                                  payloadOffset: Int,
+                                  payloadLength: Int) -> [Range<Int>] {
+        var nalRanges: [Range<Int>] = []
+        var searchOffset = payloadOffset
+        let payloadEnd = payloadOffset + payloadLength
         var startCodePositions: [Int] = []
 
         // Find all start code positions
         data.withUnsafeBytes { buffer in
             guard let bytes = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            while searchOffset < count - 3 {
+            while searchOffset + 3 < payloadEnd {
                 if bytes[searchOffset] == 0x00 &&
                    bytes[searchOffset + 1] == 0x00 &&
                    bytes[searchOffset + 2] == 0x00 &&
@@ -357,36 +361,40 @@ final class HEVCDecoder {
         // Extract NAL unit data between start codes
         for i in 0..<startCodePositions.count {
             let nalStart = startCodePositions[i] + 4
-            let nalEnd = (i + 1 < startCodePositions.count) ? startCodePositions[i + 1] : count
+            let nalEnd = (i + 1 < startCodePositions.count) ? startCodePositions[i + 1] : payloadEnd
             if nalStart < nalEnd {
-                nalUnits.append(data.subdata(in: nalStart..<nalEnd))
+                nalRanges.append(nalStart..<nalEnd)
             }
         }
 
-        return nalUnits
+        return nalRanges
     }
 
     /// Attempt to create format description from length-prefixed NAL units.
     /// VideoToolbox output uses 4-byte length prefix format.
-    private func createFormatDescriptionFromLengthPrefixed(_ data: Data) -> CMVideoFormatDescription? {
+    private func createFormatDescriptionFromLengthPrefixed(_ data: Data,
+                                                           payloadOffset: Int,
+                                                           payloadLength: Int) -> CMVideoFormatDescription? {
         var vps: Data?
         var sps: Data?
         var pps: Data?
-        var offset = 0
-        let count = data.count
+        var offset = payloadOffset
+        let payloadEnd = payloadOffset + payloadLength
 
         data.withUnsafeBytes { buffer in
             guard let bytes = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            while offset + 4 < count {
+            while offset + 4 <= payloadEnd {
                 let nalLength = Int(bytes[offset]) << 24 |
                                 Int(bytes[offset + 1]) << 16 |
                                 Int(bytes[offset + 2]) << 8 |
                                 Int(bytes[offset + 3])
                 offset += 4
-                guard nalLength > 0, offset + nalLength <= count else { break }
+                guard nalLength > 0, offset + nalLength <= payloadEnd else { break }
 
                 let nalType = (bytes[offset] >> 1) & 0x3F
-                let nalData = Data(bytes: bytes + offset, count: nalLength)
+                let nalStart = offset
+                let nalEnd = offset + nalLength
+                let nalData = Data(data[nalStart..<nalEnd])
                 switch nalType {
                 case 32: vps = nalData
                 case 33: sps = nalData

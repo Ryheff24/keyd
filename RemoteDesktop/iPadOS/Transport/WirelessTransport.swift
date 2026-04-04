@@ -442,11 +442,20 @@ final class WirelessTransport {
                 print("[CONSOLE] WirelessTransport: TLS TCP connection FAILED: \(error)")
                 self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
-                print("[CONSOLE] WirelessTransport: clearing connectedServiceName after failure (\(self.connectedServiceName ?? "nil"))")
-                self.connectedServiceName = nil
-                self.isConnected = false
-                self.onConnectionChanged?(false, self.isAWDL)
-                self.scheduleBrowserRestart(reason: "tcp-failed")
+                let hasMediaPath = (self.mediaConnection != nil)
+                if hasMediaPath {
+                    print("[CONSOLE] WirelessTransport: TCP FAILED but media path still active -- preserving session (isConnected=\(self.isConnected), connectedServiceName=\(self.connectedServiceName ?? "nil"))")
+                    self.log.info("TCP failed while media path active; preserving session state")
+                    self.isConnected = true
+                } else {
+                    let wasAWDL = self.isAWDL
+                    print("[CONSOLE] WirelessTransport: clearing connectedServiceName after failure (\(self.connectedServiceName ?? "nil"))")
+                    self.connectedServiceName = nil
+                    self.isConnected = false
+                    print("[CONSOLE] WirelessTransport: TCP FAILED teardown branch isConnected=\(self.isConnected), mediaActive=\(hasMediaPath), wasAWDL=\(wasAWDL)")
+                    self.onConnectionChanged?(false, wasAWDL)
+                    self.scheduleBrowserRestart(reason: "tcp-failed")
+                }
 
             case .cancelled:
                 guard isActiveConnection else {
@@ -459,12 +468,20 @@ final class WirelessTransport {
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED, clearing service latch (\(self.connectedServiceName ?? "nil"))")
                 self.inputConnection = nil
                 self.connectedServiceName = nil
-                if self.mediaConnection == nil {
+                let hasMediaPath = (self.mediaConnection != nil)
+                if !hasMediaPath {
+                    let wasAWDL = self.isAWDL
                     self.isConnected = false
+                    print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED teardown branch isConnected=\(self.isConnected) mediaConnectionActive=\(hasMediaPath) wasAWDL=\(wasAWDL)")
+                    self.onConnectionChanged?(false, wasAWDL)
+                    self.scheduleBrowserRestart(reason: "tcp-cancelled")
+                } else {
+                    self.isConnected = true
+                    print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED but media path remains active -- preserving session (isConnected=\(self.isConnected), mediaConnectionActive=\(hasMediaPath))")
+                    self.log.info("TCP cancelled while media path active; preserving session state")
                 }
-                print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED exit isConnected=\(self.isConnected) mediaConnectionActive=\(self.mediaConnection != nil)")
+                print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED exit isConnected=\(self.isConnected) mediaConnectionActive=\(hasMediaPath)")
                 self.log.info("TLS wireless TCP connection cancelled")
-                self.scheduleBrowserRestart(reason: "tcp-cancelled")
 
             default:
                 break

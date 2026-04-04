@@ -780,7 +780,10 @@ final class USBNetworkTransport {
 
             let msgStart = tcpBufferReadOffset + 4
             let msgEnd = msgStart + msgLen
-            let message = tcpBuffer.subdata(in: msgStart..<msgEnd)
+            // Avoid per-message payload copies on the USB TCP hot path.
+            // Data slicing preserves shared storage until mutation (CoW),
+            // which is sufficient because onInputReceived consumes synchronously.
+            let message = tcpBuffer[msgStart..<msgEnd]
             tcpBufferReadOffset = msgEnd
             deliveredThisDrain += 1
             tcpMessagesDelivered += 1

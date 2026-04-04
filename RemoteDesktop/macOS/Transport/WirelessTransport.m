@@ -44,6 +44,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     uint64_t _inputReadyAtTicks;          // when the current input connection reached ready
     uint64_t _lastInputActivityTicks;     // last time bytes were received on input connection
     BOOL _allowReconnectTakeover;         // allow replacing lingering input socket after disconnect
+    BOOL _advertisingRequested;           // true while caller expects Bonjour advertising to stay active
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
 }
@@ -251,10 +252,11 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
 #pragma mark - Public API
 
 - (void)startAdvertising {
+    _advertisingRequested = YES;
     if (_bonjourListener) {
         os_log(wireless_log(),
-               "startAdvertising: listener already active (isConnected=%{public}d isAWDL=%{public}d inputConnection=%{public}p)",
-               _isConnected, _isAWDL, _inputConnection);
+               "startAdvertising: listener already active (isConnected=%{public}d isAWDL=%{public}d inputConnection=%{public}p advertisingRequested=%{public}d)",
+               _isConnected, _isAWDL, _inputConnection, _advertisingRequested);
         return;
     }
 
@@ -309,31 +311,50 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
                          isActiveListener, self2->_isConnected, self2->_inputConnection);
             if (isActiveListener) {
                 self2->_bonjourListener = nil;
-                if (!self2->_isConnected) {
+                if (self2->_advertisingRequested && !self2->_isConnected) {
                     os_log(wireless_log(),
                            "Bonjour listener failure recovery: restarting advertising for reconnect discovery");
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                                    self2->_transportQueue, ^{
-                        if (!self2->_bonjourListener && !self2->_isConnected) {
+                        if (self2->_advertisingRequested && !self2->_bonjourListener && !self2->_isConnected) {
                             [self2 startAdvertising];
                         } else {
                             os_log(wireless_log(),
-                                   "Bonjour listener restart skipped (listener=%{public}p isConnected=%{public}d)",
-                                   self2->_bonjourListener, self2->_isConnected);
+                                   "Bonjour listener restart skipped (listener=%{public}p isConnected=%{public}d advertisingRequested=%{public}d)",
+                                   self2->_bonjourListener, self2->_isConnected, self2->_advertisingRequested);
                         }
                     });
                 } else {
                     os_log(wireless_log(),
-                           "Bonjour listener failure while connected; restart deferred until disconnect");
+                           "Bonjour listener failure recovery skipped (advertisingRequested=%{public}d isConnected=%{public}d)",
+                           self2->_advertisingRequested, self2->_isConnected);
                 }
             }
             break;
         case nw_listener_state_cancelled:
             os_log(wireless_log(),
-                   "TLS Bonjour listener cancelled (active=%{public}d isConnected=%{public}d inputConnection=%{public}p)",
-                   isActiveListener, self2->_isConnected, self2->_inputConnection);
+                   "TLS Bonjour listener cancelled (active=%{public}d isConnected=%{public}d inputConnection=%{public}p advertisingRequested=%{public}d)",
+                   isActiveListener, self2->_isConnected, self2->_inputConnection, self2->_advertisingRequested);
             if (isActiveListener) {
                 self2->_bonjourListener = nil;
+                if (self2->_advertisingRequested && !self2->_isConnected && !self2->_inputConnection) {
+                    os_log(wireless_log(),
+                           "Bonjour listener cancelled unexpectedly while idle; restarting advertising for reconnect discovery");
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                                   self2->_transportQueue, ^{
+                        if (self2->_advertisingRequested && !self2->_bonjourListener && !self2->_isConnected && !self2->_inputConnection) {
+                            [self2 startAdvertising];
+                        } else {
+                            os_log(wireless_log(),
+                                   "Cancelled-listener restart skipped (listener=%{public}p isConnected=%{public}d inputConnection=%{public}p advertisingRequested=%{public}d)",
+                                   self2->_bonjourListener, self2->_isConnected, self2->_inputConnection, self2->_advertisingRequested);
+                        }
+                    });
+                } else {
+                    os_log(wireless_log(),
+                           "Bonjour listener cancel treated as expected (isConnected=%{public}d inputConnection=%{public}p advertisingRequested=%{public}d)",
+                           self2->_isConnected, self2->_inputConnection, self2->_advertisingRequested);
+                }
             }
             break;
         default:
@@ -359,6 +380,10 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
 }
 
 - (void)stopAdvertising {
+    _advertisingRequested = NO;
+    os_log(wireless_log(),
+           "stopAdvertising: advertisingRequested=0 (listener=%{public}p isConnected=%{public}d inputConnection=%{public}p)",
+           _bonjourListener, _isConnected, _inputConnection);
     if (_bonjourListener) {
         nw_listener_cancel(_bonjourListener);
         _bonjourListener = nil;
