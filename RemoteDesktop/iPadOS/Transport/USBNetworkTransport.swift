@@ -59,14 +59,18 @@ final class USBNetworkTransport {
     private var tcpCompactLogCount = 0
     private var tcpHoldLogCount = 0
     private var tcpDrainDeliveredLogCount = 0
+    private var tcpBufferReservedCapacity = 0
+    private var tcpBufferGrowthLogCount = 0
     private static let tcpRecvAppendLogInterval = 64
     private static let tcpPartialLogInterval = 16
     private static let tcpCompactLogInterval = 16
     private static let tcpHoldLogInterval = 8
     private static let tcpDrainDeliveredLogInterval = 64
+    private static let tcpBufferGrowthLogInterval = 16
     private static let tcpCompactionMinConsumedBytes = 8 << 20
     private static let tcpReceiveMaxLength = 1 << 20
     private static let tcpMaxFrameLength = 4_000_000
+    private static let tcpReserveBaseCapacity = 1 << 20
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
@@ -730,7 +734,7 @@ final class USBNetworkTransport {
 
             if let data = content, !data.isEmpty {
                 let beforeCount = self.tcpBuffer.count
-                self.tcpBuffer.reserveCapacity(beforeCount + data.count + (256 << 10))
+                self.reserveTCPBufferIfNeeded(incomingBytes: data.count, currentCount: beforeCount)
                 self.tcpBuffer.append(data)
                 let afterCount = self.tcpBuffer.count
                 if beforeCount == 0 || afterCount >= (2 << 20) || afterCount % (1 << 20) < data.count {
@@ -761,6 +765,26 @@ final class USBNetworkTransport {
         }
     }
 
+    /// Reserve receive buffer capacity with geometric growth to avoid frequent O(n)
+    /// realloc+copy churn on sustained USB TCP media ingress.
+    private func reserveTCPBufferIfNeeded(incomingBytes: Int, currentCount: Int) {
+        let required = currentCount + incomingBytes
+        guard required > tcpBufferReservedCapacity else { return }
+
+        let previousReserved = tcpBufferReservedCapacity
+        let doubled = max(Self.tcpReserveBaseCapacity, previousReserved << 1)
+        let target = max(required + (256 << 10), doubled)
+        tcpBuffer.reserveCapacity(target)
+        tcpBufferReservedCapacity = target
+
+        tcpBufferGrowthLogCount += 1
+        if tcpBufferGrowthLogCount <= 6 ||
+            tcpBufferGrowthLogCount % Self.tcpBufferGrowthLogInterval == 0 {
+            print("[CONSOLE] USBTransport: tcp-buffer-grow required=\(required)B reserved=\(target)B prevReserved=\(previousReserved)B sample=\(tcpBufferGrowthLogCount)")
+            log.info("USB TCP buffer grow required=\(required, privacy: .public)B reserved=\(target, privacy: .public)B prevReserved=\(previousReserved, privacy: .public)B sample=\(self.tcpBufferGrowthLogCount, privacy: .public)")
+        }
+    }
+
     /// Extract complete length-prefixed messages from the USB TCP reassembly buffer.
     private func drainUSBTCPBuffer() {
         tcpDrainInvocationCount += 1
@@ -782,6 +806,7 @@ final class USBNetworkTransport {
                 self.log.error("USB TCP drain invalid-length msgLen=\(msgLen, privacy: .public) max=\(Self.tcpMaxFrameLength, privacy: .public)B clearing buffer=\(self.tcpBuffer.count, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public)")
                 tcpBuffer.removeAll()
                 tcpBufferReadOffset = 0
+                tcpBufferReservedCapacity = 0
                 return
             }
 
@@ -865,6 +890,7 @@ final class USBNetworkTransport {
         transportQueue.async { [weak self] in
             self?.tcpBuffer.removeAll()
             self?.tcpBufferReadOffset = 0
+            self?.tcpBufferReservedCapacity = 0
         }
     }
 

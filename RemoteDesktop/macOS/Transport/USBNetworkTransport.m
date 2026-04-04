@@ -31,6 +31,74 @@ static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
 static const NSUInteger kUSBMediaSendSuccessLogInterval = 240;
 static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
 
+static BOOL buildUSBChunkedTCPBatch(const void *payload,
+                                    size_t payloadLen,
+                                    uint16_t seq,
+                                    size_t tcpChunkMTU,
+                                    const MediaFrameHeader *headerTemplate,
+                                    BOOL sampledEntryLog,
+                                    uint8_t **outBuffer,
+                                    size_t *outLength,
+                                    NSUInteger *outChunkCount,
+                                    size_t *outEstimatedBytes) {
+    if (!payload || !headerTemplate || !outBuffer || !outLength || !outChunkCount || !outEstimatedBytes) {
+        return NO;
+    }
+
+    const size_t maxChunkPayload = tcpChunkMTU > sizeof(MediaFrameHeader)
+        ? (tcpChunkMTU - sizeof(MediaFrameHeader))
+        : 1;
+    const size_t estimatedChunkCount = payloadLen == 0
+        ? 1
+        : ((payloadLen + maxChunkPayload - 1) / maxChunkPayload);
+    const size_t estimatedFramedBytes =
+        payloadLen + (estimatedChunkCount * (sizeof(MediaFrameHeader) + sizeof(uint32_t)));
+    if (estimatedFramedBytes == 0) {
+        return NO;
+    }
+
+    uint8_t *buffer = malloc(estimatedFramedBytes);
+    if (!buffer) {
+        return NO;
+    }
+
+    __block size_t writeOffset = 0;
+    __block NSUInteger chunkCount = 0;
+    __block BOOL overflow = NO;
+    chunk_frame(payload, payloadLen, seq, tcpChunkMTU, headerTemplate, ^(const void *chunk, size_t chunkLen) {
+        if (overflow) return;
+        size_t framedChunkLen = sizeof(uint32_t) + chunkLen;
+        if (writeOffset + framedChunkLen > estimatedFramedBytes) {
+            overflow = YES;
+            return;
+        }
+
+        uint32_t netLen = htonl((uint32_t)chunkLen);
+        memcpy(buffer + writeOffset, &netLen, sizeof(uint32_t));
+        writeOffset += sizeof(uint32_t);
+        memcpy(buffer + writeOffset, chunk, chunkLen);
+        writeOffset += chunkLen;
+        chunkCount += 1;
+
+        if (sampledEntryLog && (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0)) {
+            os_log(transport_log(),
+                   "USB media chunk batch append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
+                   seq, (unsigned long)chunkCount, chunkLen, writeOffset);
+        }
+    });
+
+    if (overflow || chunkCount == 0 || writeOffset == 0) {
+        free(buffer);
+        return NO;
+    }
+
+    *outBuffer = buffer;
+    *outLength = writeOffset;
+    *outChunkCount = chunkCount;
+    *outEstimatedBytes = estimatedFramedBytes;
+    return YES;
+}
+
 @interface USBNetworkTransport ()
 @property (nonatomic) dispatch_queue_t monitorQueue;
 @property (nonatomic) dispatch_queue_t transportQueue;
@@ -574,35 +642,21 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
         const void *payload = (const uint8_t *)data + sizeof(MediaFrameHeader);
         const size_t tcpChunkMTU = kUSBMediaTCPChunkMTU;
 
-        size_t maxChunkPayload = tcpChunkMTU > sizeof(MediaFrameHeader) ? (tcpChunkMTU - sizeof(MediaFrameHeader)) : 1;
-        size_t estimatedChunkCount = payloadLen == 0 ? 1 : ((payloadLen + maxChunkPayload - 1) / maxChunkPayload);
-        size_t estimatedFramedBytes = payloadLen + (estimatedChunkCount * (sizeof(MediaFrameHeader) + sizeof(uint32_t)));
-        NSMutableData *framedBatchData = [NSMutableData dataWithCapacity:estimatedFramedBytes];
-        if (!framedBatchData) {
-            os_log_error(transport_log(), "USB media chunk batch allocation failed: seq=%u estimate=%zu",
-                         frameSeq, estimatedFramedBytes);
+        uint8_t *framedBatchCopy = NULL;
+        size_t framedBatchLen = 0;
+        NSUInteger chunkCount = 0;
+        size_t estimatedFramedBytes = 0;
+        uint64_t chunkBuildStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
+        if (!buildUSBChunkedTCPBatch(payload, payloadLen, originalHeader->seq, tcpChunkMTU,
+                                     originalHeader, sampledEntryLog,
+                                     &framedBatchCopy, &framedBatchLen, &chunkCount, &estimatedFramedBytes)) {
+            os_log_error(transport_log(), "USB media chunk batch build failed: seq=%u payload=%zu estimate=%zu",
+                         frameSeq, payloadLen, estimatedFramedBytes);
             if (completion) completion(NO);
             return;
         }
 
-        __block NSUInteger chunkCount = 0;
-        __block size_t framedBytes = 0;
-        uint64_t chunkBuildStartNs = dispatch_time(DISPATCH_TIME_NOW, 0);
-        chunk_frame(payload, payloadLen, originalHeader->seq, tcpChunkMTU,
-                    originalHeader, ^(const void *chunk, size_t chunkLen) {
-            uint32_t netLen = htonl((uint32_t)chunkLen);
-            [framedBatchData appendBytes:&netLen length:sizeof(uint32_t)];
-            [framedBatchData appendBytes:chunk length:chunkLen];
-            chunkCount += 1;
-            framedBytes += sizeof(uint32_t) + chunkLen;
-            if (sampledEntryLog && (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0)) {
-                os_log(transport_log(),
-                       "USB media chunk batch append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
-                       frameSeq, (unsigned long)chunkCount, chunkLen, framedBytes);
-            }
-        });
-
-        if (chunkCount > 0 && framedBatchData.length > 0) {
+        if (chunkCount > 0 && framedBatchLen > 0) {
             os_log(transport_log(),
                    "USB media chunking enabled: seq=%u mtu=%zu chunks=%lu hevc=%{public}s payload=%zu",
                    frameSeq, tcpChunkMTU, (unsigned long)chunkCount,
@@ -610,14 +664,12 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
             uint64_t buildElapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - chunkBuildStartNs) / NSEC_PER_MSEC;
             os_log(transport_log(),
                    "USB media chunk batch ready: seq=%u chunks=%lu framedBytes=%zu buildElapsed=%llums estimate=%zu",
-                   frameSeq, (unsigned long)chunkCount, framedBytes, buildElapsedMs, estimatedFramedBytes);
+                   frameSeq, (unsigned long)chunkCount, framedBatchLen, buildElapsedMs, estimatedFramedBytes);
 
-            NSData *batchRetained = framedBatchData;
-            dispatch_data_t framedBatch = dispatch_data_create(batchRetained.bytes, batchRetained.length,
-                                                               _transportQueue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+            dispatch_data_t framedBatch = dispatch_data_create(framedBatchCopy, framedBatchLen,
+                                                               _transportQueue, DISPATCH_DATA_DESTRUCTOR_FREE);
             nw_connection_send(conn, framedBatch, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                                true, ^(nw_error_t _Nullable error) {
-                (void)batchRetained;
                 uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
                 if (completion) completion(error == nil);
                 if (error) {
@@ -633,11 +685,12 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
                     elapsedMs >= kUSBMediaSendSlowThresholdMs) {
                     os_log(transport_log(),
                            "USB media chunk batch send success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums sample=%llu",
-                           frameSeq, (unsigned long)chunkCount, framedBytes, elapsedMs, usbChunkBatchSendSuccessCount);
+                           frameSeq, (unsigned long)chunkCount, framedBatchLen, elapsedMs, usbChunkBatchSendSuccessCount);
                 }
             });
             return;
         }
+        free(framedBatchCopy);
         os_log_error(transport_log(), "USB media chunk batch empty: seq=%u payload=%zu", frameSeq, payloadLen);
     }
     if (hasFrameSeq) {
@@ -737,51 +790,37 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
 
     if (shouldChunkHEVC) {
         const size_t tcpChunkMTU = kUSBMediaTCPChunkMTU;
-        size_t maxChunkPayload = tcpChunkMTU > sizeof(MediaFrameHeader) ? (tcpChunkMTU - sizeof(MediaFrameHeader)) : 1;
-        size_t estimatedChunkCount = payloadLen == 0 ? 1 : ((payloadLen + maxChunkPayload - 1) / maxChunkPayload);
-        size_t estimatedFramedBytes = payloadLen + (estimatedChunkCount * (sizeof(MediaFrameHeader) + sizeof(uint32_t)));
-        NSMutableData *framedBatchData = [NSMutableData dataWithCapacity:estimatedFramedBytes];
-        if (!framedBatchData) {
-            os_log_error(transport_log(), "USB media split-send chunk allocation failed: seq=%u estimate=%zu",
-                         seqForLogs, estimatedFramedBytes);
+        uint8_t *framedBatchCopy = NULL;
+        size_t framedBatchLen = 0;
+        NSUInteger chunkCount = 0;
+        size_t estimatedFramedBytes = 0;
+        if (!buildUSBChunkedTCPBatch(payload, payloadLen, seqForLogs, tcpChunkMTU,
+                                     header, sampledSplitEntryLog,
+                                     &framedBatchCopy, &framedBatchLen, &chunkCount, &estimatedFramedBytes)) {
+            os_log_error(transport_log(), "USB media split-send chunk build failed: seq=%u payload=%zu estimate=%zu",
+                         seqForLogs, payloadLen, estimatedFramedBytes);
             if (completion) completion(NO);
             return;
         }
 
-        __block NSUInteger chunkCount = 0;
-        __block size_t framedBytes = 0;
-        chunk_frame(payload, payloadLen, seqForLogs, tcpChunkMTU, header, ^(const void *chunk, size_t chunkLen) {
-            uint32_t netLen = htonl((uint32_t)chunkLen);
-            [framedBatchData appendBytes:&netLen length:sizeof(uint32_t)];
-            [framedBatchData appendBytes:chunk length:chunkLen];
-            chunkCount += 1;
-            framedBytes += sizeof(uint32_t) + chunkLen;
-            if (sampledSplitEntryLog && (chunkCount == 1 || chunkCount % kUSBMediaChunkAppendLogInterval == 0)) {
-                os_log(transport_log(),
-                       "USB media split-send chunk append: seq=%u chunk=%lu bytes=%zu framedBytes=%zu",
-                        seqForLogs, (unsigned long)chunkCount, chunkLen, framedBytes);
-            }
-        });
-
-        if (chunkCount == 0 || framedBatchData.length == 0) {
+        if (chunkCount == 0 || framedBatchLen == 0) {
             os_log_error(transport_log(), "USB media split-send chunk batch empty: seq=%u payload=%zu",
                          seqForLogs, payloadLen);
+            free(framedBatchCopy);
             if (completion) completion(NO);
             return;
         }
 
-        NSData *batchRetained = framedBatchData;
-        dispatch_data_t framedBatch = dispatch_data_create(batchRetained.bytes, batchRetained.length,
-                                                           _transportQueue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+        dispatch_data_t framedBatch = dispatch_data_create(framedBatchCopy, framedBatchLen,
+                                                           _transportQueue, DISPATCH_DATA_DESTRUCTOR_FREE);
         nw_connection_send(conn, framedBatch, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,
                            true, ^(nw_error_t _Nullable error) {
-            (void)batchRetained;
             uint64_t elapsedMs = (dispatch_time(DISPATCH_TIME_NOW, 0) - sendStartNs) / NSEC_PER_MSEC;
             if (completion) completion(error == nil);
             if (error) {
                 os_log_error(transport_log(),
-                             "USB media split-send chunk error: %{public}@ (seq=%u chunks=%lu framedBytes=%zu elapsed=%llums)",
-                             error, seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs);
+                              "USB media split-send chunk error: %{public}@ (seq=%u chunks=%lu framedBytes=%zu elapsed=%llums)",
+                             error, seqForLogs, (unsigned long)chunkCount, framedBatchLen, elapsedMs);
                 return;
             }
             static uint64_t usbSplitChunkSendSuccessCount = 0;
@@ -791,7 +830,7 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
                 elapsedMs >= kUSBMediaSendSlowThresholdMs) {
                 os_log(transport_log(),
                        "USB media split-send chunk success: seq=%u chunks=%lu framedBytes=%zu elapsed=%llums sample=%llu",
-                       seqForLogs, (unsigned long)chunkCount, framedBytes, elapsedMs, usbSplitChunkSendSuccessCount);
+                       seqForLogs, (unsigned long)chunkCount, framedBatchLen, elapsedMs, usbSplitChunkSendSuccessCount);
             }
         });
         return;

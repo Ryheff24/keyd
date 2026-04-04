@@ -43,10 +43,10 @@ final class MetalRenderer: NSObject {
 
     private static let maxPendingFrames = 4
     private static let hardDepthCatchupPendingThreshold = 5 // effectively disable depth-only hard catchup; require sustained delay
-    private static let softCatchupQueueDelayThresholdMs = 32.0
-    private static let hardCatchupQueueDelayThresholdMs = 58.0
+    private static let softCatchupQueueDelayThresholdMs = 40.0
+    private static let hardCatchupQueueDelayThresholdMs = 68.0
     private static let softCatchupMinPendingDepth = 3
-    private static let softCatchupDelayStreakThreshold = 3
+    private static let softCatchupDelayStreakThreshold = 4
     private static let hardCatchupDelayStreakThreshold = 2
 
     // MARK: - Properties

@@ -54,25 +54,25 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
-static const int kWirelessHEVCFPS = 55;
+static const int kWirelessHEVCFPS = 60;
 static const int kWirelessHEVCBitrate = 3500000; /* 3.5 Mbps stability-first baseline */
 static const int kWirelessAdaptiveMinFPS = 30;
-static const int kWirelessAdaptiveMidFPS = 45;
-static const int kWirelessAdaptiveMaxFPS = 55;
+static const int kWirelessAdaptiveMidFPS = 52;
+static const int kWirelessAdaptiveMaxFPS = 60;
 static const int kWirelessAdaptiveMinBitrate = 2500000; /* 2.5 Mbps floor */
-static const int kWirelessAdaptiveMaxBitrate = 5000000; /* cap burst amplitude to reduce oscillation */
-static const int kWirelessAdaptiveBitrateStepDown = 500000;
-static const int kWirelessAdaptiveBitrateStepUp = 75000;
-static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 900;
-static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 5200;
+static const int kWirelessAdaptiveMaxBitrate = 5500000; /* add headroom without bursty overshoot */
+static const int kWirelessAdaptiveBitrateStepDown = 350000;
+static const int kWirelessAdaptiveBitrateStepUp = 100000;
+static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 1200;
+static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 4200;
 static const int kWirelessAdaptiveFPSStepUp = 2;
-static const int kWirelessAdaptiveFPSStepDownSevereSoft = 8;
-static const int kWirelessAdaptiveUpshiftHealthyStreak = 8;
-static const int kWirelessAdaptiveMildCongestionStreak = 4;
-static const int kWirelessAdaptiveSevereEscalationStreak = 2;
+static const int kWirelessAdaptiveFPSStepDownSevereSoft = 6;
+static const int kWirelessAdaptiveUpshiftHealthyStreak = 6;
+static const int kWirelessAdaptiveMildCongestionStreak = 5;
+static const int kWirelessAdaptiveSevereEscalationStreak = 3;
 static const int kWirelessAdaptiveMaxUpshiftFPSDelta = 2;
-static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 75000;
-static const int kWirelessAdaptiveMaxDownshiftFPSDelta = 10;
+static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 100000;
+static const int kWirelessAdaptiveMaxDownshiftFPSDelta = 6;
 static const int kWirelessAdaptiveMaxDownshiftBitrateDelta = 600000;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
@@ -105,10 +105,10 @@ static const uint64_t kWirelessTCPPostRecoveryAdaptiveHoldMs = 2600;
 static const uint64_t kWirelessTCPStallLogIntervalMs = 500;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
-static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 90;
-static const uint64_t kWirelessPreEncodeStaleDropCongestedMs = 65;
-static const uint64_t kWirelessPreEncodeStaleDropSevereMs = 48;
-static const uint64_t kWirelessPreEncodeStaleDropAbsoluteMs = 220;
+static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 110;
+static const uint64_t kWirelessPreEncodeStaleDropCongestedMs = 80;
+static const uint64_t kWirelessPreEncodeStaleDropSevereMs = 60;
+static const uint64_t kWirelessPreEncodeStaleDropAbsoluteMs = 250;
 /* Require a clean stale-free window before any recovery upshift. */
 static const uint64_t kWirelessAdaptivePostStaleUpshiftHoldMs = 3200;
 
@@ -1635,6 +1635,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     uint64_t lastStaleDropUs = _wifiAdaptiveLastStaleDropUs;
     uint64_t sinceStaleDropMs = (lastStaleDropUs > 0 && nowUs > lastStaleDropUs)
     ? (nowUs - lastStaleDropUs) / 1000 : UINT64_MAX;
+    int32_t prevFPS = _wifiAdaptiveTargetFPS;
+    int32_t prevBitrate = _wifiAdaptiveTargetBitrate;
+    int32_t targetFPS = prevFPS;
+    int32_t targetBitrate = prevBitrate;
+    NSString *reason = @"hold-stable";
 
     BOOL severeCongestion = (tcpSendDrops > 0) ||
                             (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi + 1) ||
@@ -1659,30 +1664,33 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     BOOL postStallHold = (sinceStallRecoveryMs != UINT64_MAX &&
                           sinceStallRecoveryMs < kWirelessTCPPostRecoveryAdaptiveHoldMs);
     BOOL postStaleHold = (sinceStaleDropMs != UINT64_MAX &&
-                          sinceStaleDropMs < kWirelessAdaptivePostStaleUpshiftHoldMs);
+                           sinceStaleDropMs < kWirelessAdaptivePostStaleUpshiftHoldMs);
+    BOOL bitrateOvershootRisk = !severeCongestion &&
+                                !tailRiskCongestion &&
+                                !mildCongestion &&
+                                (prevBitrate >= 4400000) &&
+                                ((tcpSlowCompletions >= 1) ||
+                                 (tcpMaxCompletionMs >= 22) ||
+                                 (staleMaxAgeMs >= 70));
 
     static int wifiAdaptiveEvalCount = 0;
     wifiAdaptiveEvalCount++;
     if (wifiAdaptiveEvalCount <= 10 || wifiAdaptiveEvalCount % 30 == 0 ||
-        severeCongestion || tailRiskCongestion || tcpSendDrops > 0) {
-        os_log(sLog, "WiFi adaptive eval: severe=%{public}s mild=%{public}s tailRisk=%{public}s healthy=%{public}s postStaleHold=%{public}s metrics[inFlight=%d slow=%d max=%dms preDrop=%d staleDrop=%d staleMaxAge=%dms sendDrop=%d queueDrop=%d] streaks[h=%d m=%d s=%d] sampled=%{public}s count=%d",
+        severeCongestion || tailRiskCongestion || bitrateOvershootRisk || tcpSendDrops > 0) {
+        os_log(sLog, "WiFi adaptive eval: severe=%{public}s mild=%{public}s tailRisk=%{public}s overshootRisk=%{public}s healthy=%{public}s postStaleHold=%{public}s metrics[inFlight=%d slow=%d max=%dms preDrop=%d staleDrop=%d staleMaxAge=%dms sendDrop=%d queueDrop=%d prevTarget=%dfps/%dMbps] streaks[h=%d m=%d s=%d] sampled=%{public}s count=%d",
                severeCongestion ? "yes" : "no",
                mildCongestion ? "yes" : "no",
                tailRiskCongestion ? "yes" : "no",
+               bitrateOvershootRisk ? "yes" : "no",
                healthy ? "yes" : "no",
                postStaleHold ? "yes" : "no",
                tcpInFlightNow, tcpSlowCompletions, tcpMaxCompletionMs,
                preDrops, staleDrops, staleMaxAgeMs, tcpSendDrops, queueDrops,
+               prevFPS, prevBitrate / 1000000,
                _wifiAdaptiveHealthyStreak, _wifiAdaptiveMildCongestionStreak, _wifiAdaptiveSevereCongestionStreak,
-               (severeCongestion || tailRiskCongestion || tcpSendDrops > 0) ? "forced" : "sampled",
+               (severeCongestion || tailRiskCongestion || bitrateOvershootRisk || tcpSendDrops > 0) ? "forced" : "sampled",
                wifiAdaptiveEvalCount);
     }
-
-    int32_t prevFPS = _wifiAdaptiveTargetFPS;
-    int32_t prevBitrate = _wifiAdaptiveTargetBitrate;
-    int32_t targetFPS = prevFPS;
-    int32_t targetBitrate = prevBitrate;
-    NSString *reason = @"hold-stable";
 
     if (severeCongestion) {
         _wifiAdaptiveHealthyStreak = 0;
@@ -1783,14 +1791,20 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                    prevFPS, prevBitrate / 1000000, _wifiAdaptiveHealthyStreak, kWirelessAdaptiveUpshiftHealthyStreak);
             return;
         }
-        if (prevFPS < kWirelessAdaptiveMaxFPS) {
+        if (!bitrateOvershootRisk && prevFPS < kWirelessAdaptiveMaxFPS) {
             targetFPS = MIN(kWirelessAdaptiveMaxFPS, prevFPS + kWirelessAdaptiveFPSStepUp);
         }
-        if (prevBitrate < kWirelessAdaptiveMaxBitrate) {
+        if (bitrateOvershootRisk) {
+            targetBitrate = MAX(kWirelessHEVCBitrate, prevBitrate - kWirelessAdaptiveBitrateStepDown);
+            reason = @"hold-tail-guard-bitrate";
+            OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveHolds);
+        } else if (prevBitrate < kWirelessAdaptiveMaxBitrate) {
             targetBitrate = MIN(kWirelessAdaptiveMaxBitrate, prevBitrate + kWirelessAdaptiveBitrateStepUp);
         }
-        reason = @"recovery-upshift";
-        OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveUpshifts);
+        if (!bitrateOvershootRisk) {
+            reason = @"recovery-upshift";
+            OSAtomicIncrement32Barrier(&_wifiPerfAdaptiveUpshifts);
+        }
     } else {
         _wifiAdaptiveHealthyStreak = 0;
         _wifiAdaptiveMildCongestionStreak = 0;

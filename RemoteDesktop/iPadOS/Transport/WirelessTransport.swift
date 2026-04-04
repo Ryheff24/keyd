@@ -312,17 +312,35 @@ final class WirelessTransport {
                     // Guard against re-entry: NWBrowser fires .added for every
                     // interface (Wi-Fi, AWDL) the same service appears on.
                     // Only connect on the first event; ignore the rest.
+                    let controlRecoveryActive = (self.controlRecoveryWorkItem != nil)
+                    let allowControlPathReplacement = controlRecoveryActive &&
+                        self.inputConnection == nil &&
+                        self.mediaConnection != nil &&
+                        self.isConnected
                     if self.isConnected || self.connectedServiceName != nil {
-                        print("[CONSOLE] Bonjour: ignoring duplicate .added (already connected/connecting to '\(self.connectedServiceName ?? "?")')")
-                        self.log.info("Ignoring duplicate .added — already connected/connecting")
-                        continue
+                        if allowControlPathReplacement {
+                            print("[CONSOLE] Bonjour: .added accepted during control-path recovery (serviceLatch=\(self.connectedServiceName ?? "nil"), mediaActive=\(self.mediaConnection != nil), inputActive=\(self.inputConnection != nil), isConnected=\(self.isConnected))")
+                            self.log.info("Bonjour .added accepted during control-path recovery")
+                        } else {
+                            print("[CONSOLE] Bonjour: ignoring duplicate .added (already connected/connecting to '\(self.connectedServiceName ?? "?")', recoveryActive=\(controlRecoveryActive), mediaActive=\(self.mediaConnection != nil), inputActive=\(self.inputConnection != nil), isConnected=\(self.isConnected))")
+                            self.log.info("Ignoring duplicate .added — already connected/connecting")
+                            continue
+                        }
+                    } else if controlRecoveryActive {
+                        print("[CONSOLE] Bonjour: .added while control recovery active but no active session (mediaActive=\(self.mediaConnection != nil), inputActive=\(self.inputConnection != nil), isConnected=\(self.isConnected))")
+                        self.log.info("Bonjour .added observed during control recovery without active session")
+                    } else {
+                        print("[CONSOLE] Bonjour: .added accepted (fresh connect path)")
                     }
 
                     if case .service(let name, _, _, _) = result.endpoint {
                         self.connectedServiceName = name
                     }
-                    self.connectToService(endpoint: result.endpoint)
-
+                    if allowControlPathReplacement {
+                        self.connectToService(endpoint: result.endpoint, preserveMediaPathForControlRecovery: true)
+                    } else {
+                        self.connectToService(endpoint: result.endpoint)
+                    }
                 case .removed(let result):
                     print("[CONSOLE] Bonjour service LOST: \(result.endpoint.debugDescription)")
                     self.log.info("Bonjour service lost: \(result.endpoint.debugDescription)")
@@ -389,13 +407,29 @@ final class WirelessTransport {
 
     // MARK: - Private: Connection Setup
 
-    private func connectToService(endpoint: NWEndpoint) {
+    private func connectToService(endpoint: NWEndpoint, preserveMediaPathForControlRecovery: Bool = false) {
         if case .service(let serviceName, _, _, _) = endpoint {
-            print("[CONSOLE] WirelessTransport: connectToService entry service=\(serviceName), connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected)")
+            print("[CONSOLE] WirelessTransport: connectToService entry service=\(serviceName), connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected), preserveMediaPathForControlRecovery=\(preserveMediaPathForControlRecovery)")
         } else {
-            print("[CONSOLE] WirelessTransport: connectToService entry endpoint=\(endpoint.debugDescription), connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected)")
+            print("[CONSOLE] WirelessTransport: connectToService entry endpoint=\(endpoint.debugDescription), connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected), preserveMediaPathForControlRecovery=\(preserveMediaPathForControlRecovery)")
         }
-        tearDownConnections(clearServiceName: false, reason: "connectToService")
+
+        if preserveMediaPathForControlRecovery {
+            print("[CONSOLE] WirelessTransport: control-path replacement path preserving media session (mediaActive=\(mediaConnection != nil), inputActive=\(inputConnection != nil), isConnected=\(isConnected))")
+            log.info("Preserving media path while reconnecting TCP control channel")
+            connectWatchdogWorkItem?.cancel()
+            connectWatchdogWorkItem = nil
+            if let staleInput = inputConnection {
+                print("[CONSOLE] WirelessTransport: control-path replacement cancelling stale/pending input connection before reconnect")
+                staleInput.cancel()
+                inputConnection = nil
+            } else {
+                print("[CONSOLE] WirelessTransport: control-path replacement has no existing input connection to cancel")
+            }
+            tcpBuffer.removeAll()
+        } else {
+            tearDownConnections(clearServiceName: false, reason: "connectToService")
+        }
 
         print("[CONSOLE] WirelessTransport: connecting to \(endpoint.debugDescription)")
         log.info("Connecting with TLS to discovered Mac service: \(endpoint.debugDescription)")
@@ -434,7 +468,12 @@ final class WirelessTransport {
                 self.onConnectionChanged?(true, detectedAWDL)
 
                 self.scheduleInputReceive(inputConn)
-                self.establishMediaConnection(from: inputConn)
+                if self.controlRecoveryWorkItem != nil && self.mediaConnection != nil {
+                    print("[CONSOLE] WirelessTransport: TCP control recovery READY -- preserving existing DTLS media path")
+                    self.log.info("TCP control recovery READY -- preserving existing DTLS media path")
+                } else {
+                    self.establishMediaConnection(from: inputConn)
+                }
 
             case .failed(let error):
                 guard isActiveConnection else {
