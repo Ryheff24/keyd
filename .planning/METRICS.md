@@ -17,21 +17,21 @@ Rules:
 |--------|---------|------|------|--------|
 | Viewport width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| Delivered frame width | `1848 px` | `2752 px` | `2752 px` | ❌ |
-| Delivered frame height | `1200 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `33.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.397` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `17 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `44 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `23 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `38 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `61 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `43 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `33.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `21 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `43 ms` | `8 ms` | `7 ms` | ❌ |
+| Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
+| Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
+| FPS | `53.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.656` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `34 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `168 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `64 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `56 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `193 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `86 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `50.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `34 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `171 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `84.0%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `72.7%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -71,3 +71,4 @@ Rules:
 | 2026-04-02 | 11:49:18 EDT | `c9608c7` | `2752x1786` | `2752x1786` | `30.4 fps` | `0.449` | `19/52/25 ms` | `39/66/44 ms` | `30.9 fps, 29/74 ms` | `1` | `24/25` | wifi sustained full torture clip after sustained-run mode + 40fps pacing alignment |
 | 2026-04-02 | 12:00:41 EDT | `7e243d9` | `2752x1786` | `2752x1786` | `31.9 fps` | `0.360` | `15/40/21 ms` | `34/58/41 ms` | `31.2 fps, 23/53 ms` | `1` | `24/25` | wifi sustained full torture clip after adaptive udp pacing |
 | 2026-04-02 | 12:08:45 EDT | `7128098` | `2752x1786` | `1848x1200` | `33.0 fps` | `0.397` | `17/44/23 ms` | `38/61/43 ms` | `33.0 fps, 21/43 ms` | `1` | `21/25` | test updates |
+| 2026-04-03 | 22:37:16 EDT | `992889b` | `2752x1786` | `2496x1620` | `53.6 fps` | `1.656` | `34/168/64 ms` | `56/193/86 ms` | `50.6 fps, 34/171 ms` | `1` | `24/33` | validate reporting parser fix |
