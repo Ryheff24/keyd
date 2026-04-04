@@ -3,6 +3,7 @@
 #import <Foundation/Foundation.h>
 #import <Network/Network.h>
 #import <Security/Security.h>
+#import "protocol.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -92,6 +93,15 @@ NS_ASSUME_NONNULL_BEGIN
  * The completion block fires when the kernel has accepted the data for transmission.
  */
 - (void)sendMediaViaTCP:(const void *)data length:(size_t)len completion:(void (^)(BOOL success))completion;
+
+/**
+ * Send media with separate header + payload over TCP.
+ * Avoids caller-side packet assembly so USB hot path can skip an extra large copy.
+ */
+- (void)sendMediaFrameWithHeader:(const MediaFrameHeader *)header
+                         payload:(const void *)payload
+                   payloadLength:(size_t)payloadLen
+                      completion:(void (^)(BOOL success))completion;
 
 @end
 

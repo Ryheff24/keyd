@@ -53,7 +53,9 @@ final class USBNetworkTransport {
     private var tcpReceiveCompleteCount = 0
     private var mediaReceiveErrorCount = 0
     private var mediaReceiveCompleteCount = 0
-    private static let tcpCompactionMinConsumedBytes = 2 << 20
+    private var inputReceiveConfigLogged = false
+    private static let tcpCompactionMinConsumedBytes = 8 << 20
+    private static let tcpReceiveMaxLength = 1 << 20
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
 
@@ -706,7 +708,12 @@ final class USBNetworkTransport {
     }
 
     private func scheduleInputReceive(_ connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) {
+        if !inputReceiveConfigLogged {
+            inputReceiveConfigLogged = true
+            print("[CONSOLE] USBTransport: tcp-recv config min=1B max=\(Self.tcpReceiveMaxLength)B")
+            log.info("USB TCP recv config min=1B max=\(Self.tcpReceiveMaxLength, privacy: .public)B")
+        }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: Self.tcpReceiveMaxLength) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
 
@@ -786,12 +793,17 @@ final class USBNetworkTransport {
         if consumedBytes >= Self.tcpCompactionMinConsumedBytes &&
             (unreadBytes == 0 || consumedBytes >= (unreadBytes * 3)) {
             let compactStart = CFAbsoluteTimeGetCurrent()
-            tcpBuffer.removeSubrange(0..<tcpBufferReadOffset)
+            if unreadBytes == 0 {
+                tcpBuffer.removeAll(keepingCapacity: true)
+            } else {
+                tcpBuffer.removeSubrange(0..<tcpBufferReadOffset)
+            }
             tcpBufferReadOffset = 0
             tcpCompactionCount += 1
             let compactElapsedMs = (CFAbsoluteTimeGetCurrent() - compactStart) * 1000.0
-            print("[CONSOLE] USBTransport: tcp-compact #\(tcpCompactionCount) consumed=\(consumedBytes)B unread=\(unreadBytes)B elapsed=\(String(format: "%.2f", compactElapsedMs))ms newBuffer=\(tcpBuffer.count)B")
-            self.log.info("USB TCP compact #\(self.tcpCompactionCount, privacy: .public) consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B elapsedMs=\(compactElapsedMs, privacy: .public) newBuffer=\(self.tcpBuffer.count, privacy: .public)B")
+            let mode = unreadBytes == 0 ? "reset" : "trim"
+            print("[CONSOLE] USBTransport: tcp-compact #\(tcpCompactionCount) mode=\(mode) consumed=\(consumedBytes)B unread=\(unreadBytes)B elapsed=\(String(format: "%.2f", compactElapsedMs))ms newBuffer=\(tcpBuffer.count)B threshold=\(Self.tcpCompactionMinConsumedBytes)B")
+            self.log.info("USB TCP compact #\(self.tcpCompactionCount, privacy: .public) mode=\(mode, privacy: .public) consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B elapsedMs=\(compactElapsedMs, privacy: .public) newBuffer=\(self.tcpBuffer.count, privacy: .public)B threshold=\(Self.tcpCompactionMinConsumedBytes, privacy: .public)B")
         } else if consumedBytes > 0 && (consumedBytes % (2 << 20) == 0) {
             print("[CONSOLE] USBTransport: tcp-drain hold consumed=\(consumedBytes)B unread=\(unreadBytes)B buffer=\(tcpBuffer.count)B")
             self.log.info("USB TCP drain hold consumed=\(consumedBytes, privacy: .public)B unread=\(unreadBytes, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B")

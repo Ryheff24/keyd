@@ -74,6 +74,10 @@ static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate sou
 static const int32_t kMaxMediaSendsInFlightWiFi = 3;
 /* Completion latency above this indicates kernel/network backlog in Wi-Fi TCP path. */
 static const uint64_t kWirelessTCPSlowCompletionThresholdMs = 25;
+/* Keyframe request cooldown after Wi-Fi TCP backpressure drops.
+ * Prevents request spam during a short burst while still reducing
+ * recovery dwell time when a rare send-side sequence hole occurs. */
+static const uint64_t kWirelessTCPDropKeyframeCooldownMs = 120;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -177,11 +181,18 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPInFlightPeak;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPSlowCompletions;
 @property (nonatomic, assign) volatile int32_t wifiPerfTCPMaxCompletionMs;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPDropKeyframeRequests;
+@property (nonatomic, assign) volatile int32_t wifiPerfTCPDropKeyframeSuppressed;
+@property (atomic, assign) uint64_t wifiLastTCPDropKeyframeRequestUs;
 
 /* QR code display window */
 @property (nonatomic, strong, nullable) NSWindow *qrWindow;
 @property (nonatomic, strong, nullable) NSWindow *stressWindow;
 @property (nonatomic, strong, nullable) NSTimer *stressWindowTimer;
+
+- (void)sendMediaFrameHeaderToiPad:(const MediaFrameHeader *)header
+                           payload:(const void *)payload
+                     payloadLength:(size_t)payloadLen;
 
 @end
 
@@ -942,13 +953,6 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         }
 
         /* LZ4 mode: prepend MediaFrameHeader + send via active transport */
-        size_t totalLen = sizeof(MediaFrameHeader) + output->compressed_size;
-        uint8_t *packet = malloc(totalLen);
-        if (!packet) return;
-
-        memcpy(packet, &output->header, sizeof(MediaFrameHeader));
-        memcpy(packet + sizeof(MediaFrameHeader), output->buf, output->compressed_size);
-
         /* Log frame sizes for debugging bandwidth issues */
         static int lz4SendCount = 0;
         if (lz4SendCount < 10 || lz4SendCount % 200 == 0) {
@@ -959,10 +963,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                    output->header.seq);
         }
         lz4SendCount++;
-
-        [strongSelf sendMediaFrameToiPad:packet length:totalLen];
-
-        free(packet);
+        [strongSelf sendMediaFrameHeaderToiPad:&output->header
+                                       payload:output->buf
+                                 payloadLength:output->compressed_size];
     };
 
     /* Raw pixel buffer callback — feeds HEVC encoder when active.
@@ -976,8 +979,27 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             if (!strongSelf->_hevcEncoder.isActive) return;
 
             if (strongSelf->_wirelessTransport.isConnected &&
-                !strongSelf->_usbTransport.isConnected &&
-                !kWirelessUseTCPMedia) {
+                !strongSelf->_usbTransport.isConnected) {
+                if (kWirelessUseTCPMedia) {
+                    int32_t tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
+                    if (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi) {
+                        OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfPreEncodeDrops);
+                        static int wifiTCPPreEncodeDropCount = 0;
+                        wifiTCPPreEncodeDropCount++;
+                        if (wifiTCPPreEncodeDropCount <= 10 || wifiTCPPreEncodeDropCount % 100 == 0) {
+                            os_log(sLog, "WiFi pre-encode drop: reason=tcp-backpressure inFlight=%d limit=%d totalDropped=%d",
+                                   tcpInFlightNow, kMaxMediaSendsInFlightWiFi, wifiTCPPreEncodeDropCount);
+                        }
+                        return;
+                    }
+                    static int wifiTCPPreEncodeAdmitCount = 0;
+                    wifiTCPPreEncodeAdmitCount++;
+                    if (wifiTCPPreEncodeAdmitCount <= 10 || wifiTCPPreEncodeAdmitCount % 200 == 0) {
+                        os_log(sLog, "WiFi pre-encode admit: reason=tcp-backpressure-clear inFlight=%d limit=%d",
+                               tcpInFlightNow, kMaxMediaSendsInFlightWiFi);
+                    }
+                    strongSelf.wirelessLastEncodeSubmitUs = 0;
+                } else {
                 NSUInteger queuedChunks = strongSelf->_wirelessTransport.queuedMediaChunkCount;
                 uint64_t minIntervalUs = 0;
                 const char *congestionReason = "none";
@@ -1015,6 +1037,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                     }
                 } else {
                     strongSelf.wirelessLastEncodeSubmitUs = 0;
+                }
                 }
             }
 
@@ -1056,16 +1079,9 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
 
         hevcSentCount++;
 
-        size_t totalLen = sizeof(MediaFrameHeader) + len;
-        uint8_t *packet = malloc(totalLen);
-        if (!packet) return;
-
-        memcpy(packet, &header, sizeof(MediaFrameHeader));
-        memcpy(packet + sizeof(MediaFrameHeader), data, len);
-
-        [strongSelf sendMediaFrameToiPad:packet length:totalLen];
-
-        free(packet);
+        [strongSelf sendMediaFrameHeaderToiPad:&header
+                                       payload:data
+                                 payloadLength:len];
     };
 }
 
@@ -1145,9 +1161,23 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                 OSAtomicIncrement32Barrier(&_wifiPerfTCPSendDrops);
                 static int wifiTCPSendDropCount = 0;
                 wifiTCPSendDropCount++;
+                uint64_t nowUs = keydrd_host_time_us();
+                uint64_t lastKeyReqUs = self.wifiLastTCPDropKeyframeRequestUs;
+                uint64_t sinceLastReqMs = (lastKeyReqUs > 0 && nowUs > lastKeyReqUs) ? (nowUs - lastKeyReqUs) / 1000 : UINT64_MAX;
+                BOOL requestKeyframe = (lastKeyReqUs == 0 || sinceLastReqMs >= kWirelessTCPDropKeyframeCooldownMs);
+                if (requestKeyframe) {
+                    self.wifiLastTCPDropKeyframeRequestUs = nowUs;
+                    OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeRequests);
+                    [self->_hevcEncoder requestKeyframe];
+                } else {
+                    OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeSuppressed);
+                }
                 if (wifiTCPSendDropCount <= 10 || wifiTCPSendDropCount % 100 == 0) {
-                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d limit=%d totalDropped=%d",
-                           seq, inFlight - 1, kMaxMediaSendsInFlightWiFi, wifiTCPSendDropCount);
+                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d limit=%d totalDropped=%d action=%{public}s reqCooldownMs=%llums sinceLastReqMs=%llums",
+                           seq, inFlight - 1, kMaxMediaSendsInFlightWiFi, wifiTCPSendDropCount,
+                           requestKeyframe ? "request-keyframe" : "cooldown-suppressed",
+                           kWirelessTCPDropKeyframeCooldownMs,
+                           sinceLastReqMs == UINT64_MAX ? 0 : sinceLastReqMs);
                 }
                 return;
             }
@@ -1221,6 +1251,61 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     }
 }
 
+- (void)sendMediaFrameHeaderToiPad:(const MediaFrameHeader *)header
+                           payload:(const void *)payload
+                     payloadLength:(size_t)payloadLen {
+    if (!header || (!payload && payloadLen > 0)) {
+        os_log_error(sLog, "USB send skipped: invalid header/payload args header=%{public}s payload=%{public}s payloadLen=%zu",
+                     header ? "yes" : "no", payload ? "yes" : "no", payloadLen);
+        return;
+    }
+
+    size_t totalLen = sizeof(MediaFrameHeader) + payloadLen;
+    if (_usbTransport.isConnected) {
+        int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
+        if (inFlight <= 5 || inFlight % 10 == 0) {
+            os_log(sLog, "USB split-send queued: seq=%u inFlight=%d bytes=%zu payload=%zu",
+                   header->seq, inFlight, totalLen, payloadLen);
+        }
+        if (inFlight > kMaxMediaSendsInFlightUSB) {
+            OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
+            static int splitDropCount = 0;
+            splitDropCount++;
+            if (splitDropCount <= 10 || splitDropCount % 500 == 0) {
+                os_log(sLog, "USB split-send backpressure drop: seq=%u inFlight=%d totalDropped=%d",
+                       header->seq, inFlight - 1, splitDropCount);
+            }
+            return;
+        }
+
+        __weak SessionManager *weakSelf = self;
+        [_usbTransport sendMediaFrameWithHeader:header payload:payload payloadLength:payloadLen completion:^(BOOL success) {
+            SessionManager *strongSelf = weakSelf;
+            if (strongSelf) {
+                int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
+                if (!success || left < 2) {
+                    os_log(sLog, "USB split-send completion: seq=%u success=%{public}s inFlightNow=%d",
+                           header->seq, success ? "yes" : "no", left);
+                }
+            }
+        }];
+        return;
+    }
+
+    size_t frameLen = sizeof(MediaFrameHeader) + payloadLen;
+    uint8_t *packet = malloc(frameLen);
+    if (!packet) {
+        os_log_error(sLog, "Media send skipped: packet allocation failed seq=%u frameLen=%zu", header->seq, frameLen);
+        return;
+    }
+    memcpy(packet, header, sizeof(MediaFrameHeader));
+    if (payloadLen > 0) {
+        memcpy(packet + sizeof(MediaFrameHeader), payload, payloadLen);
+    }
+    [self sendMediaFrameToiPad:packet length:frameLen];
+    free(packet);
+}
+
 - (void)sendInputEventToiPad:(const void *)data length:(size_t)len {
     if (_usbTransport.isConnected) {
         [_usbTransport sendInputEvent:data length:len];
@@ -1242,6 +1327,8 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     _wifiPerfTCPInFlightPeak = 0;
     _wifiPerfTCPSlowCompletions = 0;
     _wifiPerfTCPMaxCompletionMs = 0;
+    _wifiPerfTCPDropKeyframeRequests = 0;
+    _wifiPerfTCPDropKeyframeSuppressed = 0;
 }
 
 - (void)startWirelessPerformanceTimerIfNeeded {
@@ -1274,15 +1361,18 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
         int32_t tcpInFlightPeak = strongSelf->_wifiPerfTCPInFlightPeak;
         int32_t tcpSlowCompletions = strongSelf->_wifiPerfTCPSlowCompletions;
         int32_t tcpMaxCompletionMs = strongSelf->_wifiPerfTCPMaxCompletionMs;
+        int32_t tcpDropKeyReq = strongSelf->_wifiPerfTCPDropKeyframeRequests;
+        int32_t tcpDropKeySupp = strongSelf->_wifiPerfTCPDropKeyframeSuppressed;
         int32_t tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
         NSUInteger queuedNow = strongSelf->_wirelessTransport.queuedMediaChunkCount;
         double avgKB = encodedFrames > 0 ? ((double)encodedBytes / (double)encodedFrames) / 1024.0 : 0.0;
         const char *pacingMode = queuedNow >= 320 ? "congested" : (queuedNow <= 96 ? "fast" : "default");
 
-        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms queuedNow=%lu queuedPeak=%d pacing=%{public}s",
+        os_log(sLog, "WiFi perf 1s: encoded=%d keyframes=%d avg=%.1fKB max=%dKB preDrop=%d queueDrop=%d tcpFallback=%d tcpSendDrop=%d tcpInFlight=%d tcpInFlightPeak=%d tcpSlow=%d tcpMaxCompletion=%dms tcpDropKeyReq=%d tcpDropKeySupp=%d queuedNow=%lu queuedPeak=%d pacing=%{public}s",
                encodedFrames, keyframes, avgKB, maxFrameBytes / 1024,
                preDrops, queueDrops, tcpFallbacks, tcpSendDrops,
                tcpInFlightNow, tcpInFlightPeak, tcpSlowCompletions, tcpMaxCompletionMs,
+               tcpDropKeyReq, tcpDropKeySupp,
                (unsigned long)queuedNow, peakQueued, pacingMode);
 
         [strongSelf resetWirelessPerformanceWindow];

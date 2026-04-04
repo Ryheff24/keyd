@@ -279,6 +279,7 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         nw_endpoint_create_host("::", kInputPortStr));
 
     _bonjourListener = nw_listener_create(tcpParams);
+    nw_listener_t bonjourListener = _bonjourListener;
 
     /* Advertise via Bonjour */
     nw_advertise_descriptor_t advertise = nw_advertise_descriptor_create_bonjour_service(
@@ -286,38 +287,68 @@ static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
         KEYDRD_SERVICE,
         "local.");
     nw_advertise_descriptor_set_no_auto_rename(advertise, false);
-    nw_listener_set_advertise_descriptor(_bonjourListener, advertise);
+    nw_listener_set_advertise_descriptor(bonjourListener, advertise);
 
-    nw_listener_set_queue(_bonjourListener, _transportQueue);
+    nw_listener_set_queue(bonjourListener, _transportQueue);
 
     __weak WirelessTransport *weakSelf = self;
 
-    nw_listener_set_state_changed_handler(_bonjourListener, ^(nw_listener_state_t state,
-                                                               nw_error_t _Nullable error) {
+    nw_listener_set_state_changed_handler(bonjourListener, ^(nw_listener_state_t state,
+                                                              nw_error_t _Nullable error) {
+        WirelessTransport *self2 = weakSelf;
+        if (!self2) return;
+        BOOL isActiveListener = (self2->_bonjourListener == bonjourListener);
         switch (state) {
         case nw_listener_state_ready:
             os_log(wireless_log(), "TLS Bonjour listener ready (advertising %{public}s)", KEYDRD_SERVICE);
             break;
         case nw_listener_state_failed:
-            os_log_error(wireless_log(), "TLS Bonjour listener failed: %{public}@",
-                         error ?: (nw_error_t)@"unknown");
+            os_log_error(wireless_log(),
+                         "TLS Bonjour listener failed: %{public}@ (active=%{public}d isConnected=%{public}d inputConnection=%{public}p)",
+                         error ?: (nw_error_t)@"unknown",
+                         isActiveListener, self2->_isConnected, self2->_inputConnection);
+            if (isActiveListener) {
+                self2->_bonjourListener = nil;
+                if (!self2->_isConnected) {
+                    os_log(wireless_log(),
+                           "Bonjour listener failure recovery: restarting advertising for reconnect discovery");
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                                   self2->_transportQueue, ^{
+                        if (!self2->_bonjourListener && !self2->_isConnected) {
+                            [self2 startAdvertising];
+                        } else {
+                            os_log(wireless_log(),
+                                   "Bonjour listener restart skipped (listener=%{public}p isConnected=%{public}d)",
+                                   self2->_bonjourListener, self2->_isConnected);
+                        }
+                    });
+                } else {
+                    os_log(wireless_log(),
+                           "Bonjour listener failure while connected; restart deferred until disconnect");
+                }
+            }
             break;
         case nw_listener_state_cancelled:
-            os_log(wireless_log(), "TLS Bonjour listener cancelled");
+            os_log(wireless_log(),
+                   "TLS Bonjour listener cancelled (active=%{public}d isConnected=%{public}d inputConnection=%{public}p)",
+                   isActiveListener, self2->_isConnected, self2->_inputConnection);
+            if (isActiveListener) {
+                self2->_bonjourListener = nil;
+            }
             break;
         default:
             break;
         }
     });
 
-    nw_listener_set_new_connection_handler(_bonjourListener, ^(nw_connection_t connection) {
+    nw_listener_set_new_connection_handler(bonjourListener, ^(nw_connection_t connection) {
         WirelessTransport *self2 = weakSelf;
         if (!self2) return;
 
         [self2 handleNewConnection:connection];
     });
 
-    nw_listener_start(_bonjourListener);
+    nw_listener_start(bonjourListener);
 }
 
 - (void)beginReconnectWindow {

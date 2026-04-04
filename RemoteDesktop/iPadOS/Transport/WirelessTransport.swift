@@ -246,7 +246,11 @@ final class WirelessTransport {
     /// Start browsing for the Mac's Bonjour service.
     /// Enables peer-to-peer (AWDL) discovery.
     func startBrowsing() {
-        guard browser == nil else { return }
+        guard browser == nil else {
+            print("[CONSOLE] WirelessTransport: startBrowsing skipped (browser already active, connectedServiceName=\(connectedServiceName ?? "nil"), isConnected=\(isConnected))")
+            log.info("startBrowsing skipped: browser already active")
+            return
+        }
 
         log.info("Starting Bonjour browse for \(keydrdService) (TLS/DTLS enabled)")
 
@@ -266,6 +270,11 @@ final class WirelessTransport {
             case .failed(let error):
                 print("[CONSOLE] Bonjour browser FAILED: \(error)")
                 self.log.error("Bonjour browser failed: \(error)")
+                if self.browser === newBrowser {
+                    print("[CONSOLE] Bonjour browser failure on active instance (connectedServiceName=\(self.connectedServiceName ?? "nil"), isConnected=\(self.isConnected))")
+                } else {
+                    print("[CONSOLE] Bonjour browser failure from stale instance ignored")
+                }
             case .cancelled:
                 print("[CONSOLE] Bonjour browser cancelled")
                 self.log.info("Bonjour browser cancelled")
@@ -333,9 +342,11 @@ final class WirelessTransport {
 
     /// Stop browsing and tear down all connections.
     func stopBrowsing() {
+        let hadBrowser = (browser != nil)
+        print("[CONSOLE] WirelessTransport: stopBrowsing entry hadBrowser=\(hadBrowser) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
         browser?.cancel()
         browser = nil
-        tearDownConnections()
+        tearDownConnections(reason: "stopBrowsing")
     }
 
     /// Send an input event over TCP to the Mac.
@@ -413,6 +424,8 @@ final class WirelessTransport {
                 if self.mediaConnection == nil {
                     self.isConnected = false
                 }
+                print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED exit isConnected=\(self.isConnected) mediaConnectionActive=\(self.mediaConnection != nil)")
+                self.log.info("TLS wireless TCP connection cancelled")
 
             default:
                 break
@@ -617,6 +630,7 @@ final class WirelessTransport {
         tcpBuffer.removeAll()
         isConnected = false
         isAWDL = false
+        print("[CONSOLE] WirelessTransport: tearDownConnections exit reason=\(reason) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
     }
 
     deinit {
