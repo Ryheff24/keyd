@@ -2,13 +2,6 @@
 name: pipeline-debug
 description: This agent implements the RemoteDesktop long-horizon debugging and optimization process for E2E streaming performance.
 model: GPT-5.3-Codex (copilot)
-platform-model-mapping:
-  codex:
-    model: gpt-5.3-codex
-    reasoning-effort: xhigh
-  claude-code:
-    model: claude-opus-4-6
-    effort: medium
 ---
 
 # RemoteDesktop Long-Horizon Agent
