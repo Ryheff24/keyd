@@ -47,6 +47,19 @@ final class WirelessTransport {
     /// TCP reassembly buffer for length-prefixed messages.
     /// Mac prepends 4-byte big-endian length before each message.
     private var tcpBuffer = Data()
+    /// Read cursor into tcpBuffer to avoid O(n) front-removal on every message.
+    private var tcpBufferReadOffset = 0
+    private var tcpBufferReservedCapacity = 0
+    private var tcpDrainInvocationCount = 0
+    private var tcpDrainDeliveredCount = 0
+    private var tcpCompactionCount = 0
+    private var tcpAppendLogCount = 0
+    private var tcpPartialLogCount = 0
+    private var tcpCompactLogCount = 0
+    private static let tcpReceiveMaxLength = 262_144
+    private static let tcpMaxFrameLength = 4_000_000
+    private static let tcpReserveBaseCapacity = 512 << 10
+    private static let tcpCompactionMinConsumedBytes = 2 << 20
 
     /// Tracks the Bonjour service name we are connected/connecting to,
     /// preventing duplicate connections when NWBrowser fires multiple `.added`
@@ -314,12 +327,14 @@ final class WirelessTransport {
                     // Only connect on the first event; ignore the rest.
                     let controlRecoveryActive = (self.controlRecoveryWorkItem != nil)
                     let allowControlPathReplacement = controlRecoveryActive &&
-                        self.inputConnection == nil &&
                         self.mediaConnection != nil &&
                         self.isConnected
                     if self.isConnected || self.connectedServiceName != nil {
                         if allowControlPathReplacement {
-                            print("[CONSOLE] Bonjour: .added accepted during control-path recovery (serviceLatch=\(self.connectedServiceName ?? "nil"), mediaActive=\(self.mediaConnection != nil), inputActive=\(self.inputConnection != nil), isConnected=\(self.isConnected))")
+                            print("[CONSOLE] Bonjour: .added accepted during control-path recovery decision=keep-session action=replace-control-path serviceLatch=\(self.connectedServiceName ?? "nil") mediaActive=\(self.mediaConnection != nil) inputActive=\(self.inputConnection != nil) isConnected=\(self.isConnected)")
+                            if self.inputConnection != nil {
+                                print("[CONSOLE] Bonjour: control-path replacement will cancel stale/pending input connection before reconnect")
+                            }
                             self.log.info("Bonjour .added accepted during control-path recovery")
                         } else {
                             print("[CONSOLE] Bonjour: ignoring duplicate .added (already connected/connecting to '\(self.connectedServiceName ?? "?")', recoveryActive=\(controlRecoveryActive), mediaActive=\(self.mediaConnection != nil), inputActive=\(self.inputConnection != nil), isConnected=\(self.isConnected))")
@@ -427,6 +442,8 @@ final class WirelessTransport {
                 print("[CONSOLE] WirelessTransport: control-path replacement has no existing input connection to cancel")
             }
             tcpBuffer.removeAll()
+            tcpBufferReadOffset = 0
+            tcpBufferReservedCapacity = 0
         } else {
             tearDownConnections(clearServiceName: false, reason: "connectToService")
         }
@@ -720,7 +737,7 @@ final class WirelessTransport {
     private func scheduleInputReceive(_ connection: NWConnection) {
         // Read up to 256KB at a time — large enough for most HEVC frames.
         // Data arrives with 4-byte big-endian length prefix per message.
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: Self.tcpReceiveMaxLength) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
             guard self.inputConnection === connection else {
@@ -731,7 +748,16 @@ final class WirelessTransport {
             }
 
             if let data = content, !data.isEmpty {
+                let beforeCount = self.tcpBuffer.count
+                self.reserveTCPBufferIfNeeded(incomingBytes: data.count, currentCount: beforeCount)
                 self.tcpBuffer.append(data)
+                let afterCount = self.tcpBuffer.count
+                if beforeCount == 0 || afterCount >= (1 << 20) {
+                    self.tcpAppendLogCount += 1
+                    if self.tcpAppendLogCount <= 10 || self.tcpAppendLogCount % 64 == 0 {
+                        print("[CONSOLE] WirelessTransport: tcp-recv append=\(data.count)B buffer=\(afterCount)B readOffset=\(self.tcpBufferReadOffset) sample=\(self.tcpAppendLogCount)")
+                    }
+                }
                 self.drainTCPBuffer()
             }
 
@@ -764,32 +790,92 @@ final class WirelessTransport {
     /// Extract complete length-prefixed messages from the TCP reassembly buffer.
     /// Format: [4 bytes big-endian length][payload of that length]
     private func drainTCPBuffer() {
-        while tcpBuffer.count >= 4 {
+        tcpDrainInvocationCount += 1
+        let drainStart = CFAbsoluteTimeGetCurrent()
+        let startCount = tcpBuffer.count
+        let startOffset = tcpBufferReadOffset
+        var deliveredThisDrain = 0
+
+        while (tcpBuffer.count - tcpBufferReadOffset) >= 4 {
             let msgLen = tcpBuffer.withUnsafeBytes { buf -> Int in
                 guard let base = buf.baseAddress else { return 0 }
                 var raw: UInt32 = 0
-                memcpy(&raw, base, 4)
+                memcpy(&raw, base.advanced(by: tcpBufferReadOffset), 4)
                 return Int(UInt32(bigEndian: raw))
             }
 
-            guard msgLen > 0, msgLen < 4_000_000 else {
+            guard msgLen > 0, msgLen < Self.tcpMaxFrameLength else {
                 // Invalid length — likely corrupt data, clear buffer
                 print("[CONSOLE] WirelessTransport: invalid TCP frame length \(msgLen), clearing buffer")
                 tcpBuffer.removeAll()
+                tcpBufferReadOffset = 0
+                tcpBufferReservedCapacity = 0
                 return
             }
 
-            guard tcpBuffer.count >= 4 + msgLen else {
+            guard (tcpBuffer.count - tcpBufferReadOffset) >= 4 + msgLen else {
                 // Incomplete message — wait for more data
+                let available = tcpBuffer.count - tcpBufferReadOffset
+                if available >= (1 << 20) {
+                    tcpPartialLogCount += 1
+                    if tcpPartialLogCount <= 10 || tcpPartialLogCount % 16 == 0 {
+                        print("[CONSOLE] WirelessTransport: tcp-drain partial msgLen=\(msgLen) available=\(available)B buffer=\(tcpBuffer.count)B readOffset=\(tcpBufferReadOffset) sample=\(tcpPartialLogCount)")
+                    }
+                }
                 return
             }
 
-            // Extract complete message
-            let message = tcpBuffer.subdata(in: 4..<(4 + msgLen))
-            tcpBuffer.removeSubrange(0..<(4 + msgLen))
+            // Extract complete message without front-copy removal on each frame.
+            let msgStart = tcpBufferReadOffset + 4
+            let msgEnd = msgStart + msgLen
+            // Copy the message payload out of the shared reassembly buffer before
+            // invoking callbacks. Downstream processing can hop queues and must
+            // not retain a view into storage that will be compacted/appended.
+            let message = Data(tcpBuffer[msgStart..<msgEnd])
+            tcpBufferReadOffset = msgEnd
+            deliveredThisDrain += 1
+            tcpDrainDeliveredCount += 1
 
             onInputReceived?(message)
         }
+
+        // Compact only when enough bytes were consumed to justify O(n) copy.
+        let consumedBytes = tcpBufferReadOffset
+        let unreadBytes = tcpBuffer.count - tcpBufferReadOffset
+        if consumedBytes >= Self.tcpCompactionMinConsumedBytes &&
+            (unreadBytes == 0 || consumedBytes >= (unreadBytes * 3)) {
+            let compactStart = CFAbsoluteTimeGetCurrent()
+            if unreadBytes == 0 {
+                tcpBuffer.removeAll(keepingCapacity: true)
+            } else {
+                tcpBuffer.removeSubrange(0..<tcpBufferReadOffset)
+            }
+            tcpBufferReadOffset = 0
+            tcpCompactionCount += 1
+            let compactElapsedMs = (CFAbsoluteTimeGetCurrent() - compactStart) * 1000.0
+            tcpCompactLogCount += 1
+            if tcpCompactLogCount <= 10 || tcpCompactLogCount % 16 == 0 || compactElapsedMs > 4.0 {
+                print("[CONSOLE] WirelessTransport: tcp-compact #\(tcpCompactionCount) consumed=\(consumedBytes)B unread=\(unreadBytes)B elapsed=\(String(format: "%.2f", compactElapsedMs))ms newBuffer=\(tcpBuffer.count)B sample=\(tcpCompactLogCount)")
+            }
+        }
+
+        let drainElapsedMs = (CFAbsoluteTimeGetCurrent() - drainStart) * 1000.0
+        if deliveredThisDrain > 0 &&
+            (drainElapsedMs > 4.0 || deliveredThisDrain >= 8 || tcpDrainInvocationCount <= 8) {
+            print("[CONSOLE] WirelessTransport: tcp-drain delivered=\(deliveredThisDrain) elapsed=\(String(format: "%.2f", drainElapsedMs))ms start=\(startCount)B/\(startOffset) end=\(tcpBuffer.count)B/\(tcpBufferReadOffset) totalMsgs=\(tcpDrainDeliveredCount)")
+        }
+    }
+
+    private func reserveTCPBufferIfNeeded(incomingBytes: Int, currentCount: Int) {
+        let required = currentCount + incomingBytes
+        guard required > tcpBufferReservedCapacity else { return }
+
+        let previousReserved = tcpBufferReservedCapacity
+        let doubled = max(Self.tcpReserveBaseCapacity, previousReserved << 1)
+        let target = max(required + (128 << 10), doubled)
+        tcpBuffer.reserveCapacity(target)
+        tcpBufferReservedCapacity = target
+        print("[CONSOLE] WirelessTransport: tcp-buffer-grow required=\(required)B reserved=\(target)B prevReserved=\(previousReserved)B")
     }
 
     // MARK: - Private: Teardown
@@ -807,6 +893,8 @@ final class WirelessTransport {
             connectedServiceName = nil
         }
         tcpBuffer.removeAll()
+        tcpBufferReadOffset = 0
+        tcpBufferReservedCapacity = 0
         isConnected = false
         isAWDL = false
         print("[CONSOLE] WirelessTransport: tearDownConnections exit reason=\(reason) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
@@ -928,7 +1016,7 @@ final class WirelessTransport {
                 return
             }
 
-            print("[CONSOLE] WirelessTransport: control path loss decision=reconnect-triggered reason=control-recovery-timeout trigger=\(reason) detail=\(detail) elapsedMs=\(elapsedNs / 1_000_000) mediaActive=\(hasMediaPath)")
+            print("[CONSOLE] WirelessTransport: control path loss decision=reconnect-triggered reason=control-recovery-timeout action=drop-media-and-signal-disconnect trigger=\(reason) detail=\(detail) elapsedMs=\(elapsedNs / 1_000_000) mediaActive=\(hasMediaPath)")
             self.log.error("Control path loss decision=reconnect-triggered reason=control-recovery-timeout trigger=\(reason)")
             self.mediaConnection?.cancel()
             self.mediaConnection = nil
@@ -938,6 +1026,8 @@ final class WirelessTransport {
             self.isConnected = false
             self.isAWDL = false
             self.tcpBuffer.removeAll()
+            self.tcpBufferReadOffset = 0
+            self.tcpBufferReservedCapacity = 0
             self.cancelControlPathRecovery(reason: "control-recovery-timeout")
             self.onConnectionChanged?(false, wasAWDL)
             self.scheduleBrowserRestart(reason: "control-recovery-timeout")
@@ -987,6 +1077,8 @@ final class WirelessTransport {
         isConnected = false
         isAWDL = false
         tcpBuffer.removeAll()
+        tcpBufferReadOffset = 0
+        tcpBufferReservedCapacity = 0
 
         print("[CONSOLE] WirelessTransport: media path loss decision=reconnect-triggered reason=\(reason) wasAWDL=\(wasAWDL) inputReady=\(inputReady)")
         log.error("Media path loss decision=reconnect-triggered reason=\(reason) inputReady=\(inputReady)")

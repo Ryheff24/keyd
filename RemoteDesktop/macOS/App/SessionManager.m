@@ -60,15 +60,15 @@ static const int kWirelessAdaptiveMinFPS = 30;
 static const int kWirelessAdaptiveMidFPS = 52;
 static const int kWirelessAdaptiveMaxFPS = 60;
 static const int kWirelessAdaptiveMinBitrate = 2500000; /* 2.5 Mbps floor */
-static const int kWirelessAdaptiveMaxBitrate = 5500000; /* add headroom without bursty overshoot */
+static const int kWirelessAdaptiveMaxBitrate = 5000000; /* cap upshift headroom to reduce bursty tail overshoot */
 static const int kWirelessAdaptiveBitrateStepDown = 350000;
 static const int kWirelessAdaptiveBitrateStepUp = 100000;
 static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 1200;
-static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 4200;
+static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 5200;
 static const int kWirelessAdaptiveFPSStepUp = 2;
 static const int kWirelessAdaptiveFPSStepDownSevereSoft = 6;
-static const int kWirelessAdaptiveUpshiftHealthyStreak = 6;
-static const int kWirelessAdaptiveMildCongestionStreak = 5;
+static const int kWirelessAdaptiveUpshiftHealthyStreak = 8;
+static const int kWirelessAdaptiveMildCongestionStreak = 4;
 static const int kWirelessAdaptiveSevereEscalationStreak = 3;
 static const int kWirelessAdaptiveMaxUpshiftFPSDelta = 2;
 static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 100000;
@@ -105,12 +105,12 @@ static const uint64_t kWirelessTCPPostRecoveryAdaptiveHoldMs = 2600;
 static const uint64_t kWirelessTCPStallLogIntervalMs = 500;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
-static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 110;
-static const uint64_t kWirelessPreEncodeStaleDropCongestedMs = 80;
-static const uint64_t kWirelessPreEncodeStaleDropSevereMs = 60;
+static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 95;
+static const uint64_t kWirelessPreEncodeStaleDropCongestedMs = 72;
+static const uint64_t kWirelessPreEncodeStaleDropSevereMs = 54;
 static const uint64_t kWirelessPreEncodeStaleDropAbsoluteMs = 250;
 /* Require a clean stale-free window before any recovery upshift. */
-static const uint64_t kWirelessAdaptivePostStaleUpshiftHoldMs = 3200;
+static const uint64_t kWirelessAdaptivePostStaleUpshiftHoldMs = 4200;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
