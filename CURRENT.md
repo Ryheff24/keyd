@@ -1,5 +1,59 @@
 # CURRENT
 
+## Lane WiFi Iteration 26 (orchestrator run blocked at iPad launch tunnel/provider failure)
+
+- Timestamp: 2026-04-04 18:39:33 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration3 build-watchdog diagnostics"`
+- Pass/Fail:
+  - Build blocker cleared (`e2e-ipad-build success attempt=1`), but run blocked before `[TEST]` execution during iPad launch.
+- High-signal evidence:
+  - `/tmp/e2e-results.log`: `=== [6/6] Launching iPad in test mode ===` then `=== Waiting for test results (timeout: 360s) ===` with no `[TEST]` lines.
+  - `/tmp/keyd-e2e-ipad.log`:
+    - `CoreDeviceError Code=1002 "No provider was found."`
+    - `Network.NWError error 32 - Broken pipe`
+- Hypothesis tested:
+  - The dominant blocker moved from iPad build destination timeout to transient CoreDevice tunnel/provider failure during `devicectl device process launch`, and missing launch-failure detection causes timeout-only verdicts.
+- Instrumentation + behavior change (`RemoteDesktop/scripts/run-e2e-tests.sh`):
+  - Added `e2e-ipad-launch` branch-complete telemetry:
+    - `entry` (attempt/device/profile/rotation),
+    - `success` (attempt/pid/probeSec),
+    - `failure` (reason/probeSec),
+    - `decision` (retry/no-retry + wait),
+    - `exit` (failed/retry-exhausted).
+  - Added bounded iPad launch retry (2 attempts) for transient `broken-pipe` / `no-provider` failures.
+  - Added active wait-loop early-abort branch when iPad launch stream dies before `[TEST] COMPLETE`, with reasoned diagnostic output.
+- Outcome:
+  - Improved blocker-layer observability and recovery without touching test thresholds/assertions/reporting semantics or streaming fidelity.
+- Next immediate move:
+  - Let current orchestrator run finish; then use the same canonical WiFi command in the next iteration to validate launch retry behavior and recover `[TEST]` execution so WiFi stutter/bitrate bottleneck work can resume.
+
+## Lane WiFi Iteration 25 (orchestrator run blocked at iPad build destination timeout)
+
+- Timestamp: 2026-04-04 18:33:19 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: baseline stutter+bitrate investigation for >=45fps no res loss"`
+- Pass/Fail:
+  - Blocked before `[TEST]` execution (Step `[1/6]` build stage failed on iPad destination availability).
+- High-signal evidence from `/tmp/e2e-results.log`:
+  - `xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available`
+  - `{ platform:iOS, arch:arm64, id:00000000-00000000000000A2, ... error: ... may need to be unlocked ... }`
+- Hypothesis tested:
+  - Current highest-impact bottleneck for this iteration is harness/device-prep instability (destination availability timeout), which prevents collecting WiFi stutter/bitrate metrics at all.
+- Instrumentation + behavior change (`RemoteDesktop/scripts/run-e2e-tests.sh`):
+  - Added branch-complete iPad build telemetry with stable events:
+    - `entry` (attempt/device/derivedData)
+    - `success` (attempt)
+    - `failure` with `destinationTimeout=true|false`
+    - `decision` (`retry` vs `no-retry`, reason)
+    - `exit` for retry-exhausted / non-timeout failures
+  - Added one bounded retry path for destination-timeout failures (10s wait, attempt 2) while preserving existing failure semantics if retry also fails.
+  - Appended retry boundary markers into iPad build log for causality across attempts.
+- Outcome:
+  - Unblocked observability for intermittent destination-timeout prep failures without touching test thresholds/assertions/reporting semantics.
+- Next immediate move:
+  - Re-run the same canonical WiFi command and use new build-branch telemetry to verify whether destination timeout self-recovers; if build proceeds, resume WiFi stutter/bitrate bottleneck work from `[TEST]` + iPad/Mac logs.
+
 ## Lane WiFi Iteration 24 (burst-density starvation correlation + adaptive burst guard)
 
 - Timestamp: 2026-04-04 17:30:55 EDT
@@ -557,3 +611,55 @@
   - dominant remaining blocker is renderer queue delay/cadence instability (dequeue delay + catchup behavior), not HEVC decode callback latency or decode->enqueue overhead.
 - Next move:
   - keep this instrumentation and target MetalRenderer dequeue policy under sustained load (reduce `queueDelay`/`catchup` oscillation without lowering fidelity), then rerun canonical Wi‑Fi full profile.
+
+## WiFi Iteration (send-scheduler burst shaping validation)
+
+- Timestamp: 2026-04-04 17:43:47 EDT
+- Baseline command: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: send-scheduler burst shaping"`
+- Validation command: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: validate send-scheduler burst shaping"`
+- Result: non-improving (`26/33` passed on both runs, same 7 failures; known security C3 unchanged)
+- Baseline → Validation deltas:
+  - heavy-load FPS: `59.5 -> 58.4`
+  - heavy-load pipeline p95: `102ms -> 161ms`
+  - sustained avg FPS: `54.3 -> 54.5`
+  - sustained 1% low FPS: `9.2 -> 8.6`
+  - sustained maxGap: `467ms -> 358ms`
+  - sustained pipeline p95: `109ms -> 147ms`
+  - full pipeline-latency p95: `107ms -> 212ms`
+  - full glass-to-glass p95: `129ms -> 223ms`
+- Evidence / telemetry:
+  - Baseline retained burst-tail signals in Mac adaptive logs (`tailRisk=yes`, burst density spikes up to `~50x`, intermittent TCP slow completions up to `98ms`).
+  - Validation scheduler telemetry showed shaping rarely engaged in practice (`WiFi perf 1s ... scheduler[delays=0 avg=0us max=0us burstWindows=0 burstSends=0]` across sampled windows).
+  - One backpressure event logged scheduler intent without realized delay: `WiFi TCP backpressure drop ... scheduler[delay=0us target=2200us reason=inflight-severe ...]`.
+- Change/revert notes:
+  - Implemented Wi-Fi TCP scheduler burst-window shaping + telemetry at macOS `SessionManager` send path for this hypothesis.
+  - Reverted non-improving behavior change after validation per loop policy (no commit for this hypothesis).
+- Current hypothesis:
+  - Long-tail regressions are not currently dominated by TCP send enqueue micro-burst spacing; scheduler shaping did not activate meaningfully under observed timing.
+  - Next bottleneck candidate is downstream render/present queue starvation windows (decode->glass side) and/or pre-encode drop timing interactions during stress bursts.
+- Next immediate move:
+  - Keep lane as `wifi`.
+  - Add deeper observability on iPad render starvation windows (`dequeue wait`, `present interval outliers`, `queue depth transitions around >200ms gaps`) before any new behavior change.
+  - Run canonical Wi-Fi full-profile again with that instrumentation, then target queue starvation mitigation.
+
+## WiFi Iteration 2 (post-destination-timeout instrumentation)
+
+- Timestamp: 2026-04-04 18:36:29 EDT
+- Command: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration2 post-destination-timeout instrumentation"`
+- Result: blocked in step `[1/6]` build phase (no stream tests executed)
+- Pass/fail: `0/0` test cases executed (build blocker pre-empted `[TEST]` runtime)
+- Key metrics/signals:
+  - `e2e-results`: attempt 1 + attempt 2 both failed with `destinationTimeout=true`
+  - `keyd-e2e-build-ipad.log`: `Timed out waiting for all destinations...`
+  - `Available destinations`: `My iPad Pros ... may need to be unlocked to recover from previously reported preparation errors`
+  - `/tmp/keyd-e2e-ipad.log` and `/tmp/keyd-e2e-mac.log` not created (run never reached runtime stages)
+- Hypothesis:
+  - Highest-impact blocker is iPad destination readiness (device ID mismatch/readiness state), not WiFi media pipeline behavior. Until this clears, no FPS/bitrate/stutter evidence can be gathered.
+- Instrumentation/recovery added this iteration:
+  - `RemoteDesktop/scripts/run-e2e-tests.sh`
+    - Added `wait_for_job` watchdog telemetry (`entry`, `branch`, `heartbeat`, `success`, `failure`) with `elapsedSec`, `logAgeSec`, and `logSize`.
+    - Added bounded build watchdog controls (wall timeout + log-stall timeout) for Mac/iPad build waits.
+    - Added explicit iPad build failure fields (`waitFailReason`, `waitFailDetail`, `stalled`) and retry decision reason logging.
+    - Extended retry trigger to include watchdog stall/timeout failures (still bounded to one retry).
+- Next move:
+  - Re-run canonical WiFi command after device readiness is restored; use new watchdog logs to disambiguate destination-timeout vs stall-timeout failure paths before any media-pipeline behavior change.

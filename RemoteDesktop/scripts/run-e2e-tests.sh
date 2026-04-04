@@ -425,11 +425,95 @@ wait_for_job() {
   local pid="$1"
   local label="$2"
   local log_file="$3"
+  local max_seconds="${4:-0}"
+  local stale_seconds="${5:-0}"
+  local poll_seconds=5
+  local heartbeat_seconds=30
+  local start_ts now_ts last_heartbeat_ts elapsed_sec
+  local log_size=0
+  local last_log_size=0
+  local last_log_change_ts=0
+  local log_age_sec=0
+
+  WAIT_FOR_JOB_FAIL_REASON=""
+  WAIT_FOR_JOB_FAIL_DETAIL=""
+  WAIT_FOR_JOB_ELAPSED_SEC=0
+  WAIT_FOR_JOB_LOG_AGE_SEC=0
+
+  start_ts=$(date +%s)
+  last_heartbeat_ts="$start_ts"
+  if [ -f "$log_file" ]; then
+    last_log_size=$(stat -f %z "$log_file" 2>/dev/null || echo 0)
+  fi
+  last_log_change_ts="$start_ts"
+
+  log_progress "[CONSOLE] e2e-wait entry label=$label pid=$pid maxSeconds=$max_seconds staleSeconds=$stale_seconds log=$log_file"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    now_ts=$(date +%s)
+    elapsed_sec=$((now_ts - start_ts))
+
+    if [ -f "$log_file" ]; then
+      log_size=$(stat -f %z "$log_file" 2>/dev/null || echo 0)
+      if [ "$log_size" -ne "$last_log_size" ]; then
+        last_log_change_ts="$now_ts"
+        last_log_size="$log_size"
+        log_progress "[CONSOLE] e2e-wait branch label=$label reason=log-progress elapsedSec=$elapsed_sec logSize=$log_size"
+      fi
+    fi
+
+    log_age_sec=$((now_ts - last_log_change_ts))
+    WAIT_FOR_JOB_ELAPSED_SEC="$elapsed_sec"
+    WAIT_FOR_JOB_LOG_AGE_SEC="$log_age_sec"
+
+    if [ $((now_ts - last_heartbeat_ts)) -ge "$heartbeat_seconds" ]; then
+      log_progress "[CONSOLE] e2e-wait heartbeat label=$label pid=$pid elapsedSec=$elapsed_sec logAgeSec=$log_age_sec logSize=$last_log_size"
+      last_heartbeat_ts="$now_ts"
+    fi
+
+    if [ "$max_seconds" -gt 0 ] && [ "$elapsed_sec" -ge "$max_seconds" ]; then
+      WAIT_FOR_JOB_FAIL_REASON="wall-timeout"
+      WAIT_FOR_JOB_FAIL_DETAIL="elapsedSec=$elapsed_sec thresholdSec=$max_seconds"
+      log_progress "[CONSOLE] e2e-wait failure label=$label reason=wall-timeout elapsedSec=$elapsed_sec thresholdSec=$max_seconds pid=$pid action=kill"
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "ERROR: $label failed (wall-timeout)"
+      echo "--- $label log (last 40 lines) ---"
+      tail -40 "$log_file" 2>/dev/null || true
+      return 1
+    fi
+
+    if [ "$stale_seconds" -gt 0 ] && [ "$log_age_sec" -ge "$stale_seconds" ]; then
+      WAIT_FOR_JOB_FAIL_REASON="log-stall-timeout"
+      WAIT_FOR_JOB_FAIL_DETAIL="elapsedSec=$elapsed_sec logAgeSec=$log_age_sec thresholdSec=$stale_seconds"
+      log_progress "[CONSOLE] e2e-wait failure label=$label reason=log-stall-timeout elapsedSec=$elapsed_sec logAgeSec=$log_age_sec thresholdSec=$stale_seconds pid=$pid action=kill"
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "ERROR: $label failed (log-stall-timeout)"
+      echo "--- $label log (last 40 lines) ---"
+      tail -40 "$log_file" 2>/dev/null || true
+      return 1
+    fi
+
+    sleep "$poll_seconds"
+  done
 
   if wait "$pid"; then
+    now_ts=$(date +%s)
+    elapsed_sec=$((now_ts - start_ts))
+    WAIT_FOR_JOB_ELAPSED_SEC="$elapsed_sec"
+    WAIT_FOR_JOB_LOG_AGE_SEC=$((now_ts - last_log_change_ts))
+    log_progress "[CONSOLE] e2e-wait success label=$label pid=$pid elapsedSec=$elapsed_sec logAgeSec=$WAIT_FOR_JOB_LOG_AGE_SEC"
     return 0
   fi
 
+  now_ts=$(date +%s)
+  elapsed_sec=$((now_ts - start_ts))
+  WAIT_FOR_JOB_ELAPSED_SEC="$elapsed_sec"
+  WAIT_FOR_JOB_LOG_AGE_SEC=$((now_ts - last_log_change_ts))
+  WAIT_FOR_JOB_FAIL_REASON="process-exit-nonzero"
+  WAIT_FOR_JOB_FAIL_DETAIL="elapsedSec=$elapsed_sec logAgeSec=$WAIT_FOR_JOB_LOG_AGE_SEC"
+  log_progress "[CONSOLE] e2e-wait failure label=$label reason=process-exit-nonzero elapsedSec=$elapsed_sec logAgeSec=$WAIT_FOR_JOB_LOG_AGE_SEC"
   echo "ERROR: $label failed"
   echo "--- $label log (last 40 lines) ---"
   tail -40 "$log_file" 2>/dev/null || true
@@ -684,6 +768,7 @@ xcodebuild \
   > "$MAC_BUILD_LOG" 2>&1 &
 MAC_BUILD_PID=$!
 
+log_progress "[CONSOLE] e2e-ipad-build entry attempt=1 device=$IPAD_DEVICE_ID derivedData=$IPAD_DERIVED_DATA"
 xcodebuild \
   -workspace "$WORKSPACE" \
   -scheme "$IPAD_SCHEME" \
@@ -696,12 +781,82 @@ IPAD_BUILD_PID=$!
 
 MAC_BUILD_OK=true
 IPAD_BUILD_OK=true
+IPAD_BUILD_FAIL_REASON="none"
+IPAD_BUILD_FAIL_DETAIL=""
+IPAD_BUILD_STALLED=false
 
-wait_for_job "$MAC_BUILD_PID" "Mac build" "$MAC_BUILD_LOG" || MAC_BUILD_OK=false
-wait_for_job "$IPAD_BUILD_PID" "iPad build" "$IPAD_BUILD_LOG" || IPAD_BUILD_OK=false
+wait_for_job "$MAC_BUILD_PID" "Mac build" "$MAC_BUILD_LOG" 900 240 || MAC_BUILD_OK=false
+if wait_for_job "$IPAD_BUILD_PID" "iPad build" "$IPAD_BUILD_LOG" 900 120; then
+  IPAD_BUILD_OK=true
+else
+  IPAD_BUILD_OK=false
+  IPAD_BUILD_FAIL_REASON="$WAIT_FOR_JOB_FAIL_REASON"
+  IPAD_BUILD_FAIL_DETAIL="$WAIT_FOR_JOB_FAIL_DETAIL"
+  if [ "$IPAD_BUILD_FAIL_REASON" = "log-stall-timeout" ] || [ "$IPAD_BUILD_FAIL_REASON" = "wall-timeout" ]; then
+    IPAD_BUILD_STALLED=true
+  fi
+fi
 
 MAC_BUILD_PID=""
 IPAD_BUILD_PID=""
+
+if [ "$IPAD_BUILD_OK" = true ]; then
+  log_progress "[CONSOLE] e2e-ipad-build success attempt=1 device=$IPAD_DEVICE_ID"
+else
+  ipad_destination_timeout=false
+  if grep -q "Timed out waiting for all destinations matching the provided destination specifier to become available" "$IPAD_BUILD_LOG" 2>/dev/null; then
+    ipad_destination_timeout=true
+  fi
+  log_progress "[CONSOLE] e2e-ipad-build failure attempt=1 device=$IPAD_DEVICE_ID destinationTimeout=$ipad_destination_timeout waitFailReason=$IPAD_BUILD_FAIL_REASON waitFailDetail=$IPAD_BUILD_FAIL_DETAIL stalled=$IPAD_BUILD_STALLED"
+
+  if [ "$ipad_destination_timeout" = true ] || [ "$IPAD_BUILD_STALLED" = true ]; then
+    retry_decision_reason="destination-timeout"
+    if [ "$IPAD_BUILD_STALLED" = true ]; then
+      retry_decision_reason="watchdog-$IPAD_BUILD_FAIL_REASON"
+    fi
+    log_progress "[CONSOLE] e2e-ipad-build decision attempt=1 reason=$retry_decision_reason action=retry waitSeconds=10"
+    sleep 10
+
+    {
+      echo ""
+      echo "=== RETRY ATTEMPT 2 ($(date '+%Y-%m-%d %H:%M:%S')) ==="
+    } >> "$IPAD_BUILD_LOG"
+
+    log_progress "[CONSOLE] e2e-ipad-build entry attempt=2 device=$IPAD_DEVICE_ID derivedData=$IPAD_DERIVED_DATA"
+    xcodebuild \
+      -workspace "$WORKSPACE" \
+      -scheme "$IPAD_SCHEME" \
+      -destination "id=$IPAD_DEVICE_ID" \
+      -configuration Release \
+      -derivedDataPath "$IPAD_DERIVED_DATA" \
+      clean build \
+      >> "$IPAD_BUILD_LOG" 2>&1 &
+    IPAD_BUILD_PID=$!
+
+    if wait_for_job "$IPAD_BUILD_PID" "iPad build retry" "$IPAD_BUILD_LOG" 900 120; then
+      IPAD_BUILD_OK=true
+      log_progress "[CONSOLE] e2e-ipad-build success attempt=2 device=$IPAD_DEVICE_ID"
+    else
+      IPAD_BUILD_OK=false
+      retry_wait_fail_reason="$WAIT_FOR_JOB_FAIL_REASON"
+      retry_wait_fail_detail="$WAIT_FOR_JOB_FAIL_DETAIL"
+      retry_destination_timeout=false
+      if grep -q "Timed out waiting for all destinations matching the provided destination specifier to become available" "$IPAD_BUILD_LOG" 2>/dev/null; then
+        retry_destination_timeout=true
+      fi
+      retry_stalled=false
+      if [ "$retry_wait_fail_reason" = "log-stall-timeout" ] || [ "$retry_wait_fail_reason" = "wall-timeout" ]; then
+        retry_stalled=true
+      fi
+      log_progress "[CONSOLE] e2e-ipad-build failure attempt=2 device=$IPAD_DEVICE_ID destinationTimeout=$retry_destination_timeout waitFailReason=$retry_wait_fail_reason waitFailDetail=$retry_wait_fail_detail stalled=$retry_stalled"
+      log_progress "[CONSOLE] e2e-ipad-build exit status=failed reason=retry-exhausted"
+    fi
+    IPAD_BUILD_PID=""
+  else
+    log_progress "[CONSOLE] e2e-ipad-build decision attempt=1 reason=non-timeout action=no-retry"
+    log_progress "[CONSOLE] e2e-ipad-build exit status=failed reason=non-timeout-build-error"
+  fi
+fi
 
 log_progress "$(summarize_build_log "$MAC_BUILD_LOG")"
 log_progress "$(summarize_build_log "$IPAD_BUILD_LOG")"
@@ -860,6 +1015,84 @@ done
 echo ""
 
 log_progress "=== [6/6] Launching iPad in test mode ==="
+launch_ipad_for_tests() {
+  local launch_args=("$@")
+  local max_attempts=2
+  local attempt=1
+  local launch_probe_seconds=12
+  local retry_wait_seconds=6
+
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if [ "$attempt" -gt 1 ]; then
+      {
+        echo ""
+        echo "=== LAUNCH RETRY ATTEMPT $attempt ($(date '+%Y-%m-%d %H:%M:%S')) ==="
+      } >> "$IPAD_LOG_FILE"
+    fi
+
+    log_progress "[CONSOLE] e2e-ipad-launch entry attempt=$attempt device=$IPAD_DEVICE_ID profile=$PROFILE transportRotation=$ROTATION_TRANSPORTS"
+
+    xcrun devicectl device process launch \
+      --device "$IPAD_DEVICE_ID" \
+      --terminate-existing \
+      --console \
+      "$BUNDLE_ID" \
+      -- "${launch_args[@]}" \
+      2>&1 | tee -a "$IPAD_LOG_FILE" | awk -v results_log="$LOG_FILE" '
+        /\[TEST\]/ {
+          print
+          print >> results_log
+          fflush()
+          fflush(results_log)
+        }
+      ' &
+    IPAD_PID=$!
+
+    local probe_elapsed=0
+    while [ "$probe_elapsed" -lt "$launch_probe_seconds" ]; do
+      if ! kill -0 "$IPAD_PID" 2>/dev/null; then
+        break
+      fi
+      if grep -q "\[TEST\] RUNNING:" "$IPAD_LOG_FILE" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+      probe_elapsed=$((probe_elapsed + 1))
+    done
+
+    if kill -0 "$IPAD_PID" 2>/dev/null; then
+      log_progress "[CONSOLE] e2e-ipad-launch success attempt=$attempt pid=$IPAD_PID probeSec=$probe_elapsed"
+      return 0
+    fi
+
+    local launch_reason="process-exit-early"
+    if grep -q "Broken pipe" "$IPAD_LOG_FILE" 2>/dev/null; then
+      launch_reason="broken-pipe"
+    elif grep -q "No provider was found" "$IPAD_LOG_FILE" 2>/dev/null; then
+      launch_reason="no-provider"
+    elif grep -q "timed out" "$IPAD_LOG_FILE" 2>/dev/null; then
+      launch_reason="devicectl-timeout"
+    fi
+
+    log_progress "[CONSOLE] e2e-ipad-launch failure attempt=$attempt reason=$launch_reason probeSec=$probe_elapsed"
+
+    if [ "$attempt" -lt "$max_attempts" ] && { [ "$launch_reason" = "broken-pipe" ] || [ "$launch_reason" = "no-provider" ]; }; then
+      log_progress "[CONSOLE] e2e-ipad-launch decision attempt=$attempt reason=$launch_reason action=retry waitSeconds=$retry_wait_seconds"
+      # Nudge CoreDevice to refresh tunnel/provider state before retry.
+      xcrun devicectl list devices >/dev/null 2>&1 || true
+      sleep "$retry_wait_seconds"
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    log_progress "[CONSOLE] e2e-ipad-launch exit status=failed attempt=$attempt reason=$launch_reason"
+    return 1
+  done
+
+  log_progress "[CONSOLE] e2e-ipad-launch exit status=failed reason=retry-exhausted maxAttempts=$max_attempts"
+  return 1
+}
+
 # Build launch arguments array
 IPAD_LAUNCH_ARGS=(--test-mode --qr-payload "$QR_PAYLOAD_B64")
 IPAD_LAUNCH_ARGS+=(--transport-rotation "$ROTATION_TRANSPORTS")
@@ -901,21 +1134,12 @@ log_progress "iPad launch args: ${IPAD_LAUNCH_ARGS[*]}"
 
 # Pass the QR payload as a launch argument (--qr-payload <base64>)
 # iPad reads this instead of scanning a physical QR code
-xcrun devicectl device process launch \
-  --device "$IPAD_DEVICE_ID" \
-  --terminate-existing \
-  --console \
-  "$BUNDLE_ID" \
-  -- "${IPAD_LAUNCH_ARGS[@]}" \
-  2>&1 | tee -a "$IPAD_LOG_FILE" | awk -v results_log="$LOG_FILE" '
-    /\[TEST\]/ {
-      print
-      print >> results_log
-      fflush()
-      fflush(results_log)
-    }
-  ' &
-IPAD_PID=$!
+if ! launch_ipad_for_tests "${IPAD_LAUNCH_ARGS[@]}"; then
+  echo "ERROR: iPad launch failed before test execution"
+  echo "--- Last 40 iPad launch lines ---"
+  tail -n 40 "$IPAD_LOG_FILE" 2>/dev/null
+  exit 1
+fi
 
 # ---- Wait for test results ----
 wait_and_parse_results() {
@@ -941,6 +1165,23 @@ wait_and_parse_results() {
       # Give a moment for any remaining output
       sleep 1
       break
+    fi
+
+    if [ -n "$IPAD_PID" ] && ! kill -0 "$IPAD_PID" 2>/dev/null; then
+      if ! grep -q "\[TEST\] COMPLETE:" "$IPAD_LOG_FILE" 2>/dev/null; then
+        ipad_launch_drop_reason="process-exit"
+        if grep -q "Broken pipe" "$IPAD_LOG_FILE" 2>/dev/null; then
+          ipad_launch_drop_reason="broken-pipe"
+        elif grep -q "No provider was found" "$IPAD_LOG_FILE" 2>/dev/null; then
+          ipad_launch_drop_reason="no-provider"
+        fi
+        log_progress "[CONSOLE] e2e-ipad-launch failure attempt=active reason=$ipad_launch_drop_reason action=abort-wait elapsedSec=$ELAPSED"
+        echo ""
+        echo "ERROR: iPad launch stream exited early (reason=$ipad_launch_drop_reason)"
+        echo "--- Last 20 iPad launch lines ---"
+        tail -n 20 "$IPAD_LOG_FILE" 2>/dev/null
+        break
+      fi
     fi
 
     # Detect app crash (signal termination)
