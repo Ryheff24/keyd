@@ -19,16 +19,16 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.149` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `32 ms` | `7 ms` | `6 ms` | ❌ |
+| FPS | `57.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.296` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `36 ms` | `7 ms` | `6 ms` | ❌ |
 | Pipeline latency p95 | `107 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `47 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `56 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `130 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `72 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `35 ms` | `8 ms` | `6 ms` | ❌ |
+| Pipeline latency avg | `51 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `69 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `129 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `77 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `36 ms` | `8 ms` | `6 ms` | ❌ |
 | Heavy-load pipeline p95 | `105 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
@@ -109,3 +109,4 @@ Rules:
 | 2026-04-04 | 18:59:13 EDT | `2547d7b` | `2752x1786` | `2496x1620` | `57.4 fps` | `1.297` | `37/106/51 ms` | `69/129/77 ms` | `60.1 fps, 34/104 ms` | `1` | `26/33` | wifi: iteration6 tcp-scheduler recovery spacing under completion-tail pressure |
 | 2026-04-04 | 19:07:55 EDT | `5936ba5` | `2752x1786` | `2496x1620` | `57.9 fps` | `1.296` | `37/107/51 ms` | `69/129/77 ms` | `59.0 fps, 39/107 ms` | `1` | `26/33` | wifi: iteration7 fast adaptive recovery ramp after transient completion-tail |
 | 2026-04-04 | 19:16:52 EDT | `8c1db57` | `2752x1786` | `2496x1620` | `57.0 fps` | `1.149` | `32/107/47 ms` | `56/130/72 ms` | `59.4 fps, 35/105 ms` | `1` | `26/33` | wifi: iteration8 synthetic timer catch-up after capture cadence lag |
+| 2026-04-04 | 19:25:40 EDT | `ef9e343` | `2752x1786` | `2496x1620` | `57.5 fps` | `1.296` | `36/107/51 ms` | `69/129/77 ms` | `59.6 fps, 36/105 ms` | `1` | `26/33` | wifi: iteration9 synthetic emit-accounting guard for failed frame emission |
