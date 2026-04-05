@@ -465,6 +465,13 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
 
         let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
 
+        // Force WiFi interface when the host is not link-local. When USB NCM
+        // is also present, iOS prefers wired and routes WiFi-subnet traffic
+        // through USB NCM, which can't reach the Mac's WiFi IP.
+        if !qrPayload.host.hasPrefix("169.254.") {
+            tcpParams.requiredInterfaceType = .wifi
+        }
+
         let host = NWEndpoint.Host(qrPayload.host)
         let port = NWEndpoint.Port(rawValue: qrPayload.port)!
         let endpoint = NWEndpoint.hostPort(host: host, port: port)
@@ -857,6 +864,11 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
             }, DispatchQueue.global())
 
         let tcpParams = NWParameters(tls: tlsOptions, tcp: .init())
+
+        // Force WiFi when host is not link-local (same as test mode path)
+        if !qrPayload.host.hasPrefix("169.254.") {
+            tcpParams.requiredInterfaceType = .wifi
+        }
 
         let host = NWEndpoint.Host(qrPayload.host)
         let port = NWEndpoint.Port(rawValue: qrPayload.port)!
