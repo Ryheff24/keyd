@@ -14,7 +14,11 @@ DEVICE_SELECTORS := $(filter ipad iphone ios mac,$(wordlist 2,$(words $(MAKECMDG
 
 # Archived legacy targets remain below for backward compatibility.
 # `index-remote` is the supported indexing target here, and `run` delegates to the RemoteDesktop script.
-.PHONY: deploy run attach stop index index-remote index-legacy index-all test-integration ipad iphone ios mac
+# Skip build variants:
+#   make run skip
+#   make run -- --skip
+#   make run-skip
+.PHONY: deploy run run-skip attach stop index index-remote index-legacy index-all test-integration ipad iphone ios mac skip --skip
 
 deploy: test-integration
 	@WORKSPACE_PATH="$(WORKSPACE_PATH)" \
@@ -29,7 +33,13 @@ deploy: test-integration
 	$(SCRIPT) deploy
 
 run:
-	@$(RUN_APPS_SCRIPT)
+	@$(RUN_APPS_SCRIPT) $(if $(filter skip --skip,$(MAKECMDGOALS)),--skip,)
+
+run-skip:
+	@$(RUN_APPS_SCRIPT) --skip
+
+skip --skip:
+	@:
 
 attach:
 	@selectors="$(DEVICE_SELECTORS)"; \

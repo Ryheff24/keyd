@@ -1,5 +1,42 @@
 # CURRENT
 
+## Lane WiFi Iteration 50 (iteration16.4 run triage + mid-depth cooldown early release)
+
+- Timestamp: 2026-04-04 21:58:06 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration16.4 mid-depth cooldown release valve @24ms"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers unchanged: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter16.3 (requested focus):
+  - `1% low`: sustained `8.6 -> 9.2` (improved), fps test `8.6 -> 9.2` (improved).
+  - `maxGap`: sustained `225ms -> 375ms` (regressed), fps `584ms -> 375ms` (improved).
+  - suppression events (`softSuppressedByDepthCooldown=true`): `1156 -> 960` (improved, still dominant).
+  - release-valve activation: `softSuppressionReleaseApplied=true` observed `75` times (`legacy24ms` only in this run).
+  - queue-delay tails (SessionManager `hevc-handoff present`): `p95 23.46ms -> 23.48ms` (flat), `p99 25.91ms -> 25.87ms` (slight improvement), `max 28.95ms -> 26.45ms` (improved).
+- Highest-impact remaining bottleneck evidence:
+  - Depth-3 cooldown suppression still dominates jitter tails: `pendingBefore=3` with `softSuppressedByDepthCooldown=true` occurred `442` times.
+  - Suppressed depth-3 oldest-delay windows cluster just below the release threshold (`p50=21.56ms`, `p95=23.36ms`, `max=23.87ms`), so they miss the current `24ms` valve and continue FIFO holds during cooldown.
+  - Transport remains non-lossy (`frame-loss PASS 0.0%`, sustained reconnects `0`), keeping bottleneck centered on render dequeue catchup gating rather than network loss.
+- Hypothesis tested this iteration:
+  - Extend mid-depth cooldown release to an early 22ms lane so depth-3 stale windows (`22–<24ms`) can bypass cooldown suppression before tails widen.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added early release threshold constant: `softDepthCooldownReleaseEarlyQueueDelayThresholdMs = 22.0`.
+  - Added branch-complete release classification:
+    - `softSuppressionReleaseLegacyCandidate`
+    - `softSuppressionReleaseEarlyCandidate`
+    - `softSuppressionReleaseReason=legacy24ms|early22ms|none`
+    - `softSuppressionReleaseEarlyDelayDeltaMs`
+  - Kept existing fields and semantics intact (`softSuppressionReleaseCandidate`, `softSuppressionReleaseApplied`, `softSuppressionReleaseDelayDeltaMs`), now with explicit early-vs-legacy reasoning on both apply and hold branches.
+  - Logging updated in all touched paths: `catchup decision`, `dequeue branch`, and `render dequeue`.
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅ (`** BUILD SUCCEEDED **`)
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - `softSuppressionReleaseReason=early22ms` activates materially in prior `oldestDelay≈22–23.8ms` depth-3 windows,
+    - `pendingBefore=3 + softSuppressedByDepthCooldown=true` contracts from `442`,
+    - sustained `maxGap` recovers while preserving fps `1% low` gains and no fidelity/security regressions.
+
 ## Lane WiFi Iteration 49 (iteration16.3 run triage + mid-depth cooldown release valve)
 
 - Timestamp: 2026-04-04 21:50:00 EDT

@@ -1,8 +1,8 @@
 ---
 name: pipeline-debug
 description: This agent implements the RemoteDesktop long-horizon debugging and optimization process for E2E streaming performance.
-model: claude-opus-4-6
-effort: medium
+model: opus
+effort: high
 ---
 
 # RemoteDesktop Long-Horizon Agent

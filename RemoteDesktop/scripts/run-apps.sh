@@ -8,6 +8,7 @@
 #   --transport usb|wifi|awdl     Optional transport hint for Mac agent
 #   --wired-only                  Disable WiFi/AWDL, USB only
 #   --fresh-pairing               Clear pairing state/certs before launch
+#   --skip                        Skip build step and reuse existing artifacts
 #   --help                        Show usage
 
 set -euo pipefail
@@ -19,6 +20,7 @@ source "$SCRIPT_DIR/async-index.sh"
 TRANSPORT=""
 WIRED_ONLY=false
 FRESH_PAIRING=false
+SKIP_BUILD=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +30,8 @@ while [[ $# -gt 0 ]]; do
       WIRED_ONLY=true; shift ;;
     --fresh-pairing)
       FRESH_PAIRING=true; shift ;;
+    --skip)
+      SKIP_BUILD=true; shift ;;
     --help)
       grep '^#' "$0" | sed -e 's/^# \{0,1\}//'
       exit 0 ;;
@@ -114,45 +118,50 @@ echo "============================================"
 echo ""
 
 # ---- Step 1: Build Mac agent and iPad app in parallel ----
-echo "=== [1/5] Building Mac agent + iPad app in parallel ==="
-xcodebuild \
-  -project "$MAC_PROJECT" \
-  -scheme "$MAC_SCHEME" \
-  -destination "platform=macOS,arch=arm64" \
-  -configuration Release \
-  -derivedDataPath "$MAC_DERIVED_DATA" \
-  clean build \
-  > "$MAC_BUILD_LOG" 2>&1 &
-MAC_BUILD_PID=$!
+if [ "$SKIP_BUILD" = true ]; then
+  echo "=== [1/5] Skipping build (--skip), reusing existing artifacts ==="
+  echo ""
+else
+  echo "=== [1/5] Building Mac agent + iPad app in parallel ==="
+  xcodebuild \
+    -project "$MAC_PROJECT" \
+    -scheme "$MAC_SCHEME" \
+    -destination "platform=macOS,arch=arm64" \
+    -configuration Release \
+    -derivedDataPath "$MAC_DERIVED_DATA" \
+    clean build \
+    > "$MAC_BUILD_LOG" 2>&1 &
+  MAC_BUILD_PID=$!
 
-xcodebuild \
-  -workspace "$WORKSPACE" \
-  -scheme "$IPAD_SCHEME" \
-  -destination "id=$IPAD_DEVICE_ID" \
-  -configuration Release \
-  -derivedDataPath "$IPAD_DERIVED_DATA" \
-  clean build \
-  > "$IPAD_BUILD_LOG" 2>&1 &
-IPAD_BUILD_PID=$!
+  xcodebuild \
+    -workspace "$WORKSPACE" \
+    -scheme "$IPAD_SCHEME" \
+    -destination "id=$IPAD_DEVICE_ID" \
+    -configuration Release \
+    -derivedDataPath "$IPAD_DERIVED_DATA" \
+    clean build \
+    > "$IPAD_BUILD_LOG" 2>&1 &
+  IPAD_BUILD_PID=$!
 
-MAC_BUILD_OK=true
-IPAD_BUILD_OK=true
+  MAC_BUILD_OK=true
+  IPAD_BUILD_OK=true
 
-wait_for_job "$MAC_BUILD_PID" "Mac build" "$MAC_BUILD_LOG" || MAC_BUILD_OK=false
-wait_for_job "$IPAD_BUILD_PID" "iPad build" "$IPAD_BUILD_LOG" || IPAD_BUILD_OK=false
+  wait_for_job "$MAC_BUILD_PID" "Mac build" "$MAC_BUILD_LOG" || MAC_BUILD_OK=false
+  wait_for_job "$IPAD_BUILD_PID" "iPad build" "$IPAD_BUILD_LOG" || IPAD_BUILD_OK=false
 
-MAC_BUILD_PID=""
-IPAD_BUILD_PID=""
+  MAC_BUILD_PID=""
+  IPAD_BUILD_PID=""
 
-echo "$(summarize_build_log "$MAC_BUILD_LOG")"
-echo "$(summarize_build_log "$IPAD_BUILD_LOG")"
-echo ""
+  echo "$(summarize_build_log "$MAC_BUILD_LOG")"
+  echo "$(summarize_build_log "$IPAD_BUILD_LOG")"
+  echo ""
 
-if [ "$MAC_BUILD_OK" != true ] || [ "$IPAD_BUILD_OK" != true ]; then
-  exit 1
+  if [ "$MAC_BUILD_OK" != true ] || [ "$IPAD_BUILD_OK" != true ]; then
+    exit 1
+  fi
+
+  start_async_index "run-apps.sh"
 fi
-
-start_async_index "run-apps.sh"
 
 MAC_APP="$MAC_DERIVED_DATA/Build/Products/Release/RemoteDesktopAgent.app"
 if [ ! -d "$MAC_APP" ]; then

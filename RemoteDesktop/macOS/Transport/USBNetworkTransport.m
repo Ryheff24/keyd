@@ -1011,26 +1011,30 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
         USBNetworkTransport *self2 = weakSelf;
         if (!self2) return;
 
-        os_log(transport_log(), "TLS input connection accepted from iPad");
+        os_log(transport_log(), "TLS input connection accepted from iPad (starting TLS handshake)");
 
         if (self2.inputConnection) {
             nw_connection_cancel(self2.inputConnection);
         }
         self2.inputConnection = connection;
-        self2.isConnected = YES;
-
-        /* Notify SessionManager that TCP is ready — handshake can now be sent */
-        if (self2.onInputConnectionReady) {
-            self2.onInputConnectionReady();
-        }
 
         nw_connection_set_queue(connection, self2.transportQueue);
 
         nw_connection_set_state_changed_handler(connection, ^(nw_connection_state_t state, nw_error_t _Nullable connError) {
-            if (state == nw_connection_state_failed || state == nw_connection_state_cancelled) {
-                os_log(transport_log(), "TLS input connection ended");
-                USBNetworkTransport *self3 = weakSelf;
-                if (self3 && self3.inputConnection == connection) {
+            USBNetworkTransport *self3 = weakSelf;
+            if (!self3) return;
+
+            if (state == nw_connection_state_ready) {
+                os_log(transport_log(), "TLS input connection READY (TLS handshake complete)");
+                self3.isConnected = YES;
+                if (self3.onInputConnectionReady) {
+                    self3.onInputConnectionReady();
+                }
+                [self3 scheduleInputReceive:connection];
+            } else if (state == nw_connection_state_failed || state == nw_connection_state_cancelled) {
+                os_log(transport_log(), "TLS input connection ended (state=%d error=%@)",
+                       (int)state, connError ? nw_error_copy_cf_error(connError) : NULL);
+                if (self3.inputConnection == connection) {
                     self3.inputConnection = nil;
                     self3.isConnected = NO;
                     if (self3.mediaConnection) {
@@ -1041,11 +1045,12 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
                         self3.onInputConnectionLost();
                     }
                 }
+            } else {
+                os_log(transport_log(), "TLS input connection state=%d", (int)state);
             }
         });
 
         nw_connection_start(connection);
-        [self2 scheduleInputReceive:connection];
     });
 
     nw_listener_start(_inputListener);
