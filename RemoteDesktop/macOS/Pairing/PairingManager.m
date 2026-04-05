@@ -982,19 +982,24 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 
     freeifaddrs(ifaddrs);
 
-    /* Priority: USB NCM > Wi-Fi > fallback */
+    /* Priority: Wi-Fi > fallback > USB NCM.
+     * QR pairing MUST use a routable IP — the iPad connects without binding
+     * to a specific interface, so link-local (169.254.x.x) fails when WiFi
+     * is also present (iOS routes via WiFi, which can't reach link-local).
+     * USB NCM peer discovery happens later via peerAddressUpdate. */
     NSString *result = nil;
     NSString *reason = nil;
 
-    if (usbNCMIP) {
-        result = usbNCMIP;
-        reason = [NSString stringWithFormat:@"USB NCM link-local on %@", usbNCMIfName];
-    } else if (en0IP) {
+    if (en0IP) {
         result = en0IP;
         reason = @"Wi-Fi (en0)";
     } else if (fallbackIP) {
         result = fallbackIP;
         reason = [NSString stringWithFormat:@"fallback on %@", fallbackIfName];
+    } else if (usbNCMIP) {
+        /* Last resort: USB NCM link-local only if no routable IP available */
+        result = usbNCMIP;
+        reason = [NSString stringWithFormat:@"USB NCM link-local on %@ (no routable IP)", usbNCMIfName];
     }
 
     if (result) {
