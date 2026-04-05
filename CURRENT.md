@@ -1,5 +1,44 @@
 # CURRENT
 
+## Lane WiFi Iteration 49 (iteration16.3 run triage + mid-depth cooldown release valve)
+
+- Timestamp: 2026-04-04 21:50:00 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration16.3 aggressive relief threshold 22ms + legacy 24ms telemetry"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers unchanged: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter16.2 (requested focus):
+  - `1% low`: sustained `8.0 -> 8.6` (improved), fps test `8.0 -> 8.6` (improved).
+  - `maxGap`: sustained `967ms -> 225ms` (major improvement), fps `967ms -> 584ms` (improved, still failing).
+  - hard-depth aggressive apply count (`hardDepthAggressiveDecision=apply`): `4 -> 18` (22ms threshold reactivated relief vs under-fire).
+  - hard-depth aggressive hold count (this run): `777` (large hold dominance remains).
+  - suppression events (`softSuppressedByDepthCooldown=true`): `585 -> 1156` (regressed; over-hold still dominant).
+  - Queue-delay tails (iPad render dequeue): `p95 22.45ms -> 23.46ms`, `p99 25.65ms -> 25.91ms`, `max 31.61ms -> 28.95ms`.
+- Highest-impact remaining bottleneck evidence:
+  - Dominant outliers are now repeatedly `pendingBefore=3` windows with `oldestDelay≈28–29ms` and `softSuppressedByDepthCooldown=true`, yielding `mode=fifo` holds even though delay is well above mid-depth threshold.
+  - In those windows, hard-depth aggressive logic is `na` (`pending<4`), so the new 22ms threshold cannot help; cooldown suppression over-holds mid-depth backlog and then emits delayed soft trims one tick later, preserving jitter/tail stutter.
+- Hypothesis tested this iteration:
+  - Add a mid-depth cooldown release valve so depth-cooldown suppression does not block soft catchup when `pending=3` backlog is already stale (>=24ms).
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added `softDepthCooldownReleaseQueueDelayThresholdMs = 24.0`.
+  - New branch behavior:
+    - `softSuppressionReleaseCandidate`: true when depth-cooldown is active at mid-depth (`pending=3`), hard-depth candidate is true, and queue delay is >=24ms.
+    - `softSuppressionReleaseApplied`: bypasses soft suppression in that branch (while still respecting hard-delay path).
+  - Added branch-complete telemetry across decision/dequeue/render logs:
+    - `softCooldownReleaseThreshold`
+    - `softSuppressionReleaseCandidate`
+    - `softSuppressionReleaseApplied`
+    - `softSuppressionReleaseDelayDeltaMs`
+  - Preserves fidelity/resolution and test semantics (no threshold/reporting changes).
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - `softSuppressionReleaseApplied=true` appears on the prior `pending=3 oldDelay~28ms` hold windows,
+    - `softSuppressedByDepthCooldown=true` count contracts materially,
+    - queue-delay p95/p99 and fps `maxGap`/`1% low` improve without reconnect/security/fidelity regressions.
+
 ## Lane WiFi Iteration 48 (iteration16.2 run triage + hard-depth aggressive relief rebalance)
 
 - Timestamp: 2026-04-04 21:42:27 EDT
