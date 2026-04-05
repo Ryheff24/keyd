@@ -1,5 +1,36 @@
 # CURRENT
 
+## Lane WiFi Iteration 35 (iteration13 canonical run triage + HEVC hard→soft relief admit)
+
+- Timestamp: 2026-04-04 19:56:41 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration13 hevc soft-hard saturation guard reduce pending2 skip tails"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`
+  - Failing signals: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metric deltas vs iteration12:
+  - sustained/fps `1% low 9.2 -> 10.0` (improved).
+  - fps test `maxGap 400ms -> 417ms` (regressed tail).
+  - iPad starvation signals `762 -> 674` (`starvationSignal=true`, improved count).
+  - HEVC saturation behavior: `skip=6 -> 6` (flat), but **pending=2 skip clusters eliminated** (`branch=admit-soft=10`, `branch=admit=2`; all 6 skips now `mode=hard pendingBefore=3`).
+- Highest-impact bottleneck evidence:
+  - Remaining skip clusters are now hard-mode only at `pendingBefore=3` (e.g. startup `19:50:38` and burst cluster `19:51:54` with 3 skips in ~19ms).
+  - One hard skip still occurred after drain to `pendingAfter=2`, indicating current hard mode is over-conservative during partial relief and still injects cadence holes that line up with `maxGap=417ms`.
+- Hypothesis tested:
+  - Primary remaining stutter is hard-saturation stickiness: when backlog drops from 3->2 within retry window, guard should downgrade to soft-admit instead of forcing skip.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Encode/HEVCEncoder.m`):
+  - Added hard-relief detection in retry loop (`pending < hardDropThreshold`) so hard mode can admit once pressure downgrades to soft.
+  - Added explicit success-branch telemetry:
+    - `encodePixelBuffer: saturation guard branch=admit-hard-downgraded ... dropThreshold=...`
+  - Preserved skip/failure branch telemetry and semantics for true hard saturation (`pending>=3` persists).
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - reduced hard skip clustering in startup/restart windows,
+    - appearance of `branch=admit-hard-downgraded` replacing prior `pendingAfter=2` hard skips,
+    - improved `fps maxGap` while maintaining/improving `1% low` and starvation count with unchanged fidelity/security behavior.
+
 ## Lane WiFi Iteration 34 (iteration12 canonical run triage + HEVC soft/hard saturation guard)
 
 - Timestamp: 2026-04-04 19:49:06 EDT

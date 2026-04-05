@@ -275,9 +275,11 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
         uint64_t waitedUs = 0;
         BOOL admittedAfterWait = NO;
         BOOL softSaturation = (pendingBefore < kEncodePendingSaturationHardDropPendingThreshold);
+        BOOL hardDowngradedToSoft = NO;
         static int saturationRetryLogCount = 0;
         static int saturationAdmitLogCount = 0;
         static int saturationSoftAdmitLogCount = 0;
+        static int saturationHardDowngradeAdmitLogCount = 0;
         static int saturationPlanLogCount = 0;
         _saturationHitStreak++;
         BOOL escalateBudget =
@@ -321,8 +323,13 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
             usleep(kEncodePendingSaturationRetrySleepUs);
             waitedUs += kEncodePendingSaturationRetrySleepUs;
             pending = atomic_load_explicit(&_pendingFrameCount, memory_order_relaxed);
-            if (pending <= 1 || (softSaturation && pending < kEncodePendingSaturationHardDropPendingThreshold)) {
+            BOOL hardRelievedToSoft = (!softSaturation &&
+                                       pending < kEncodePendingSaturationHardDropPendingThreshold);
+            if (pending <= 1 ||
+                (softSaturation && pending < kEncodePendingSaturationHardDropPendingThreshold) ||
+                hardRelievedToSoft) {
                 admittedAfterWait = YES;
+                hardDowngradedToSoft = hardRelievedToSoft;
                 break;
             }
         }
@@ -347,7 +354,19 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
 
         _saturationHitStreak = 0;
         _saturationSkipStreak = 0;
-        if (softSaturation && pending > 1) {
+        if (hardDowngradedToSoft) {
+            saturationHardDowngradeAdmitLogCount++;
+            if (saturationHardDowngradeAdmitLogCount <= 10 ||
+                saturationHardDowngradeAdmitLogCount % 100 == 0) {
+                os_log(hevc_log(),
+                       "encodePixelBuffer: saturation guard branch=admit-hard-downgraded pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu dropThreshold=%d",
+                       pendingBefore,
+                       pending,
+                       waitedUs,
+                       retryBudgetUs,
+                       kEncodePendingSaturationHardDropPendingThreshold);
+            }
+        } else if (softSaturation && pending > 1) {
             saturationSoftAdmitLogCount++;
             if (saturationSoftAdmitLogCount <= 10 || saturationSoftAdmitLogCount % 100 == 0) {
                 os_log(hevc_log(),
