@@ -36,6 +36,7 @@ final class USBNetworkTransport {
     private var pollTimer: DispatchSourceTimer?
     private var detectedLocalIP: String?
     private var detectedMacIP: String?
+    private var detectedMacLinkLocalIP: String?
     private let monitorQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.monitor")
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.transport")
 
@@ -449,19 +450,34 @@ final class USBNetworkTransport {
 
     /// Set the Mac's IP address for USB NCM direct connection.
     /// Called from QR pairing (WiFi IP) or peer address update (USB NCM link-local IP).
-    /// If USB NCM interface is already detected and this is a link-local IP,
-    /// immediately initiates the connection.
+    /// Link-local IPs (169.254.x.x) are stored separately and take priority for USB NCM.
+    /// WiFi IPs do NOT overwrite a previously received link-local IP.
     func setPeerAddress(_ ip: String) {
-        print("[CONSOLE] USBTransport: peer address set to \(ip)")
-        log.info("Peer address set to \(ip)")
-        detectedMacIP = ip
+        if isLinkLocal(ip) {
+            print("[CONSOLE] USBTransport: link-local peer address set to \(ip)")
+            log.info("Link-local peer address set to \(ip)")
+            detectedMacLinkLocalIP = ip
+            detectedMacIP = ip
+        } else if detectedMacLinkLocalIP != nil {
+            print("[CONSOLE] USBTransport: WiFi peer address \(ip) ignored — already have link-local \(detectedMacLinkLocalIP!)")
+            // Keep link-local as the USB peer — WiFi IP can't be reached over USB NCM
+            detectedMacIP = detectedMacLinkLocalIP
+        } else {
+            print("[CONSOLE] USBTransport: peer address set to \(ip) (WiFi, no link-local yet)")
+            log.info("Peer address set to \(ip)")
+            detectedMacIP = ip
+        }
 
-        // If USB NCM interface is already up and we just got a link-local IP
-        // from the Mac's peer address update, connect now.
-        if isLinkLocal(ip), let localIP = detectedLocalIP, !isConnected {
-            print("[CONSOLE] USBTransport: link-local peer address received while USB NCM up — connecting now")
+        // If USB NCM interface is already up and we have a link-local IP, connect now.
+        if let linkLocal = detectedMacLinkLocalIP, let localIP = detectedLocalIP, !isConnected {
+            print("[CONSOLE] USBTransport: link-local peer \(linkLocal) + USB NCM up — connecting now")
             connectOverUSBNCMByIP(localIP: localIP)
         }
+    }
+
+    /// Clear stored link-local IP (e.g., on pairing reset).
+    func clearLinkLocalPeerAddress() {
+        detectedMacLinkLocalIP = nil
     }
 
     private func isLinkLocal(_ ip: String) -> Bool {

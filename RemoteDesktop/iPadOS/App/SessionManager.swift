@@ -328,6 +328,7 @@ final class SessionManager {
         latencyProbeTimer?.invalidate()
         connectingTimeoutTimer?.invalidate()
         usbTransport.stopMonitoring()
+        usbTransport.clearLinkLocalPeerAddress()
         wirelessTransport.stopBrowsing()
         metalRenderer.stop()
         qrPairing.resetPairing()
