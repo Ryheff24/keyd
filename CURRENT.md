@@ -1,5 +1,36 @@
 # CURRENT
 
+## Lane WiFi Iteration 37 (iteration15.1 canonical run triage + pairing connection retain fix)
+
+- Timestamp: 2026-04-04 20:19:33 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.1 transient-dtls-gap control-recovery grace"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 0/32 passed, 32 failed (elapsed: 270.0s)`
+  - Failing signals: hard blocker at `tls-connection`; all downstream signals marked `not reached before timeout`.
+- Key metric deltas vs iter15 baseline (`26/33`, stutter-tail regression run):
+  - Pass count `26 -> 0` (critical regression).
+  - `1% low`, `maxGap`, stutter-count, reconnect/control-recovery stream metrics: **N/A this run** (suite never reached streaming tests).
+- Highest-impact bottleneck evidence:
+  - iPad reached pairing connect attempt but never advanced past TLS preparing:
+    - `/tmp/keyd-e2e-ipad.log`: `test pairing connection state: preparing` then `test pairing TIMEOUT after 10s`.
+  - Mac accepted inbound pairing socket but emitted no post-accept state transition:
+    - `/tmp/keyd-e2e-mac.log`: `Pairing listener: incoming connection from iPad`, `handlePairingConnection: ENTERED -- connection from iPad received`.
+    - Missing expected `Pairing TLS connection ready -- awaiting iPad public key`.
+- Hypothesis tested:
+  - Pairing connection lifecycle on macOS is not retained/observable robustly after accept; transient connection/state-handler loss at this stage causes TLS prepare stall and blocks the entire WiFi pipeline.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Pairing/PairingManager.m`):
+  - Added strong `activePairingConnection` retention and explicit replacement handling for concurrent incoming pairing connections.
+  - Added branch-complete connection lifecycle logs:
+    - `handlePairingConnection: entry|replace-existing|queue-set|start`
+    - per-state logs: `state=invalid|waiting|preparing|ready|failed|cancelled`
+    - receive-path logs: `branch=entry` and `branch=empty` (size/complete/error context).
+  - Added explicit connection cleanup on send failure/success/cancel/failure to prevent stale connection state.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify pairing progresses to `state=ready` + `Pairing TLS connection ready` (instead of prepare-timeout), then resume stutter/bitrate bottleneck analysis with real `1% low` / `maxGap` deltas.
+
 ## Lane WiFi Iteration 36 (iteration14 canonical run triage + HEVC hard relief grace)
 
 - Timestamp: 2026-04-04 20:03:26 EDT

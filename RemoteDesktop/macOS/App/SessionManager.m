@@ -135,7 +135,7 @@ static const uint64_t kWirelessTCPSchedulerRecoverySevereSpacingUs = 8500;
  * pre-encode backpressure gate trips. */
 static const uint64_t kWirelessTCPSchedulerCompletionGuardModerateSpacingUs = 14000;
 static const uint64_t kWirelessTCPSchedulerCompletionGuardSevereSpacingUs = 24000;
-static const uint64_t kWirelessTCPSchedulerMaxSleepUs = 9000;
+static const uint64_t kWirelessTCPSchedulerMaxSleepUs = 20000;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
 static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 95;
@@ -1458,7 +1458,23 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                                    wifiTCPSchedulerShapeLogCount);
                         }
                     }
-                    usleep((useconds_t)MIN(kWirelessTCPSchedulerMaxSleepUs, schedulerDelayUs));
+                    uint64_t appliedDelayUs = MIN(kWirelessTCPSchedulerMaxSleepUs, schedulerDelayUs);
+                    BOOL schedulerDelayClamped = (appliedDelayUs < schedulerDelayUs);
+                    static int wifiTCPSchedulerSleepLogCount = 0;
+                    wifiTCPSchedulerSleepLogCount++;
+                    if (schedulerDelayClamped ||
+                        wifiTCPSchedulerSleepLogCount <= 20 ||
+                        wifiTCPSchedulerSleepLogCount % 120 == 0) {
+                        os_log(sLog, "WiFi TCP scheduler sleep: branch=%{public}s seq=%u inFlightBefore=%d requested=%lluus applied=%lluus cap=%lluus preDrop=%d slow=%d maxCompletion=%dms reason=%{public}s sampled=%{public}s count=%d",
+                               schedulerDelayClamped ? "clamped" : "unclamped",
+                               seq, inFlightBefore,
+                               schedulerDelayUs, appliedDelayUs, kWirelessTCPSchedulerMaxSleepUs,
+                               recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                               schedulerReason,
+                               schedulerDelayClamped ? "forced" : "sampled",
+                               wifiTCPSchedulerSleepLogCount);
+                    }
+                    usleep((useconds_t)appliedDelayUs);
                     enqueueUs = keydrd_host_time_us();
                 }
             } else if (schedulerSpacingUs > 0 && lastSubmitUs > 0 && enqueueUs <= lastSubmitUs) {

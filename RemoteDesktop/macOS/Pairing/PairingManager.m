@@ -35,6 +35,7 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 @property (nonatomic, readwrite, nullable) SecIdentityRef tlsIdentity;
 @property (nonatomic, nullable) SecKeyRef ecdhPrivateKey;
 @property (nonatomic, nullable) nw_listener_t pairingListener;
+@property (nonatomic, nullable) nw_connection_t activePairingConnection;
 @property (nonatomic, nullable) NSData *provisionedClientCertificateDER;
 @property (nonatomic, nullable) NSData *provisionedClientPrivateKeyRepresentation;
 @property (nonatomic, nullable) NSData *provisionedClientFingerprint;
@@ -56,6 +57,10 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 }
 
 - (void)dealloc {
+    if (_activePairingConnection) {
+        nw_connection_cancel(_activePairingConnection);
+        _activePairingConnection = nil;
+    }
     if (_tlsIdentity) {
         CFRelease(_tlsIdentity);
         _tlsIdentity = NULL;
@@ -622,14 +627,33 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
 #pragma mark - Pairing Connection Handler
 
 - (void)handlePairingConnection:(nw_connection_t)conn {
-    os_log(pairing_log(), "handlePairingConnection: ENTERED -- connection from iPad received");
+    os_log(pairing_log(), "handlePairingConnection: entry conn=%{public}p", conn);
+
+    if (_activePairingConnection && _activePairingConnection != conn) {
+        os_log(pairing_log(), "handlePairingConnection: branch=replace-existing oldConn=%{public}p newConn=%{public}p", _activePairingConnection, conn);
+        nw_connection_cancel(_activePairingConnection);
+        _activePairingConnection = nil;
+    }
+    _activePairingConnection = conn;
 
     dispatch_queue_t pairingQueue = dispatch_queue_create("com.keydrd.pairing", DISPATCH_QUEUE_SERIAL);
     nw_connection_set_queue(conn, pairingQueue);
+    os_log(pairing_log(), "handlePairingConnection: branch=queue-set conn=%{public}p", conn);
 
     __weak PairingManager *weakSelf = self;
     nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state,
                                                      nw_error_t _Nullable error) {
+        const char *stateName = "unknown";
+        switch (state) {
+            case nw_connection_state_invalid: stateName = "invalid"; break;
+            case nw_connection_state_waiting: stateName = "waiting"; break;
+            case nw_connection_state_preparing: stateName = "preparing"; break;
+            case nw_connection_state_ready: stateName = "ready"; break;
+            case nw_connection_state_failed: stateName = "failed"; break;
+            case nw_connection_state_cancelled: stateName = "cancelled"; break;
+        }
+        os_log(pairing_log(), "Pairing connection state conn=%{public}p state=%{public}s error=%{public}@", conn, stateName, error);
+
         if (state == nw_connection_state_ready) {
             os_log(pairing_log(), "Pairing TLS connection ready -- awaiting iPad public key");
             /* Receive iPad's ECDH public key (65 bytes for P-256 uncompressed) */
@@ -640,7 +664,11 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                 PairingManager *self2 = weakSelf;
                 if (!self2) return;
 
-                if (content && dispatch_data_get_size(content) > 0) {
+                const size_t receivedSize = content ? dispatch_data_get_size(content) : 0;
+                os_log(pairing_log(), "Pairing receive branch=entry conn=%{public}p size=%{public}lu complete=%{public}d error=%{public}@",
+                       conn, (unsigned long)receivedSize, is_complete, recvError);
+
+                if (content && receivedSize > 0) {
                     __block NSMutableData *receivedData = [NSMutableData data];
                     dispatch_data_apply(content, ^bool(dispatch_data_t region,
                                                         size_t offset,
@@ -673,9 +701,14 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                                 PairingManager *self3 = weakSelf;
                                 if (sendError) {
                                     os_log_error(pairing_log(), "Failed to send Mac public key: %{public}@", sendError);
+                                    nw_connection_cancel(conn);
                                 } else {
                                     os_log(pairing_log(), "Pairing complete -- shared secret derived and stored");
                                     [self3 stopPairingListener];
+                                    nw_connection_cancel(conn);
+                                    if (self3.activePairingConnection == conn) {
+                                        self3.activePairingConnection = nil;
+                                    }
                                     if (self3.onPairingComplete) {
                                         dispatch_async(dispatch_get_main_queue(), ^{
                                             self3.onPairingComplete();
@@ -691,15 +724,30 @@ static NSString *const kTLSCertLabel = @"keydrd-agent-tls";
                         os_log_error(pairing_log(), "Pairing ECDH exchange failed");
                         nw_connection_cancel(conn);
                     }
+                } else {
+                    os_log_error(pairing_log(), "Pairing receive branch=empty conn=%{public}p complete=%{public}d error=%{public}@",
+                                 conn, is_complete, recvError);
+                    nw_connection_cancel(conn);
                 }
             });
         } else if (state == nw_connection_state_failed) {
             os_log_error(pairing_log(), "Pairing connection failed: %{public}@",
                          error ?: (nw_error_t)@"unknown");
+            PairingManager *self2 = weakSelf;
+            if (self2 && self2.activePairingConnection == conn) {
+                self2.activePairingConnection = nil;
+            }
+        } else if (state == nw_connection_state_cancelled) {
+            PairingManager *self2 = weakSelf;
+            os_log(pairing_log(), "Pairing connection cancelled conn=%{public}p", conn);
+            if (self2 && self2.activePairingConnection == conn) {
+                self2.activePairingConnection = nil;
+            }
         }
     });
 
     nw_connection_start(conn);
+    os_log(pairing_log(), "handlePairingConnection: branch=start conn=%{public}p", conn);
 }
 
 - (nullable NSData *)ecdhPublicKeyData {
