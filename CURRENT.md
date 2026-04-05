@@ -1,5 +1,41 @@
 # CURRENT
 
+## Lane WiFi Iteration 40 (iteration15.4 result triage + completion-derived sleep-cap override)
+
+- Timestamp: 2026-04-04 20:38:33 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.4 completion-derived scheduler guard validation"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers remain: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.3 (requested focus):
+  - Sustained `1% low`: `9.2 -> 9.2` (flat); fps test `1% low`: `10.0 -> 9.2` (regressed).
+  - FPS max gap: `158ms -> 250ms` (regressed).
+  - TCP pressure tails (Mac perf window): `preDrop max 4 -> 8`, `tcpMaxCompletion 81ms -> 156ms` (regressed).
+  - Sustained latency tails: `pipeline p95 107ms -> 105ms`, `glass p95 131ms -> 129ms` (small improvement, still far above target).
+- Highest-impact remaining bottleneck evidence:
+  - Completion-derived guard now activates, but severe delay demand is still truncated by sleep cap in the exact stutter window:
+    - `/tmp/keyd-e2e-mac.log`: `completion guard derived ... maxCompletion=156ms ... derivedTarget=53200us`
+    - same sequence: `scheduler shape ... gap=17672us target=53200us delay=35528us`
+    - immediate clamp: `scheduler sleep: branch=clamped ... requested=35528us applied=20000us cap=20000us`
+  - After this clamp, bursts quickly return (`send queued ... target=0us reason=none`) while pre-drop/completion tails are still elevated (`preDrop=8`, `tcpMaxCompletion=156ms`), matching persistent low-tail FPS and stutter.
+- Hypothesis tested:
+  - Under completion-derived severe pressure, the fixed 20ms scheduler sleep cap clips required recovery spacing, allowing burst re-entry before in-flight pressure drains; this preserves low-tail stutter even though guard derivation is present.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added bounded completion-derived sleep-cap override tiers:
+    - moderate cap `32000us`, severe cap `45000us` (base cap remains `20000us`).
+    - only active when completion-derived guard is applied and completion tails are elevated.
+  - Added branch-complete cap-decision logging:
+    - `WiFi TCP scheduler sleep cap: branch=apply|hold ... baseCap/appliedCap ... reason=derived-moderate|derived-severe|base-cap`
+  - Updated existing sleep log to emit effective cap (`cap=%lluus`) so clamp-vs-full-apply is directly visible per send.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - severe completion-derived windows show `sleep cap: branch=apply` and fewer `scheduler sleep: branch=clamped`,
+    - reduced `preDrop`/`tcpMaxCompletion` tails,
+    - improved sustained/fps `1% low` and `maxGap` with non-regressing pipeline/glass p95.
+
 ## Lane WiFi Iteration 39 (iteration15.3 canonical run triage + completion-derived scheduler guard)
 
 - Timestamp: 2026-04-04 20:31:12 EDT

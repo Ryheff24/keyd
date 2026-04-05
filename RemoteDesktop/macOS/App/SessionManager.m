@@ -139,7 +139,11 @@ static const uint64_t kWirelessTCPSchedulerCompletionGuardSevereSpacingUs = 2400
  * target from observed completion latency so scheduler spacing can actually
  * keep in-flight depth below pre-encode drop pressure. */
 static const uint64_t kWirelessTCPSchedulerCompletionGuardSafetyUs = 1200;
+/* Allow deeper (bounded) scheduler sleeps when completion-derived guard shows
+ * severe tail pressure; avoids truncating required recovery spacing. */
 static const uint64_t kWirelessTCPSchedulerMaxSleepUs = 20000;
+static const uint64_t kWirelessTCPSchedulerDerivedSleepCapModerateUs = 32000;
+static const uint64_t kWirelessTCPSchedulerDerivedSleepCapSevereUs = 45000;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
 static const uint64_t kWirelessPreEncodeStaleDropBaseMs = 95;
@@ -1407,6 +1411,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             BOOL completionGuardEligible = (inFlightBefore >= 1) &&
                                            (recentSlowCompletions > 0 || recentPreDrops > 0 || recentMaxCompletionMs >= 35);
             uint64_t completionDerivedSpacingUs = 0;
+            BOOL completionDerivedGuardApplied = NO;
             if (completionGuardEligible) {
                 if (recentPreDrops >= 2 || recentMaxCompletionMs >= 60) {
                     completionGuardSpacingUs = kWirelessTCPSchedulerCompletionGuardSevereSpacingUs;
@@ -1432,6 +1437,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                         }
                         completionGuardSpacingUs = completionDerivedSpacingUs;
                         completionGuardReason = "completion-guard-derived";
+                        completionDerivedGuardApplied = YES;
                     } else if (wifiTCPSchedulerCompletionDerivedLogCount <= 40 ||
                                wifiTCPSchedulerCompletionDerivedLogCount % 100 == 0) {
                         os_log(sLog, "WiFi TCP scheduler completion guard derived: branch=hold seq=%u inFlightBefore=%d payload=%zu preDrop=%d slow=%d maxCompletion=%dms guardTarget=%lluus derivedTarget=%lluus reason=%{public}s sampled=%{public}s count=%d",
@@ -1489,7 +1495,34 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                                    wifiTCPSchedulerShapeLogCount);
                         }
                     }
-                    uint64_t appliedDelayUs = MIN(kWirelessTCPSchedulerMaxSleepUs, schedulerDelayUs);
+                    uint64_t appliedDelayUs = 0;
+                    uint64_t schedulerSleepCapUs = kWirelessTCPSchedulerMaxSleepUs;
+                    const char *schedulerSleepCapReason = "base-cap";
+                    if (completionDerivedGuardApplied && recentMaxCompletionMs >= 70) {
+                        if (recentMaxCompletionMs >= 110 || recentPreDrops >= 4) {
+                            schedulerSleepCapUs = kWirelessTCPSchedulerDerivedSleepCapSevereUs;
+                            schedulerSleepCapReason = "derived-severe";
+                        } else {
+                            schedulerSleepCapUs = kWirelessTCPSchedulerDerivedSleepCapModerateUs;
+                            schedulerSleepCapReason = "derived-moderate";
+                        }
+                    }
+                    static int wifiTCPSchedulerSleepCapDecisionCount = 0;
+                    wifiTCPSchedulerSleepCapDecisionCount++;
+                    if (completionDerivedGuardApplied &&
+                        (wifiTCPSchedulerSleepCapDecisionCount <= 30 ||
+                         wifiTCPSchedulerSleepCapDecisionCount % 100 == 0)) {
+                        BOOL schedulerSleepCapRaised = (schedulerSleepCapUs > kWirelessTCPSchedulerMaxSleepUs);
+                        os_log(sLog, "WiFi TCP scheduler sleep cap: branch=%{public}s seq=%u inFlightBefore=%d requested=%lluus baseCap=%lluus appliedCap=%lluus preDrop=%d slow=%d maxCompletion=%dms reason=%{public}s sampled=%{public}s count=%d",
+                               schedulerSleepCapRaised ? "apply" : "hold",
+                               seq, inFlightBefore, schedulerDelayUs,
+                               kWirelessTCPSchedulerMaxSleepUs, schedulerSleepCapUs,
+                               recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                               schedulerSleepCapReason,
+                               (recentMaxCompletionMs >= 110 || recentPreDrops >= 4) ? "forced" : "sampled",
+                               wifiTCPSchedulerSleepCapDecisionCount);
+                    }
+                    appliedDelayUs = MIN(schedulerSleepCapUs, schedulerDelayUs);
                     BOOL schedulerDelayClamped = (appliedDelayUs < schedulerDelayUs);
                     static int wifiTCPSchedulerSleepLogCount = 0;
                     wifiTCPSchedulerSleepLogCount++;
@@ -1499,7 +1532,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                         os_log(sLog, "WiFi TCP scheduler sleep: branch=%{public}s seq=%u inFlightBefore=%d requested=%lluus applied=%lluus cap=%lluus preDrop=%d slow=%d maxCompletion=%dms reason=%{public}s sampled=%{public}s count=%d",
                                schedulerDelayClamped ? "clamped" : "unclamped",
                                seq, inFlightBefore,
-                               schedulerDelayUs, appliedDelayUs, kWirelessTCPSchedulerMaxSleepUs,
+                               schedulerDelayUs, appliedDelayUs, schedulerSleepCapUs,
                                recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
                                schedulerReason,
                                schedulerDelayClamped ? "forced" : "sampled",
