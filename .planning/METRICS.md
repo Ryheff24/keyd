@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `53.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.276` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `32 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `119 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `52 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `53 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `141 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `75 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `55.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `33 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `107 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `52.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.551` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `38 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `174 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `64 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `63 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `192 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `87 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `56.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `36 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `109 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
@@ -125,3 +125,4 @@ Rules:
 | 2026-04-04 | 21:09:24 EDT | `5f52812` | `2752x1786` | `2496x1620` | `54.9 fps` | `1.275` | `32/107/50 ms` | `56/129/73 ms` | `55.1 fps, 31/111 ms` | `1` | `26/33` | wifi: iteration15.8 deep-depth hard-trim escalation + aggressive-trim telemetry |
 | 2026-04-04 | 21:16:13 EDT | `8d85d02` | `2752x1786` | `2496x1620` | `54.6 fps` | `1.346` | `32/150/55 ms` | `54/161/76 ms` | `51.1 fps, 75/356 ms` | `1` | `26/33` | wifi: iteration15.9 deep-cooldown soft-suppression validation |
 | 2026-04-04 | 21:24:14 EDT | `6baf1e6` | `2752x1786` | `2496x1620` | `53.6 fps` | `1.276` | `32/119/52 ms` | `53/141/75 ms` | `55.0 fps, 33/107 ms` | `1` | `26/33` | wifi: iteration16.0 deep-backlog soft-threshold + cooldown suppression widening |
+| 2026-04-04 | 21:31:42 EDT | `fac97ff` | `2752x1786` | `2496x1620` | `52.1 fps` | `1.551` | `38/174/64 ms` | `63/192/87 ms` | `56.0 fps, 36/109 ms` | `1` | `26/33` | wifi: iteration16.1 mid-depth soft-threshold + cooldown suppression alignment |
