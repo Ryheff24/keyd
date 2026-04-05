@@ -1,5 +1,40 @@
 # CURRENT
 
+## Lane WiFi Iteration 48 (iteration16.2 run triage + hard-depth aggressive relief rebalance)
+
+- Timestamp: 2026-04-04 21:42:27 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration16.2 hard-depth aggressive trim threshold guard"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers unchanged: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter16.1 (requested focus):
+  - `1% low`: sustained `5.5 -> 8.0` (improved), fps test `8.6 -> 8.0` (regressed).
+  - `maxGap`: sustained `484ms -> 967ms` (regressed), fps `508ms -> 967ms` (regressed).
+  - hard-depth aggressive apply count (`hardTrimPolicy=depth-aggressive-keep-2`): `106 -> 4` (over-corrected down).
+  - suppression events (`softSuppressedByDepthCooldown=true` decision/render): `176 -> 585` (sharp increase).
+  - Queue-delay tails (iPad render dequeue): `p95 20.57ms -> 22.45ms`, `p99 23.31ms -> 25.65ms`, `max 25.89ms -> 31.61ms`.
+- Highest-impact remaining bottleneck evidence:
+  - Aggressive hard-depth keep-2 guardrail at `24ms` is now too strict; deep backlog sits repeatedly in `oldestDelay≈20–23.8ms` hold windows.
+  - Observed behavior is prolonged `hardDepthAggressiveDecision=hold` with `mode=catchup-hard-depth` plus elevated cooldown soft suppression, which allows queue-age tails to grow into large cadence gaps (`maxGap=967ms`) despite no reconnect/loss issues.
+- Hypothesis tested:
+  - Re-enable targeted aggressive relief for deep backlog at `22ms` (between the overfiring `20ms` and underfiring `24ms`) to cut long stale-tail holds without returning to prior over-drop behavior.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Adjusted aggressive hard-depth trigger:
+    - `hardDepthAggressiveTrimQueueDelayThresholdMs: 24.0 -> 22.0`.
+  - Added branch-complete comparative telemetry (decision + dequeue + render-dequeue paths):
+    - `hardDepthAggressiveLegacyThreshold=24ms`
+    - `hardDepthAggressiveLegacyCandidate=<bool>`
+    - `hardDepthAggressiveLegacyDelayDeltaMs=<oldestDelay-24ms>`
+  - This preserves existing `apply|hold|na` decision visibility while showing exactly when relief is due to the 22ms threshold vs legacy 24ms behavior.
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅ (`** BUILD SUCCEEDED **`)
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - aggressive keep-2 rises from underfire (`4`) to a controlled range,
+    - suppression events and queue-delay p95/p99 contract,
+    - sustained/fps `1% low` and `maxGap` improve without fidelity/resolution/security regressions.
+
 ## Lane WiFi Iteration 47 (iteration16.1 run triage + hard-depth aggressive trim guardrail)
 
 - Timestamp: 2026-04-04 21:33:07 EDT
