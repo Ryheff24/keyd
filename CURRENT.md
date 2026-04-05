@@ -1,5 +1,43 @@
 # CURRENT
 
+## Lane WiFi Iteration 45 (iteration15.9 deep-cooldown soft-suppression validation + depth4 soft-threshold guard)
+
+- Timestamp: 2026-04-04 21:18:09 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.9 deep-cooldown soft-suppression validation"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers unchanged: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.8 (requested focus):
+  - `1% low`: sustained `9.9 -> 9.2` (regressed), fps test `9.2 -> 9.2` (flat).
+  - `maxGap`: `692ms -> 434ms` (improved, still failing target).
+  - iPad render dequeue queue-delay: `p95 18.04ms -> 18.32ms`, `p99 19.61ms -> 20.91ms`, `max 21.81ms -> 24.66ms` (tail regression).
+  - depth-4 behavior worsened: `pendingBefore=4` dequeues `282 -> 489`.
+  - Catchup mix: total apply `761 -> 759` (flat), `catchup-soft-single 675 -> 647` (slight drop), `catchup-hard-depth 86 -> 112` (increase).
+  - depth-4 catchup still soft-dominant: soft@depth4 `227 -> 356` (worse), hard@depth4 `44 -> 85` (up but still secondary).
+  - Suppression telemetry fired but too rarely to control deep windows: `softSuppressedByDepthCooldown=true` decisions `55`, render-dequeue `55`.
+- Highest-impact remaining bottleneck evidence:
+  - At `pendingBefore=4`, soft catchup still fires mostly in `oldestDelay < 18ms` windows (`355/356` depth4 soft applies), where `hardDepthCandidate=false`; this bypasses both hard-depth path and current suppression gate, causing cadence-churn and low-tail FPS collapse.
+  - Current suppression predicate is too narrow for deep backlog windows (`hardDepthCandidate` required), so depth4 soft-drop bursts continue during backlog growth phases.
+- Hypothesis tested:
+  - Suppress deep-backlog soft catchup during hard-depth cooldown even before hard-depth candidacy flips true, and raise deep-backlog soft trigger to the hard-depth delay floor so depth4 windows stop over-firing soft drops at 16–18ms queue age.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added deep-backlog soft threshold guard:
+    - new `softCatchupDeepBacklogDelayThresholdMs = 18.0`
+    - when `pendingBefore >= 4`, `softThresholdApplied` is raised to `max(deepSoftThreshold, hardDepthDelayThreshold)` (18ms floor).
+  - Expanded suppression gate for deep cooldown windows:
+    - `softSuppressedByDepthCooldown = depthCooldown>0 && deepSoftDepth && !hardDelayTriggered`.
+    - renamed suppression reason to `depth-cooldown-deep`.
+  - Added branch-complete deep-backlog telemetry in decision + drop + dequeue logs:
+    - `deepSoftDepth` and `deepSoftThreshold` emitted alongside existing thresholds/suppression fields.
+- Validation:
+  - `xcodebuild -workspace ./RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - depth4 soft applies drop materially (especially `oldestDelay < 18ms` bucket),
+    - suppression events increase in deep cooldown windows (`depth-cooldown-deep`),
+    - `1% low` and `maxGap` improve without resolution/fidelity/security regressions.
+
 ## Lane WiFi Iteration 44 (iteration15.8 deep-depth hard-trim escalation + aggressive-trim telemetry)
 
 - Timestamp: 2026-04-04 21:11:58 EDT
