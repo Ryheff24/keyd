@@ -1,5 +1,41 @@
 # CURRENT
 
+## Lane WiFi Iteration 39 (iteration15.3 canonical run triage + completion-derived scheduler guard)
+
+- Timestamp: 2026-04-04 20:31:12 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.3 tcp scheduler sleep-cap + clamp instrumentation"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi streaming still fails on `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.2 (requested focus):
+  - TCP completion tail + pre-encode pressure: `preDrop max 6 -> 4`, `tcpMaxCompletion 124ms -> 81ms` (improved but still spiky).
+  - Low-tail FPS: sustained `1% low 9.2 -> 9.2` (flat), fps test `1% low 9.2 -> 10.0` (minor improvement).
+  - Stutter gap: `maxGap 417ms -> 158ms` (major improvement).
+  - Tail latency: sustained `pipeline p95 104ms -> 107ms` (slight regression), sustained `glass p95 129ms -> 131ms` (slight regression).
+- Highest-impact remaining bottleneck evidence:
+  - Scheduler guard applies but often cannot shape because target remains below real completion-driven spacing need:
+    - `/tmp/keyd-e2e-mac.log`: `WiFi TCP scheduler completion guard ... guardTarget=14000us ...`
+    - same window: `WiFi TCP send queued ... gap=16357us target=14000us delay=0us ...`, then immediate saturation/pre-drop (`inFlight=3`, `WiFi pre-encode drop: reason=tcp-backpressure`).
+  - Even during long-tail seconds (`tcpMaxCompletion=81ms`), scheduler delay counters stay zero (`scheduler[delays=0 ...]`), so completion pressure is not actively drained.
+- Hypothesis tested:
+  - Static completion-guard targets (14ms/24ms) are sometimes below the spacing implied by observed completion tails; under those windows scheduler remains effectively no-op (`delay=0`) and in-flight depth still reaches saturation, depressing 1% lows and latency tails.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Added completion-derived guard floor:
+    - derives guard target from `recentMaxCompletionMs / kMaxMediaSendsInFlightWiFi + safety`.
+    - raises completion-guard target when derived value exceeds static moderate/severe guard.
+  - Added branch-complete instrumentation for this new decision:
+    - `WiFi TCP scheduler completion guard derived: branch=apply ...`
+    - `WiFi TCP scheduler completion guard derived: branch=hold ...`
+  - Existing sleep branch logs (`clamped|unclamped`) remain intact.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - derived-guard `branch=apply` appears in prior tail windows,
+    - non-zero scheduler delays appear under completion-tail windows (with explicit clamped/unclamped visibility),
+    - lower preDrop/tcpMaxCompletion tails and improved sustained `1% low`, `pipeline p95`, and `glass p95` without fidelity/security regressions.
+
 ## Lane WiFi Iteration 38 (iteration15.2 canonical run triage + TCP scheduler sleep-cap fix)
 
 - Timestamp: 2026-04-04 20:24:22 EDT

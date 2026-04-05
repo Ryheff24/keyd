@@ -135,6 +135,10 @@ static const uint64_t kWirelessTCPSchedulerRecoverySevereSpacingUs = 8500;
  * pre-encode backpressure gate trips. */
 static const uint64_t kWirelessTCPSchedulerCompletionGuardModerateSpacingUs = 14000;
 static const uint64_t kWirelessTCPSchedulerCompletionGuardSevereSpacingUs = 24000;
+/* Completion-aware dynamic floor: when completion tails rise, derive a guard
+ * target from observed completion latency so scheduler spacing can actually
+ * keep in-flight depth below pre-encode drop pressure. */
+static const uint64_t kWirelessTCPSchedulerCompletionGuardSafetyUs = 1200;
 static const uint64_t kWirelessTCPSchedulerMaxSleepUs = 20000;
 /* Drop stale captured frames before HEVC encode under transient Wi-Fi load.
  * This bounds frame age entering the pipeline to reduce p95/p99 spikes. */
@@ -1402,6 +1406,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
             const char *completionGuardReason = "none";
             BOOL completionGuardEligible = (inFlightBefore >= 1) &&
                                            (recentSlowCompletions > 0 || recentPreDrops > 0 || recentMaxCompletionMs >= 35);
+            uint64_t completionDerivedSpacingUs = 0;
             if (completionGuardEligible) {
                 if (recentPreDrops >= 2 || recentMaxCompletionMs >= 60) {
                     completionGuardSpacingUs = kWirelessTCPSchedulerCompletionGuardSevereSpacingUs;
@@ -1409,6 +1414,32 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
                 } else if (recentPreDrops > 0 || recentSlowCompletions >= 1 || recentMaxCompletionMs >= 35) {
                     completionGuardSpacingUs = kWirelessTCPSchedulerCompletionGuardModerateSpacingUs;
                     completionGuardReason = "completion-guard-moderate";
+                }
+                if (recentMaxCompletionMs > 0) {
+                    completionDerivedSpacingUs =
+                        ((uint64_t)recentMaxCompletionMs * 1000) / (uint64_t)kMaxMediaSendsInFlightWiFi +
+                        kWirelessTCPSchedulerCompletionGuardSafetyUs;
+                    static int wifiTCPSchedulerCompletionDerivedLogCount = 0;
+                    wifiTCPSchedulerCompletionDerivedLogCount++;
+                    if (completionDerivedSpacingUs > completionGuardSpacingUs) {
+                        if (wifiTCPSchedulerCompletionDerivedLogCount <= 40 ||
+                            wifiTCPSchedulerCompletionDerivedLogCount % 100 == 0) {
+                            os_log(sLog, "WiFi TCP scheduler completion guard derived: branch=apply seq=%u inFlightBefore=%d payload=%zu preDrop=%d slow=%d maxCompletion=%dms guardTarget=%lluus derivedTarget=%lluus reason=completion-guard-derived sampled=%{public}s count=%d",
+                                   seq, inFlightBefore, payloadLen, recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                                   completionGuardSpacingUs, completionDerivedSpacingUs,
+                                   (recentMaxCompletionMs >= 70) ? "forced" : "sampled",
+                                   wifiTCPSchedulerCompletionDerivedLogCount);
+                        }
+                        completionGuardSpacingUs = completionDerivedSpacingUs;
+                        completionGuardReason = "completion-guard-derived";
+                    } else if (wifiTCPSchedulerCompletionDerivedLogCount <= 40 ||
+                               wifiTCPSchedulerCompletionDerivedLogCount % 100 == 0) {
+                        os_log(sLog, "WiFi TCP scheduler completion guard derived: branch=hold seq=%u inFlightBefore=%d payload=%zu preDrop=%d slow=%d maxCompletion=%dms guardTarget=%lluus derivedTarget=%lluus reason=%{public}s sampled=%{public}s count=%d",
+                               seq, inFlightBefore, payloadLen, recentPreDrops, recentSlowCompletions, recentMaxCompletionMs,
+                               completionGuardSpacingUs, completionDerivedSpacingUs, completionGuardReason,
+                               (recentMaxCompletionMs >= 70) ? "forced" : "sampled",
+                               wifiTCPSchedulerCompletionDerivedLogCount);
+                    }
                 }
                 if (completionGuardSpacingUs > 0) {
                     static int wifiTCPSchedulerCompletionGuardDecisionCount = 0;
