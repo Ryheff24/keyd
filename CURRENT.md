@@ -1,5 +1,42 @@
 # CURRENT
 
+## Lane WiFi Iteration 44 (iteration15.8 deep-depth hard-trim escalation + aggressive-trim telemetry)
+
+- Timestamp: 2026-04-04 21:11:58 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.8 deep-depth hard-trim escalation + aggressive-trim telemetry"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers remain: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.7 (requested focus):
+  - `1% low`: sustained `15.0 -> 9.9`, fps test `15.0 -> 9.2` (regressed).
+  - `maxGap`: `276ms -> 692ms` (major regression).
+  - iPad render dequeue queue-delay: `p95 17.84ms -> 18.04ms`, `p99 19.39ms -> 19.61ms` (slightly worse), `max 26.47ms -> 21.81ms` (improved cap only).
+  - depth-4 behavior worsened: `pendingBefore=4` dequeues `223 -> 282`.
+  - Catchup mix expanded sharply: total apply `353 -> 761`; `catchup-soft-single 300 -> 675`, `catchup-hard-depth 53 -> 86`.
+  - depth-4 catchup did not shift to hard path as intended: soft@depth4 `172 -> 227`, hard@depth4 `41 -> 44`.
+- Highest-impact remaining bottleneck evidence:
+  - Renderer catchup is now over-dropping via soft catchup while deep-depth cooldown is active; this depresses cadence and expands gap/1%-low tails even though absolute queue max is trimmed.
+  - Evidence from `/tmp/keyd-e2e-ipad.log` + `/tmp/keyd-e2e-mac.log`:
+    - iPad: soft catchup dominates deep windows (`catchup-soft-single=675`, depth4 soft applies `227`) with large max-gap/fps tail regression.
+    - Mac remains non-limiting (`inFlight p95=1, max=3`, scheduler delay nonzero `1/11719`, `preDrop=0`, completion max `12ms`).
+- Hypothesis tested:
+  - During hard-depth cooldown windows, soft catchup should be suppressed for deep+aged backlog; let FIFO drain briefly so cadence is preserved, then re-enable hard-depth trims if backlog stays deep.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added deep-backlog soft-catchup suppression gate:
+    - `softSuppressedByDepthCooldown = depthCooldown>0 && pending>=hardDepth && hardDepthCandidate && !hardDelayTriggered`.
+    - soft streak is reset under suppression to prevent immediate rebound soft-drop bursts.
+  - Added branch-complete suppression telemetry across decision + execution logs:
+    - `softSuppressedByDepthCooldown`, `softSuppressionReason=depth-cooldown|none` in `catchup decision`.
+    - mirrored `softSuppressedByDepthCooldown` in `dequeue branch` and `render dequeue` logs.
+- Validation:
+  - `xcodebuild -workspace ./RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - reduced deep-window soft catchup count (especially depth4),
+    - improved sustained/fps `1% low` and `maxGap` without queue tail explosion,
+    - preserved resolution/fidelity and security behavior.
+
 ## Lane WiFi Iteration 43 (iteration15.7 triage + deep-depth hard-trim escalation)
 
 - Timestamp: 2026-04-04 21:04:28 EDT
