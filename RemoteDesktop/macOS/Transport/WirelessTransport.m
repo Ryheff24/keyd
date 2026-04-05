@@ -23,6 +23,7 @@ static const uint64_t kDuplicateReplaceIdleThresholdNs = 2000000000ULL;
 static const uint64_t kPendingConnectionReplaceThresholdNs = 1500000000ULL;
 static const uint64_t kControlRecoveryPollIntervalNs = 750000000ULL;
 static const uint64_t kControlRecoveryHardDeadlineNs = 6000000000ULL;
+static const uint64_t kTransientMediaGapControlRecoveryGraceNs = 1500000000ULL;
 
 static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     if (newerTicks <= olderTicks) {
@@ -924,16 +925,41 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
             BOOL controlPathHealthy = hasInputConnection &&
                                       self2->_isConnected &&
                                       (recentInputActivity || inputReady);
-            if (controlPathHealthy && keydrd_is_transient_dtls_gap(error)) {
+            BOOL transientDtlsGap = keydrd_is_transient_dtls_gap(error);
+            uint64_t controlRecoveryElapsedNs = 0;
+            BOOL controlRecoveryActive = (self2->_controlPathRecoveryStartedAtTicks > 0);
+            BOOL controlRecoveryWithinGrace = NO;
+            if (controlRecoveryActive) {
+                controlRecoveryElapsedNs = keydrd_mach_delta_ns(mach_absolute_time(),
+                                                                self2->_controlPathRecoveryStartedAtTicks);
+                controlRecoveryWithinGrace =
+                    (controlRecoveryElapsedNs <= kTransientMediaGapControlRecoveryGraceNs);
+            }
+            if (transientDtlsGap && (controlPathHealthy || controlRecoveryWithinGrace)) {
                 os_log(wireless_log(),
-                       "Media path loss decision=ignored reason=transient-dtls-recv-gap detail=%{public}@ controlPathHealthy=%{public}d inputReady=%{public}d recentInput=%{public}d inputIdleMs=%{public}llums",
+                       "Media path loss decision=ignored reason=transient-dtls-recv-gap detail=%{public}@ controlPathHealthy=%{public}d controlRecoveryActive=%{public}d controlRecoveryElapsedMs=%{public}llums controlRecoveryGraceMs=%{public}llums inputReady=%{public}d recentInput=%{public}d inputIdleMs=%{public}llums",
                        error,
                        controlPathHealthy,
+                       controlRecoveryActive,
+                       controlRecoveryElapsedNs / 1000000ULL,
+                       kTransientMediaGapControlRecoveryGraceNs / 1000000ULL,
                        inputReady,
                        recentInputActivity,
                        inputIdleNs / 1000000ULL);
                 [self2 scheduleMediaReceive:connection];
                 return;
+            }
+            if (transientDtlsGap) {
+                os_log(wireless_log(),
+                       "Media path loss decision=escalating reason=transient-dtls-recv-gap-outside-grace detail=%{public}@ controlPathHealthy=%{public}d controlRecoveryActive=%{public}d controlRecoveryElapsedMs=%{public}llums controlRecoveryGraceMs=%{public}llums inputReady=%{public}d recentInput=%{public}d inputIdleMs=%{public}llums",
+                       error,
+                       controlPathHealthy,
+                       controlRecoveryActive,
+                       controlRecoveryElapsedNs / 1000000ULL,
+                       kTransientMediaGapControlRecoveryGraceNs / 1000000ULL,
+                       inputReady,
+                       recentInputActivity,
+                       inputIdleNs / 1000000ULL);
             }
             os_log_error(wireless_log(),
                          "DTLS media receive error on active connection: %{public}@",

@@ -1053,3 +1053,37 @@
   - Run canonical WiFi command (same profile/notes style) and verify:
     - reduced/absent `downshift-severe-soft` events under low-pressure bursts,
     - improved `avg FPS`, `1% low`, and p95 pipeline/glass tails without transport regressions.
+
+## WiFi Iteration 15 (control-loss transient gap escalation fix)
+
+- Timestamp: 2026-04-04 20:12:32 EDT
+- Command: `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15 hard-first-hit relief grace reduce residual hard skip stutter"`
+- Result: regressed (`26/33` passed, `7` failed; iter14 was `27/33`, `6` failed)
+- Key deltas vs iter14 (`/tmp/e2e-orchestrator-iter14.log` → `/tmp/keyd-e2e-ipad.log`):
+  - FPS 1% low: `24.0 -> 9.2` (`-14.8`)
+  - Max gap: `175ms -> 233ms` (`+58ms`)
+  - Stutter count (>100ms): `15 -> 293` (`+278`)
+  - Sustained stream 1% low: `24.0 -> 10.0` (`-14.0`)
+  - Sustained stream pipeline p95: `46ms -> 105ms` (`+59ms`)
+- Hard-skip/starvation telemetry snapshot:
+  - Encoder hard-skip branch in iter15 remained limited (`6` skips, max `skipStreak=2` in `/tmp/keyd-e2e-mac.log`), so residual hard-skip clustering was not the dominant regression source this run.
+  - iPad starvation signal still frequent (`798` `starvationSignal=true` frame-arrival logs in `/tmp/keyd-e2e-ipad.log`) with one severe outlier gap (`interArrival=7566.68ms`, seq `10415`).
+- Highest-impact bottleneck identified from iter15 logs:
+  - Mac hit control-path loss at `20:08:03` (`tcp-eof-media-active`) and immediately escalated DTLS transient receive gap `"No message available on STREAM"` into full reconnect.
+  - This canceled in-flight control-path recovery (`Control recovery cancelled reason=media-path-loss elapsedMs=0ms`), drove `STREAMING -> RECONNECTING`, and produced a ~7.5s frame-arrival hole on iPad (`seqDelta=3`, 7566.68ms gap).
+- Hypothesis:
+  - During active control recovery, transient DTLS stream-gap errors are being over-escalated to reconnect too early, creating long visible stutter windows and collapsing 1% low FPS.
+- Change implemented (one coherent fix + branch-complete instrumentation):
+  - File: `RemoteDesktop/macOS/Transport/WirelessTransport.m`
+  - Added `kTransientMediaGapControlRecoveryGraceNs = 1500000000` (1.5s).
+  - In active media receive error handling:
+    - `Media path loss decision=ignored reason=transient-dtls-recv-gap ...` now also triggers when control recovery is active and within grace, even if `controlPathHealthy` is currently false.
+    - Added explicit escalation branch log: `Media path loss decision=escalating reason=transient-dtls-recv-gap-outside-grace ...` with `controlRecoveryActive`, elapsed/grace ms, and input activity fields.
+  - Keeps observability on both success (ignored) and failure (escalating) branches in touched path.
+- Build validation:
+  - `xcodebuild -workspace keyd.xcworkspace -scheme KeydAgent -configuration Debug -destination 'platform=macOS' build` ✅ (`** BUILD SUCCEEDED **`)
+- Next move:
+  - Re-run canonical WiFi command and confirm:
+    - no immediate reconnect escalation on transient `"No message available on STREAM"` during control recovery,
+    - reduced >200ms gaps and improved 1% low FPS,
+    - unchanged resolution/fidelity and no security/protocol regressions.
