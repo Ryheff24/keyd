@@ -1,5 +1,39 @@
 # CURRENT
 
+## Lane WiFi Iteration 42 (iteration15.6 triage + shallow-depth catchup guard)
+
+- Timestamp: 2026-04-04 20:55:07 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.6 renderer catchup escalation + decision telemetry"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers remain: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.5 (requested focus):
+  - FPS `maxGap`: `442ms -> 250ms` (improved).
+  - `1% low`: sustained `10.0 -> 10.0` (flat), fps test `9.2 -> 9.2` (flat).
+  - iPad render dequeue queue-delay (iter15.6 log sample): `p95=16.51ms`, `p99=18.35ms`, `max=22.42ms`; oldest-delay `p95=18.42ms`, `max=24.64ms`.
+  - iPad render depth mix (iter15.6 logged dequeues): `pendingBefore=3` dominant (`1159`), then `4` (`228`), `2` (`225`), `1` (`124`) — shifted off prior `4/5` dominance but still persistently backlogged.
+  - Catchup mode mix shift (from run logs): `fifo=984 -> 1051`, `catchup-soft-single=49 -> 614`, `catchup-hard-depth=36 -> 71` (soft catchup massively increased).
+- Highest-impact remaining bottleneck evidence:
+  - Stutter tail improved, but renderer now over-applies shallow-depth soft catchup, dropping too many near-fresh frames and depressing FPS/bitrate headroom:
+    - perf regression despite better maxGap: fps avg `57.8 -> 55.0`, throughput `3.4 -> 3.2 Mbps`, sustained rendered frames `5167 -> 4966`.
+    - `/tmp/keyd-e2e-ipad.log` catchup decisions: `apply=685` vs prior `85` total catchups; soft mode dominates (`614`), with `214` soft applies at `pendingBefore=2` and most soft applies at only `<=18ms` oldest delay.
+- Hypothesis tested:
+  - Current 16ms soft trigger at shallow depth (`pendingBefore=2`) is too aggressive under this run’s queue profile, causing unnecessary stale-frame drops that reduce delivered smoothness headroom even as worst-gap tails shrink.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added shallow-depth guardrail for soft catchup:
+    - new `softCatchupShallowDepthDelayThresholdMs = 20.0` used when `pendingBefore <= softDepth (2)`.
+    - deeper backlog (`pendingBefore >= 3`) keeps 16ms soft threshold unchanged.
+  - Added branch-complete decision/dequeue telemetry fields on both apply and hold paths:
+    - `softThresholdApplied`, `shallowSoftThreshold`, `shallowSoftDepth` in `catchup decision`, `dequeue branch`, and `render dequeue` logs.
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - reduced `catchup-soft-single` at `pendingBefore=2`,
+    - improved fps avg / throughput while keeping `maxGap` from regressing,
+    - improved sustained/fps `1% low` and latency tails with no fidelity/security regressions.
+
 ## Lane WiFi Iteration 41 (iteration15.5 triage + render catchup escalation)
 
 - Timestamp: 2026-04-04 20:46:21 EDT
