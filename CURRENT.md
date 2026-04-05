@@ -1,5 +1,39 @@
 # CURRENT
 
+## Lane WiFi Iteration 38 (iteration15.2 canonical run triage + TCP scheduler sleep-cap fix)
+
+- Timestamp: 2026-04-04 20:24:22 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.2 pairing-connection retain + state-lifecycle instrumentation"`
+- Pass/Fail (blocker status + high-signal results):
+  - TLS blocker cleared: `[TEST] PASS: tls-connection (TLS 1.3 handshake complete)`.
+  - Full performance path now executes (heavy-load/video-playback/sustained-stream/fps/latency reached).
+  - Current fails observed: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (with `video-playback` passing).
+- Key metrics:
+  - `heavy-load`: `fps=58.6`, `pipe med/avg/p95=40/56/127ms`.
+  - `sustained-stream`: `avg/1%low=56.8/9.2`, `pipe med/avg/p95=31/43/104ms`, `glass med/avg/p95=54/67/129ms`.
+  - `fps`: `avg=56.9`, `1% low=9.2`, `maxGap=417ms`, `jitter=22.3ms`.
+- Highest-impact bottleneck evidence:
+  - WiFi TCP scheduler completion-guard requests large spacing under tail pressure, but prior sleep cap prevents full application:
+    - `/tmp/keyd-e2e-mac.log`: `completion guard ... guardTarget=24000us ... maxCompletion=124ms preDrop=6`.
+    - Same window: `scheduler shape ... target=24000us delay=12739us ...` (delay exceeds old 9000us cap).
+  - Correlated adaptive congestion windows:
+    - `WiFi adaptive eval ... severe=yes ... preDrop=6 ... max=124ms`.
+- Hypothesis tested:
+  - Long-tail completion spikes and stutter persist because scheduler recovery/guard targets above 9ms are clipped, so send pacing cannot drain in-flight pressure during burst windows.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/App/SessionManager.m`):
+  - Increased WiFi scheduler max sleep cap `9000us -> 20000us` so completion-guard/recovery spacing can actually apply.
+  - Added explicit branch logs for scheduler sleep application:
+    - `WiFi TCP scheduler sleep: branch=clamped|unclamped ... requested/applied/cap ... preDrop/slow/maxCompletion ... reason`.
+  - Preserved test semantics, thresholds, and fidelity.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and confirm:
+    - fewer `preDrop` + lower `tcpMaxCompletion`,
+    - improved `heavy-load` + `sustained-stream` FPS/latency tails,
+    - new `scheduler sleep` logs show reduced clamping during completion-guard windows.
+
 ## Lane WiFi Iteration 37 (iteration15.1 canonical run triage + pairing connection retain fix)
 
 - Timestamp: 2026-04-04 20:19:33 EDT
