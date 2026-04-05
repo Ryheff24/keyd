@@ -44,6 +44,8 @@ final class MetalRenderer: NSObject {
     private static let maxPendingFrames = 4
     private static let hardDepthCatchupPendingThreshold = 3
     private static let hardDepthCatchupMinQueueDelayThresholdMs = 18.0
+    private static let hardDepthAggressiveTrimPendingThreshold = 4
+    private static let hardDepthAggressiveTrimQueueDelayThresholdMs = 20.0
     private static let hardDepthCatchupDelayStreakThreshold = 1
     private static let hardDepthCatchupCooldownTicks = 4
     private static let softCatchupQueueDelayThresholdMs = 16.0
@@ -561,6 +563,8 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         }
         let hardDepthCandidate = pendingBefore >= Self.hardDepthCatchupPendingThreshold &&
             oldestDelayMs >= Self.hardDepthCatchupMinQueueDelayThresholdMs
+        let hardDepthAggressiveTrimCandidate = pendingBefore >= Self.hardDepthAggressiveTrimPendingThreshold &&
+            oldestDelayMs >= Self.hardDepthAggressiveTrimQueueDelayThresholdMs
         if hardDepthCandidate {
             hardDepthCatchupDelayStreak += 1
         } else if pendingBefore <= Self.softCatchupMinPendingDepth {
@@ -595,16 +599,28 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             catchupDecisionLogCount <= 10 || catchupDecisionLogCount % 240 == 0 {
             let decisionBranch = (shouldHardCatchUp || shouldSoftCatchUp) ? "apply" : "hold"
             let decisionMode: String
+            let hardTrimPolicy: String
             if shouldHardCatchUp {
                 decisionMode = hardExtremeTail
                     ? "catchup-hard-extreme"
                     : (hardDepthTriggered ? "catchup-hard-depth" : "catchup-hard-delay")
+                if hardExtremeTail {
+                    hardTrimPolicy = "extreme-keep-2"
+                } else if hardDepthTriggered && !hardDelayTriggered && hardDepthAggressiveTrimCandidate {
+                    hardTrimPolicy = "depth-aggressive-keep-2"
+                } else if hardDepthTriggered && !hardDelayTriggered {
+                    hardTrimPolicy = "depth-standard-keep-3"
+                } else {
+                    hardTrimPolicy = "delay-keep-2"
+                }
             } else if shouldSoftCatchUp {
                 decisionMode = "catchup-soft-single"
+                hardTrimPolicy = "soft-single-drop-1"
             } else {
                 decisionMode = "fifo"
+                hardTrimPolicy = "none"
             }
-            print("[CONSOLE] MetalRenderer: catchup decision branch=\(decisionBranch) mode=\(decisionMode) pendingBefore=\(pendingBefore) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms softThresholdApplied=\(String(format: "%.2f", softDelayThresholdMs))ms shallowSoftThreshold=\(String(format: "%.2f", Self.softCatchupShallowDepthDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms softDepth=\(Self.softCatchupMinPendingDepth) hardDepth=\(Self.hardDepthCatchupPendingThreshold) softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthCandidate=\(hardDepthCandidate) hardDepthTriggered=\(hardDepthTriggered) shallowSoftDepth=\(pendingBefore <= Self.softCatchupMinPendingDepth) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) sampled=\((shouldHardCatchUp || shouldSoftCatchUp || oldestDelayMs >= 24.0) ? "forced" : "sampled") count=\(catchupDecisionLogCount)")
+            print("[CONSOLE] MetalRenderer: catchup decision branch=\(decisionBranch) mode=\(decisionMode) pendingBefore=\(pendingBefore) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms softThresholdApplied=\(String(format: "%.2f", softDelayThresholdMs))ms shallowSoftThreshold=\(String(format: "%.2f", Self.softCatchupShallowDepthDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardDepthAggressiveThreshold=\(String(format: "%.2f", Self.hardDepthAggressiveTrimQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms softDepth=\(Self.softCatchupMinPendingDepth) hardDepth=\(Self.hardDepthCatchupPendingThreshold) hardDepthAggressivePending=\(Self.hardDepthAggressiveTrimPendingThreshold) softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthCandidate=\(hardDepthCandidate) hardDepthAggressiveCandidate=\(hardDepthAggressiveTrimCandidate) hardDepthTriggered=\(hardDepthTriggered) hardTrimPolicy=\(hardTrimPolicy) shallowSoftDepth=\(pendingBefore <= Self.softCatchupMinPendingDepth) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) sampled=\((shouldHardCatchUp || shouldSoftCatchUp || oldestDelayMs >= 24.0) ? "forced" : "sampled") count=\(catchupDecisionLogCount)")
         }
 
         let frame: PendingRenderFrame
@@ -613,6 +629,8 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         var hardKeepTarget = 0
         if shouldHardCatchUp && pendingBefore > 1 {
             if hardExtremeTail {
+                hardKeepTarget = 2
+            } else if hardDepthTriggered && !hardDelayTriggered && hardDepthAggressiveTrimCandidate {
                 hardKeepTarget = 2
             } else if hardDepthTriggered && !hardDelayTriggered {
                 hardKeepTarget = max(3, pendingFrames.count - 1)
@@ -665,7 +683,7 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             print("[CONSOLE] MetalRenderer: pending depth transition reason=dequeue mode=\(dequeueMode) from=\(pendingBefore)(\(pendingBandBefore)) to=\(pendingAfterPop)(\(pendingBandAfter)) droppedStale=\(droppedStaleFrames) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms queueDelay=\(String(format: "%.2f", queueDelayMs))ms")
         }
         if droppedStaleFrames > 0 {
-            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms softThresholdApplied=\(String(format: "%.2f", softDelayThresholdMs))ms shallowSoftThreshold=\(String(format: "%.2f", Self.softCatchupShallowDepthDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms hardDepth=\(Self.hardDepthCatchupPendingThreshold) softDepth=\(Self.softCatchupMinPendingDepth) hardDepthCandidate=\(hardDepthCandidate) hardDepthTriggered=\(hardDepthTriggered) shallowSoftDepth=\(pendingBefore <= Self.softCatchupMinPendingDepth) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) hardKeep=\(hardKeepTarget) hardExtreme=\(hardExtremeTail) droppedStale=\(droppedStaleFrames) dequeueAgeDelta=\(String(format: "%.2f", dequeueAgeDeltaMs))ms catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames) softCatchup=\(adaptiveSoftCatchupCount)/\(adaptiveSoftCatchupDropFrames) hardCatchup=\(adaptiveHardCatchupCount)/\(adaptiveHardCatchupDropFrames)")
+            print("[CONSOLE] MetalRenderer: dequeue branch mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms softThresholdApplied=\(String(format: "%.2f", softDelayThresholdMs))ms shallowSoftThreshold=\(String(format: "%.2f", Self.softCatchupShallowDepthDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardDepthAggressiveThreshold=\(String(format: "%.2f", Self.hardDepthAggressiveTrimQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms hardDepth=\(Self.hardDepthCatchupPendingThreshold) hardDepthAggressivePending=\(Self.hardDepthAggressiveTrimPendingThreshold) softDepth=\(Self.softCatchupMinPendingDepth) hardDepthCandidate=\(hardDepthCandidate) hardDepthAggressiveCandidate=\(hardDepthAggressiveTrimCandidate) hardDepthTriggered=\(hardDepthTriggered) shallowSoftDepth=\(pendingBefore <= Self.softCatchupMinPendingDepth) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) hardKeep=\(hardKeepTarget) hardExtreme=\(hardExtremeTail) droppedStale=\(droppedStaleFrames) dequeueAgeDelta=\(String(format: "%.2f", dequeueAgeDeltaMs))ms catchupTotal=\(adaptiveCatchupCount) catchupDropTotal=\(adaptiveCatchupDropFrames) softCatchup=\(adaptiveSoftCatchupCount)/\(adaptiveSoftCatchupDropFrames) hardCatchup=\(adaptiveHardCatchupCount)/\(adaptiveHardCatchupDropFrames)")
         }
         if renderQueueDelayLogCount <= 10 || renderQueueDelayLogCount % 120 == 0 || queueDelayMs >= Self.softCatchupQueueDelayThresholdMs || droppedStaleFrames > 0 || pendingBefore >= Self.hardDepthCatchupPendingThreshold {
             print("[CONSOLE] MetalRenderer: render dequeue mode=\(dequeueMode) pendingBefore=\(pendingBefore) pendingAfter=\(pendingAfterPop) queueDelay=\(String(format: "%.2f", queueDelayMs))ms oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms dequeueAgeDelta=\(String(format: "%.2f", dequeueAgeDeltaMs))ms displayLead=\(String(format: "%.2f", displayLeadMs))ms softThresholdApplied=\(String(format: "%.2f", softDelayThresholdMs))ms shallowSoftDepth=\(pendingBefore <= Self.softCatchupMinPendingDepth) softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthCandidate=\(hardDepthCandidate) hardDepthTriggered=\(hardDepthTriggered) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) captureTsUs=\(frame.captureTimestampUs)")

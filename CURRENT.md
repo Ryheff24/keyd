@@ -1,5 +1,44 @@
 # CURRENT
 
+## Lane WiFi Iteration 43 (iteration15.7 triage + deep-depth hard-trim escalation)
+
+- Timestamp: 2026-04-04 21:04:28 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.7 shallow-depth soft-catchup threshold guard + telemetry"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers remain: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.6 (requested focus):
+  - `1% low`: sustained `10.0 -> 15.0`, fps test `9.2 -> 15.0` (improved).
+  - `maxGap`: `250ms -> 276ms` (regressed tail).
+  - iPad render dequeue queue-delay: `p95 16.51ms -> 17.84ms`, `p99 18.35ms -> 19.39ms`, `max 22.42ms -> 26.47ms` (worse tail despite 1% low lift).
+  - Catchup mode mix (run telemetry): `catchup-soft-single 614 -> 300`, `catchup-hard-depth 71 -> 53`; total catchup apply `685 -> 353` (shallow guard reduced over-catchup).
+  - Stale-drop behavior: dequeue stale drops now `341` events / `341` frames (about half prior catchup-apply volume), but depth-4 backlog still common (`pendingBefore=4` seen `223` dequeues).
+- Highest-impact remaining bottleneck evidence:
+  - After shallow-depth guard, renderer is now under-trimming deep backlog bursts (`pendingBefore=4`) so queue-age tails rise even as shallow over-drop improves.
+  - Evidence from `/tmp/keyd-e2e-ipad.log`:
+    - catchup apply by depth/mode: `soft@depth4=172`, `hard-depth@depth4=41`, `soft@depth3=93`.
+    - depth-4 windows are mostly only single-drop trims, leaving stale queue age tail (`oldestDelay p95=20.31ms`, `max=32.91ms`) aligned with max-gap/p95 latency failures.
+  - macOS send path remains non-limiting in this run (`inFlight p95=1, max=3`, scheduler delay nonzero `0/11571`, no adaptive downshift actions).
+- Hypothesis tested:
+  - Aged depth-4 backlog needs stronger hard-depth trim than one-frame drops; escalating hard-depth trim only on deep+aged queues should cut queue-age tail/maxGap without reintroducing shallow-depth over-drop.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added deep-backlog hard-trim gates:
+    - `hardDepthAggressiveTrimPendingThreshold = 4`
+    - `hardDepthAggressiveTrimQueueDelayThresholdMs = 20.0`
+  - Hard-depth catchup policy updated:
+    - when `hardDepthTriggered && !hardDelayTriggered` and deep-trim candidate is true, hard keep target now `2` (drop extra stale frame) instead of depth-standard keep target `3`.
+  - Added branch-complete telemetry (apply + hold surfaces):
+    - `hardDepthAggressiveThreshold`, `hardDepthAggressivePending`, `hardDepthAggressiveCandidate`, `hardTrimPolicy` fields in `catchup decision` logs.
+    - mirrored aggressive-trim fields in dequeue drop branch logs.
+- Validation:
+  - `xcodebuild -workspace ./RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - depth-4 catchup shifts from soft single-drop to hard-depth aggressive keep-2 when aged,
+    - queue-delay/oldest-delay p95/p99 and `maxGap` improve without sacrificing sustained/fps `1% low`,
+    - no fidelity/security regression.
+
 ## Lane WiFi Iteration 42 (iteration15.6 triage + shallow-depth catchup guard)
 
 - Timestamp: 2026-04-04 20:55:07 EDT
