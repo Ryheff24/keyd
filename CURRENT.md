@@ -1,5 +1,45 @@
 # CURRENT
 
+## Lane WiFi Iteration 41 (iteration15.5 triage + render catchup escalation)
+
+- Timestamp: 2026-04-04 20:46:21 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration15.5 completion-derived sleep-cap override validation"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers remain: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.4 (requested focus):
+  - Sustained `1% low`: `9.2 -> 10.0` (improved); fps test `1% low`: `10.0 -> 9.2` (regressed).
+  - FPS max gap: `250ms -> 442ms` (regressed).
+  - Mac pre-drop max: `8 -> 0` (improved).
+  - Mac completion tail max (`tcpMaxCompletion`): `156ms -> 26ms` (improved).
+  - Scheduler clamp frequency: completion-derived clamp windows from iter15.4 no longer observed (`WiFi TCP scheduler sleep: branch=clamped` count `0` this run).
+- Highest-impact remaining bottleneck evidence:
+  - Mac WiFi send path is no longer the active limiter in this run:
+    - `/tmp/keyd-e2e-mac.log`: repeated `preDrop=0`, `tcpInFlightPeak=1`, `tcpMaxCompletion<=26ms`, `scheduler[delays=0 ...]`.
+  - iPad render-side dequeue latency/backlog remains elevated and aligns with latency/fps failures:
+    - `/tmp/keyd-e2e-ipad.log`: `hevc-handoff` queue delay stats from run show `p95≈26.47ms`, `max=31.78ms`, `submitToPresent p95≈34.24ms`, `max=44.24ms`.
+    - dequeue mode distribution from run logs: `fifo=984`, `catchup-soft-single=49`, `catchup-hard-depth=36`, with many high-depth dequeues (`pendingBefore=4/5` dominant), indicating catchup is still too conservative.
+- Hypothesis tested:
+  - With transport pressure cleared, render queue catchup triggers are engaging too late and allow multi-frame queue age buildup; this inflates pipeline/glass tails and drives worst-gap/1%-low stutter despite healthy sender-side completion metrics.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Tightened catchup activation and queue-depth bounds:
+    - `maxPendingFrames 5 -> 4`
+    - `softCatchupQueueDelayThreshold 24ms -> 16ms`
+    - `hardDepthCatchupPendingThreshold 4 -> 3`
+    - `hardDepthCatchupMinQueueDelayThreshold 24ms -> 18ms`
+    - `softCatchupMinPendingDepth 3 -> 2`
+    - streak thresholds reduced for faster activation (`soft 2->1`, `hardDepth 2->1`, `hardDelay 3->2`).
+  - Added branch-complete catchup decision telemetry for both apply and hold paths:
+    - `MetalRenderer: catchup decision branch=apply|hold ...` with thresholds, streaks, cooldown, pending depth, and delay context.
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - increased `catchup decision branch=apply` in prior backlog windows,
+    - reduced `pendingBefore=4/5` and lower `hevc-handoff queueDelay`/`submitToPresent` tails,
+    - improved `maxGap`, `1% low`, and latency p95 without fidelity/security regressions.
+
 ## Lane WiFi Iteration 40 (iteration15.4 result triage + completion-derived sleep-cap override)
 
 - Timestamp: 2026-04-04 20:38:33 EDT

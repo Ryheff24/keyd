@@ -41,17 +41,17 @@ final class MetalRenderer: NSObject {
         let adaptiveHardCatchupDropFrames: Int
     }
 
-    private static let maxPendingFrames = 5
-    private static let hardDepthCatchupPendingThreshold = 4
-    private static let hardDepthCatchupMinQueueDelayThresholdMs = 24.0
-    private static let hardDepthCatchupDelayStreakThreshold = 2
+    private static let maxPendingFrames = 4
+    private static let hardDepthCatchupPendingThreshold = 3
+    private static let hardDepthCatchupMinQueueDelayThresholdMs = 18.0
+    private static let hardDepthCatchupDelayStreakThreshold = 1
     private static let hardDepthCatchupCooldownTicks = 4
-    private static let softCatchupQueueDelayThresholdMs = 24.0
+    private static let softCatchupQueueDelayThresholdMs = 16.0
     private static let hardCatchupQueueDelayThresholdMs = 48.0
     private static let hardCatchupExtremeQueueDelayThresholdMs = 140.0
-    private static let softCatchupMinPendingDepth = 3
-    private static let softCatchupDelayStreakThreshold = 2
-    private static let hardCatchupDelayStreakThreshold = 3
+    private static let softCatchupMinPendingDepth = 2
+    private static let softCatchupDelayStreakThreshold = 1
+    private static let hardCatchupDelayStreakThreshold = 2
 
     // MARK: - Properties
 
@@ -131,6 +131,7 @@ final class MetalRenderer: NSObject {
     private var commandBufferFailureCount = 0
     private var encoderFailureCount = 0
     private var presentCompletionLogCount = 0
+    private var catchupDecisionLogCount = 0
 
     private static func pendingDepthBand(_ depth: Int) -> String {
         switch depth {
@@ -582,6 +583,25 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             pendingBefore >= Self.softCatchupMinPendingDepth &&
             softDelayTriggered &&
             softCatchupDelayStreak >= Self.softCatchupDelayStreakThreshold
+        catchupDecisionLogCount += 1
+        let holdWithBacklog = !shouldHardCatchUp && !shouldSoftCatchUp &&
+            (pendingBefore >= Self.softCatchupMinPendingDepth ||
+             oldestDelayMs >= Self.softCatchupQueueDelayThresholdMs)
+        if shouldHardCatchUp || shouldSoftCatchUp || holdWithBacklog ||
+            catchupDecisionLogCount <= 10 || catchupDecisionLogCount % 240 == 0 {
+            let decisionBranch = (shouldHardCatchUp || shouldSoftCatchUp) ? "apply" : "hold"
+            let decisionMode: String
+            if shouldHardCatchUp {
+                decisionMode = hardExtremeTail
+                    ? "catchup-hard-extreme"
+                    : (hardDepthTriggered ? "catchup-hard-depth" : "catchup-hard-delay")
+            } else if shouldSoftCatchUp {
+                decisionMode = "catchup-soft-single"
+            } else {
+                decisionMode = "fifo"
+            }
+            print("[CONSOLE] MetalRenderer: catchup decision branch=\(decisionBranch) mode=\(decisionMode) pendingBefore=\(pendingBefore) oldestDelay=\(String(format: "%.2f", oldestDelayMs))ms softThreshold=\(String(format: "%.2f", Self.softCatchupQueueDelayThresholdMs))ms hardDepthDelayThreshold=\(String(format: "%.2f", Self.hardDepthCatchupMinQueueDelayThresholdMs))ms hardThreshold=\(String(format: "%.2f", Self.hardCatchupQueueDelayThresholdMs))ms extremeThreshold=\(String(format: "%.2f", Self.hardCatchupExtremeQueueDelayThresholdMs))ms softDepth=\(Self.softCatchupMinPendingDepth) hardDepth=\(Self.hardDepthCatchupPendingThreshold) softDelayTriggered=\(softDelayTriggered) hardDelayTriggered=\(hardDelayTriggered) hardDepthCandidate=\(hardDepthCandidate) hardDepthTriggered=\(hardDepthTriggered) depthStreak=\(hardDepthCatchupDelayStreak)/\(Self.hardDepthCatchupDelayStreakThreshold) depthCooldownTicks=\(hardDepthCatchupCooldownTicksRemaining) softStreak=\(softCatchupDelayStreak)/\(Self.softCatchupDelayStreakThreshold) hardStreak=\(hardCatchupDelayStreak)/\(Self.hardCatchupDelayStreakThreshold) sampled=\((shouldHardCatchUp || shouldSoftCatchUp || oldestDelayMs >= 24.0) ? "forced" : "sampled") count=\(catchupDecisionLogCount)")
+        }
 
         let frame: PendingRenderFrame
         let dequeueMode: String
