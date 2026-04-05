@@ -33,6 +33,7 @@ static const int kEncodePendingSaturationRetryAttempts = 2;
 static const int kEncodePendingSaturationRetryAttemptsEscalated = 6;
 static const int kEncodePendingSaturationRetryAttemptsSoft = 6;
 static const int kEncodePendingSaturationRetryAttemptsSoftEscalated = 14;
+static const int kEncodePendingSaturationRetryAttemptsHardReliefGrace = 4;
 static const useconds_t kEncodePendingSaturationRetrySleepUs = 800;
 static const int kEncodePendingSaturationEscalateHitStreakThreshold = 2;
 static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
@@ -293,12 +294,21 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
             retryAttempts = escalateBudget ? kEncodePendingSaturationRetryAttemptsEscalated
                                            : kEncodePendingSaturationRetryAttempts;
         }
+        BOOL hardReliefGraceEligible = (!softSaturation &&
+                                        pendingBefore == kEncodePendingSaturationHardDropPendingThreshold &&
+                                        _saturationSkipStreak == 0);
+        BOOL hardReliefGraceApplied = NO;
+        if (hardReliefGraceEligible &&
+            retryAttempts < kEncodePendingSaturationRetryAttemptsHardReliefGrace) {
+            retryAttempts = kEncodePendingSaturationRetryAttemptsHardReliefGrace;
+            hardReliefGraceApplied = YES;
+        }
         uint64_t retryBudgetUs = (uint64_t)retryAttempts * (uint64_t)kEncodePendingSaturationRetrySleepUs;
 
         saturationPlanLogCount++;
         if (saturationPlanLogCount <= 12 || saturationPlanLogCount % 200 == 0) {
             os_log(hevc_log(),
-                   "encodePixelBuffer: saturation guard branch=plan pendingBefore=%d mode=%{public}s dropThreshold=%d hitStreak=%d skipStreak=%d attempts=%d sleepUs=%u budgetUs=%llu",
+                   "encodePixelBuffer: saturation guard branch=plan pendingBefore=%d mode=%{public}s dropThreshold=%d hitStreak=%d skipStreak=%d attempts=%d sleepUs=%u budgetUs=%llu hardReliefGraceEligible=%{public}s hardReliefGraceApplied=%{public}s",
                    pendingBefore,
                    softSaturation ? "soft" : "hard",
                    kEncodePendingSaturationHardDropPendingThreshold,
@@ -306,7 +316,9 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
                    _saturationSkipStreak,
                    retryAttempts,
                    (unsigned int)kEncodePendingSaturationRetrySleepUs,
-                   retryBudgetUs);
+                   retryBudgetUs,
+                   hardReliefGraceEligible ? "YES" : "NO",
+                   hardReliefGraceApplied ? "YES" : "NO");
         }
 
         for (int attempt = 1; attempt <= retryAttempts; attempt++) {
@@ -339,7 +351,7 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
             _saturationSkipStreak++;
             if (_skipLogCount <= 10 || _skipLogCount % 100 == 0) {
                 os_log(hevc_log(),
-                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d mode=%{public}s waitedUs=%llu totalSkipped=%d hitStreak=%d skipStreak=%d budgetUs=%llu",
+                       "encodePixelBuffer: saturation guard branch=skip pendingBefore=%d pendingAfter=%d mode=%{public}s waitedUs=%llu totalSkipped=%d hitStreak=%d skipStreak=%d budgetUs=%llu hardReliefGraceEligible=%{public}s hardReliefGraceApplied=%{public}s",
                        pendingBefore,
                        pending,
                        softSaturation ? "soft" : "hard",
@@ -347,7 +359,9 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
                        _skipLogCount,
                        _saturationHitStreak,
                        _saturationSkipStreak,
-                       retryBudgetUs);
+                       retryBudgetUs,
+                       hardReliefGraceEligible ? "YES" : "NO",
+                       hardReliefGraceApplied ? "YES" : "NO");
             }
             return;
         }
@@ -359,12 +373,14 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
             if (saturationHardDowngradeAdmitLogCount <= 10 ||
                 saturationHardDowngradeAdmitLogCount % 100 == 0) {
                 os_log(hevc_log(),
-                       "encodePixelBuffer: saturation guard branch=admit-hard-downgraded pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu dropThreshold=%d",
+                       "encodePixelBuffer: saturation guard branch=admit-hard-downgraded pendingBefore=%d pendingAfter=%d waitedUs=%llu budgetUs=%llu dropThreshold=%d hardReliefGraceEligible=%{public}s hardReliefGraceApplied=%{public}s",
                        pendingBefore,
                        pending,
                        waitedUs,
                        retryBudgetUs,
-                       kEncodePendingSaturationHardDropPendingThreshold);
+                       kEncodePendingSaturationHardDropPendingThreshold,
+                       hardReliefGraceEligible ? "YES" : "NO",
+                       hardReliefGraceApplied ? "YES" : "NO");
             }
         } else if (softSaturation && pending > 1) {
             saturationSoftAdmitLogCount++;

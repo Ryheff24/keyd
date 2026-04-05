@@ -1,5 +1,41 @@
 # CURRENT
 
+## Lane WiFi Iteration 36 (iteration14 canonical run triage + HEVC hard relief grace)
+
+- Timestamp: 2026-04-04 20:03:26 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration14 hevc hard-to-soft relief admit reduces hard skip tails"`
+- Pass/Fail:
+  - `[TEST] COMPLETE: 27/33 passed, 6 failed`
+  - Failing signals: `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency`, `sec-identity-file-permissions` (known C3).
+- Key metric deltas vs iteration13:
+  - fps `maxGap 417ms -> 175ms` (major tail improvement).
+  - sustained/fps `1% low 10.0 -> 24.0` (major uplift, still below 30.0 target).
+  - iPad starvation signals `674 -> 359` (`starvationSignal=true`, improved).
+  - HEVC hard skips `6 -> 4` (improved), with no soft-mode skips and no `pendingAfter=2` hard skip regressions.
+- Highest-impact bottleneck evidence:
+  - Remaining encoder drops are still hard-mode threshold events (`branch=skip ... pendingBefore=3 pendingAfter=3 mode=hard`) clustered at `19:58:33`, `20:01:11`, and `20:01:44`.
+  - Three of four remaining skips used only `budgetUs=1600` on first-hit hard saturation, then immediately recovered/downgraded nearby (`branch=admit-hard-downgraded`), indicating first-hit hard-mode wait is still too short and injects residual cadence holes that keep `1% low` at `24.0`.
+- Hypothesis tested:
+  - First-hit `pending=3` hard saturation is often transient near the relief boundary; extending the initial hard wait budget before skip should reduce residual hard-skip stutter without reducing fidelity.
+- Instrumentation + behavior change (`RemoteDesktop/macOS/Encode/HEVCEncoder.m`):
+  - Added hard-relief grace budget for first-hit hard saturation: `kEncodePendingSaturationRetryAttemptsHardReliefGrace = 4` (`3.2ms` budget) when `pendingBefore==3` and no active skip streak.
+  - Added decision telemetry flags for branch causality:
+    - `hardReliefGraceEligible=YES|NO`
+    - `hardReliefGraceApplied=YES|NO`
+  - Logged those flags on plan/failure/success branches:
+    - `branch=plan`
+    - `branch=skip`
+    - `branch=admit-hard-downgraded`
+  - Preserved test semantics, thresholds, and quality/fidelity settings.
+- Validation:
+  - `xcodebuild -project RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj -scheme RemoteDesktopAgent -configuration Debug -destination 'platform=macOS,arch=arm64' build` ✅
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - fewer `branch=skip mode=hard` first-hit events with `budgetUs=1600`,
+    - improved `1% low` and stable `maxGap` without regression in latency or frame-loss,
+    - `hardReliefGraceApplied=YES` correlated with reduced skip clusters.
+
 ## Lane WiFi Iteration 35 (iteration13 canonical run triage + HEVC hard→soft relief admit)
 
 - Timestamp: 2026-04-04 19:56:41 EDT
