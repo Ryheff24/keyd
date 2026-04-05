@@ -1,5 +1,43 @@
 # CURRENT
 
+## Lane WiFi Iteration 47 (iteration16.1 run triage + hard-depth aggressive trim guardrail)
+
+- Timestamp: 2026-04-04 21:33:07 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration16.1 mid-depth soft-threshold + cooldown suppression alignment"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers unchanged: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter16.0 (requested focus):
+  - `1% low`: sustained `9.2 -> 5.5` (regressed), fps test `9.2 -> 8.6` (regressed).
+  - `maxGap`: `442ms -> 508ms` (regressed).
+  - depth3/depth4 catchup mix shifted:
+    - depth3 soft applies `271 -> 0` (resolved),
+    - depth3 hard applies `145` (new dominant depth3 action),
+    - depth4 soft applies remains `0`, depth4 hard applies `130`.
+  - suppression events increased: `softSuppressedByDepthCooldown=true` (decision/render) `63 -> 176`.
+  - Queue-delay tails (iPad render dequeue): `p95 19.84ms -> 20.57ms`, `p99 20.84ms -> 23.31ms`, `max 26.02ms -> 25.89ms`.
+- Highest-impact remaining bottleneck evidence:
+  - Mid-depth soft overfire is fixed, but cooldown suppression now over-holds mid/deep backlog until hard-depth catches up aggressively.
+  - iPad logs repeatedly show `branch=hold mode=fifo ... softSuppressedByDepthCooldown=true ... pendingBefore=3/4`, then immediate `catchup-hard-depth` with `hardTrimPolicy=depth-aggressive-keep-2` and `droppedStale=2`.
+  - In this run, aggressive hard-depth trims fired frequently (`106` keep-2 events), producing bursty stale drops and aligning with worsened `1% low`/`maxGap` tails.
+- Hypothesis tested:
+  - Aggressive hard-depth keep-2 should trigger later (older queue age) so cooldown windows avoid oscillating between prolonged holds and two-frame hard drops.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Raised aggressive hard-depth trim delay threshold:
+    - `hardDepthAggressiveTrimQueueDelayThresholdMs: 20.0 -> 24.0`.
+  - Added branch-complete aggressive-trim telemetry in decision + dequeue paths:
+    - `hardDepthAggressiveDecision=apply|hold|na`
+    - `hardDepthAggressiveDelayDeltaMs=<oldestDelay-threshold>`
+    - Emitted in `catchup decision`, `dequeue branch`, and `render dequeue` logs on both apply/hold branches.
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅ (`** BUILD SUCCEEDED **`)
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - fewer `depth-aggressive-keep-2` events and `droppedStale=2` bursts,
+    - improved sustained/fps `1% low` and `maxGap`,
+    - queue-delay p95/p99 tails contract without fidelity/resolution/security regressions.
+
 ## Lane WiFi Iteration 46 (iteration16.0 deep-backlog soft-threshold + cooldown suppression widening triage + mid-depth suppression expansion)
 
 - Timestamp: 2026-04-04 21:26:37 EDT
