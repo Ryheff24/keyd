@@ -19,16 +19,16 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `58.2 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.275` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `35 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `105 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `50 ms` | `7 ms` | `6 ms` | ❌ |
+| FPS | `57.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.288` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `33 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `104 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `48 ms` | `7 ms` | `6 ms` | ❌ |
 | Glass-to-glass latency median | `67 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `129 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `76 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `60.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `34 ms` | `8 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency p95 | `127 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `75 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `59.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `31 ms` | `8 ms` | `6 ms` | ❌ |
 | Heavy-load pipeline p95 | `102 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
@@ -118,3 +118,4 @@ Rules:
 | 2026-04-04 | 20:08:30 EDT | `82317db` | `2752x1786` | `2496x1620` | `57.5 fps` | `1.189` | `32/105/47 ms` | `57/128/72 ms` | `59.6 fps, 37/109 ms` | `1` | `26/33` | wifi: iteration15 hard-first-hit relief grace reduce residual hard skip stutter |
 | 2026-04-04 | 20:24:31 EDT | `21faecf` | `2752x1786` | `2496x1620` | `56.9 fps` | `1.268` | `31/113/50 ms` | `55/134/74 ms` | `58.6 fps, 40/127 ms` | `1` | `24/33` | wifi: iteration15.2 pairing-connection retain + state-lifecycle instrumentation |
 | 2026-04-04 | 20:29:41 EDT | `02876bb` | `2752x1786` | `2496x1620` | `58.2 fps` | `1.275` | `35/105/50 ms` | `67/129/76 ms` | `60.2 fps, 34/102 ms` | `1` | `26/33` | wifi: iteration15.3 tcp scheduler sleep-cap + clamp instrumentation |
+| 2026-04-04 | 20:36:23 EDT | `af9a475` | `2752x1786` | `2496x1620` | `57.8 fps` | `1.288` | `33/104/48 ms` | `67/127/75 ms` | `59.6 fps, 31/102 ms` | `1` | `26/33` | wifi: iteration15.4 completion-derived scheduler guard validation |
