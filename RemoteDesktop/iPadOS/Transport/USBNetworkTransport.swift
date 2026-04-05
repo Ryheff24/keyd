@@ -401,7 +401,13 @@ final class USBNetworkTransport {
                     print("[CONSOLE] USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
                     self.log.info("USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
                     self.detectedLocalIP = ncm.ip
-                    self.connectOverUSBNCMByIP(localIP: ncm.ip)
+                    // Don't connect yet — notify the FSM first. The Mac will send
+                    // a peer address update with its USB NCM link-local IP over WiFi
+                    // before transitioning. setPeerAddress() triggers the actual connect.
+                    if self.detectedMacIP != nil && self.isLinkLocal(self.detectedMacIP!) {
+                        // Already have a link-local peer address (e.g., from a prior update)
+                        self.connectOverUSBNCMByIP(localIP: ncm.ip)
+                    }
                     self.onInterfaceChanged?(true, nil)
                 }
             } else {
@@ -441,12 +447,25 @@ final class USBNetworkTransport {
         })
     }
 
-    /// Set the Mac's IP address (from QR payload) for USB NCM direct connection.
-    /// Called after pairing when the Mac's link-local IP is known.
+    /// Set the Mac's IP address for USB NCM direct connection.
+    /// Called from QR pairing (WiFi IP) or peer address update (USB NCM link-local IP).
+    /// If USB NCM interface is already detected and this is a link-local IP,
+    /// immediately initiates the connection.
     func setPeerAddress(_ ip: String) {
         print("[CONSOLE] USBTransport: peer address set to \(ip)")
         log.info("Peer address set to \(ip)")
         detectedMacIP = ip
+
+        // If USB NCM interface is already up and we just got a link-local IP
+        // from the Mac's peer address update, connect now.
+        if isLinkLocal(ip), let localIP = detectedLocalIP, !isConnected {
+            print("[CONSOLE] USBTransport: link-local peer address received while USB NCM up — connecting now")
+            connectOverUSBNCMByIP(localIP: localIP)
+        }
+    }
+
+    private func isLinkLocal(_ ip: String) -> Bool {
+        return ip.hasPrefix("169.254.")
     }
 
     /// Send media data over UDP to the Mac (for acknowledgements/control).

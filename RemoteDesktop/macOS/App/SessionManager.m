@@ -56,14 +56,14 @@ static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
 static const int kWirelessHEVCFPS = 60;
-static const int kWirelessHEVCBitrate = 3500000; /* 3.5 Mbps stability-first baseline */
+static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps — reasonable WiFi LAN starting point */
 static const int kWirelessAdaptiveMinFPS = 30;
 static const int kWirelessAdaptiveMidFPS = 52;
 static const int kWirelessAdaptiveMaxFPS = 60;
-static const int kWirelessAdaptiveMinBitrate = 2500000; /* 2.5 Mbps floor */
-static const int kWirelessAdaptiveMaxBitrate = 4600000; /* cap upshift headroom to reduce bursty tail overshoot */
-static const int kWirelessAdaptiveBitrateStepDown = 350000;
-static const int kWirelessAdaptiveBitrateStepUp = 75000;
+static const int kWirelessAdaptiveMinBitrate = 5000000;  /* 5 Mbps floor — readable text at 2496x1620 */
+static const int kWirelessAdaptiveMaxBitrate = 30000000; /* 30 Mbps ceiling — LAN WiFi can handle this */
+static const int kWirelessAdaptiveBitrateStepDown = 1500000; /* 1.5 Mbps — proportional to new range */
+static const int kWirelessAdaptiveBitrateStepUp = 500000;    /* 500 kbps — reach 30 Mbps in ~40 healthy seconds */
 static const uint64_t kWirelessAdaptiveDownshiftCooldownMs = 1200;
 static const uint64_t kWirelessAdaptiveRecoveryHoldMs = 5200;
 static const uint64_t kWirelessAdaptiveFastRecoveryHoldMs = 1800;
@@ -75,13 +75,14 @@ static const int kWirelessAdaptiveMildCongestionStreak = 4;
 static const int kWirelessAdaptiveSevereEscalationStreak = 3;
 static const int kWirelessAdaptiveMaxUpshiftFPSDelta = 2;
 static const int kWirelessAdaptiveFastMaxUpshiftFPSDelta = 4;
-static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 100000;
+static const int kWirelessAdaptiveMaxUpshiftBitrateDelta = 500000;  /* match step size */
 static const int kWirelessAdaptiveMaxDownshiftFPSDelta = 6;
-static const int kWirelessAdaptiveMaxDownshiftBitrateDelta = 600000;
+static const int kWirelessAdaptiveMaxDownshiftBitrateDelta = 3000000; /* fast downshift on congestion */
 /* Burst-density guardrails: oversized HEVC frames create long-tail TCP completion
- * spikes and downstream starvation windows even with low average bitrate. */
-static const int32_t kWirelessBurstTailFrameBytes = 180 * 1024;
-static const int32_t kWirelessBurstSevereFrameBytes = 300 * 1024;
+ * spikes and downstream starvation windows even with low average bitrate.
+ * Scaled for 30 Mbps ceiling — at 60fps, average frame is ~62 KB. */
+static const int32_t kWirelessBurstTailFrameBytes = 500 * 1024;
+static const int32_t kWirelessBurstSevereFrameBytes = 1000 * 1024;
 static const double kWirelessBurstTailDensityRatio = 8.0;
 static const double kWirelessBurstSevereDensityRatio = 12.0;
 static const int32_t kWirelessBurstTailFrameCountThreshold = 3;
@@ -185,11 +186,11 @@ static void keydrd_limit_size(uint32_t sourceWidth, uint32_t sourceHeight,
  * bounds the kernel TCP send buffer depth. At 2 in-flight, one frame
  * is being transmitted while the next waits — keeps latency bounded
  * without sacrificing throughput on fast links. */
-/* Allow 3 concurrent TCP sends to pipeline USB NCM transfers.
- * At 3-4MB per frame and ~400 MB/s USB 3, each send takes ~10ms.
- * With 3 in-flight, the pipeline fills while the first is completing,
- * keeping USB bandwidth saturated for 120fps at larger frame sizes. */
-static const int32_t kMaxMediaSendsInFlightUSB = 3;
+/* Allow 5 concurrent TCP sends to pipeline USB NCM transfers.
+ * TB4 (USB 3.2 Gen 2) has 10 Gbps bandwidth. At 3-4MB per frame,
+ * each send takes <5ms. 5 in-flight keeps the pipeline fully saturated
+ * for 120fps at maximum quality without backpressure drops. */
+static const int32_t kMaxMediaSendsInFlightUSB = 5;
 
 @interface SessionManager ()
 
@@ -2681,7 +2682,7 @@ static const int32_t kMaxMediaSendsInFlightUSB = 3;
     float quality;
     int fps;
     if (_usbTransport.isConnected) {
-        bitrate = 40000000; /* 40 Mbps — realistic target, not undershooting */
+        bitrate = 100000000; /* 100 Mbps — USB 3.2 Gen 2 has headroom, maximize quality */
         quality = 0.0f;     /* bitrate-based, faster than quality-based */
         fps = 120;
         _capture.captureFPS = 120;

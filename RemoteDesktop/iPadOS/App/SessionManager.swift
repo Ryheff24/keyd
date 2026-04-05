@@ -493,10 +493,21 @@ final class SessionManager {
             }
         }
 
-        // Set up USB NCM transport callbacks
+        // Set up USB NCM transport callbacks.
+        // When USB NCM appears while WiFi is active, delay the FSM transition
+        // to let the Mac's peer address update arrive over WiFi first.
+        // The Mac sends its USB NCM link-local IP before transitioning.
         usbTransport.onInterfaceChanged = { [weak self] appeared, interface in
             DispatchQueue.main.async {
-                self?.handleTransportEvent(appeared ? .wiredAppeared : .wiredDisappeared)
+                guard let self = self else { return }
+                if appeared && self.wirelessTransport.isConnected {
+                    print("[CONSOLE] USB NCM appeared while WiFi active — delaying FSM 300ms for peer address")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                        self?.handleTransportEvent(.wiredAppeared)
+                    }
+                } else {
+                    self.handleTransportEvent(appeared ? .wiredAppeared : .wiredDisappeared)
+                }
             }
         }
 
