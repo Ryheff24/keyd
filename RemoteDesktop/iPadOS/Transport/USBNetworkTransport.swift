@@ -638,6 +638,10 @@ final class USBNetworkTransport {
         inputConn.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
             guard let self = self else { return }
             switch state {
+            case .setup:
+                print("[CONSOLE] USBTransport: TLS input state=setup")
+            case .preparing:
+                print("[CONSOLE] USBTransport: TLS input state=preparing")
             case .ready:
                 print("[CONSOLE] USBTransport: TLS input connection READY")
                 self.log.info("USB NCM TLS input connection ready (IP-based)")
@@ -650,8 +654,6 @@ final class USBNetworkTransport {
                 if self.mediaConnection == nil { self.isConnected = false }
             case .waiting(let error):
                 print("[CONSOLE] USBTransport: TLS input WAITING: \(error) — will retry in 0.5s")
-                // NWConnection retry for link-local TCP is unreliable.
-                // Cancel and reconnect after a short delay.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self, self.detectedLocalIP != nil, self.detectedMacIP != nil else { return }
                     if self.inputConnection?.state != .ready {
@@ -661,7 +663,10 @@ final class USBNetworkTransport {
                         self.retryTCPConnection(macIP: self.detectedMacIP!, localIP: self.detectedLocalIP!)
                     }
                 }
-            default: break
+            case .cancelled:
+                print("[CONSOLE] USBTransport: TLS input CANCELLED (connection=\(inputConn === self.inputConnection ? "current" : "stale"))")
+            @unknown default:
+                print("[CONSOLE] USBTransport: TLS input unknown state: \(state)")
             }
         }
         inputConn.start(queue: transportQueue)
