@@ -738,10 +738,11 @@ static const int32_t kMaxMediaSendsInFlightUSB = 5;
     os_log(sLog, "Transport event: %{public}s (current state: %{public}s)",
            transport_event_name(event), transport_state_name(_transportState));
 
-    /* Before WiFi→USB transition, tell iPad the Mac's new USB NCM IP
-     * so it can update its peer address before WiFi drops. */
-    if (event == TRANSPORT_EVT_WIRED_APPEARED &&
-        (_transportState == TRANSPORT_WIFI || _transportState == TRANSPORT_AWDL)) {
+    /* Tell iPad the Mac's USB NCM link-local IP whenever USB NCM appears.
+     * The iPad needs this to connect over USB — the QR pairing host is the
+     * WiFi IP which can't be reached over the USB NCM interface. Send over
+     * whatever transport is currently alive (WiFi or USB input). */
+    if (event == TRANSPORT_EVT_WIRED_APPEARED) {
         [self sendPeerAddressUpdate];
     }
 

@@ -402,14 +402,18 @@ final class USBNetworkTransport {
                     print("[CONSOLE] USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
                     self.log.info("USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
                     self.detectedLocalIP = ncm.ip
-                    // Don't connect yet — notify the FSM first. The Mac will send
-                    // a peer address update with its USB NCM link-local IP over WiFi
-                    // before transitioning. setPeerAddress() triggers the actual connect.
-                    if self.detectedMacIP != nil && self.isLinkLocal(self.detectedMacIP!) {
-                        // Already have a link-local peer address (e.g., from a prior update)
+
+                    if let linkLocal = self.detectedMacLinkLocalIP {
+                        // Have link-local peer from a previous peerAddressUpdate — connect + notify
+                        print("[CONSOLE] USB NCM: have link-local peer \(linkLocal) — connecting and firing wiredAppeared")
                         self.connectOverUSBNCMByIP(localIP: ncm.ip)
+                        self.onInterfaceChanged?(true, nil)
+                    } else {
+                        // No link-local peer yet. Don't fire wiredAppeared — we can't connect.
+                        // The Mac will send peerAddressUpdate over WiFi when it detects USB NCM.
+                        // setPeerAddress() will fire onInterfaceChanged when the IP arrives.
+                        print("[CONSOLE] USB NCM: no link-local peer yet — waiting for peerAddressUpdate from Mac")
                     }
-                    self.onInterfaceChanged?(true, nil)
                 }
             } else {
                 if self.detectedLocalIP != nil {
@@ -468,10 +472,11 @@ final class USBNetworkTransport {
             detectedMacIP = ip
         }
 
-        // If USB NCM interface is already up and we have a link-local IP, connect now.
+        // If USB NCM interface is already up and we have a link-local IP, connect and notify.
         if let linkLocal = detectedMacLinkLocalIP, let localIP = detectedLocalIP, !isConnected {
-            print("[CONSOLE] USBTransport: link-local peer \(linkLocal) + USB NCM up — connecting now")
+            print("[CONSOLE] USBTransport: link-local peer \(linkLocal) + USB NCM up — connecting and notifying FSM")
             connectOverUSBNCMByIP(localIP: localIP)
+            onInterfaceChanged?(true, nil)
         }
     }
 
