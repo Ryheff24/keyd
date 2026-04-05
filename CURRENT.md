@@ -1,5 +1,47 @@
 # CURRENT
 
+## Lane WiFi Iteration 46 (iteration16.0 deep-backlog soft-threshold + cooldown suppression widening triage + mid-depth suppression expansion)
+
+- Timestamp: 2026-04-04 21:26:37 EDT
+- Command:
+  - `./RemoteDesktop/scripts/run-e2e-tests.sh --transport-rotation wifi --profile full --notes "wifi: iteration16.0 deep-backlog soft-threshold + cooldown suppression widening"`
+- Pass/Fail (blocker status + high-signal results):
+  - `[TEST] COMPLETE: 26/33 passed, 7 failed`.
+  - WiFi perf blockers unchanged: `heavy-load`, `sustained-stream`, `fps`, `frame-pacing`, `pipeline-latency`, `glass-to-glass-latency` (plus known `sec-identity-file-permissions`).
+- Key deltas vs iter15.9 (requested focus):
+  - `1% low`: sustained `9.2 -> 9.2` (flat), fps test `9.2 -> 9.2` (flat).
+  - `maxGap`: `434ms -> 442ms` (regressed).
+  - Queue-delay tails (iPad render dequeue): `p95 18.32ms -> 19.84ms` (worse), `p99 20.91ms -> 20.84ms` (slightly better), `max 24.66ms -> 26.02ms` (worse).
+  - Catchup mix shifted strongly toward hard depth at deep backlog:
+    - depth4 soft applies `356 -> 0` (improved),
+    - depth4 hard applies `85 -> 179` (up),
+    - suppression events `55 -> 63` (`softSuppressedByDepthCooldown=true` decision/render).
+  - New dominant soft churn moved to mid backlog:
+    - depth3 soft applies `271` this run (from `catchup decision branch=apply mode=catchup-soft-single pendingBefore=3`).
+- Highest-impact remaining bottleneck evidence:
+  - Deep backlog behavior improved, but `pendingBefore=3` still over-triggers soft single-drop near the 16ms base threshold, causing cadence churn and low-tail instability.
+  - Evidence from `/tmp/keyd-e2e-ipad.log`:
+    - depth3 soft applies `271` while depth4 soft is `0`.
+    - repeated depth3 soft applies at `oldestDelay≈16–18ms` with `hardDepthCandidate=false` and cooldown windows, followed by elevated tails (`fps maxGap=442ms`, sustained `1%low=9.2`).
+- Hypothesis tested:
+  - Mid-backlog (`pending=3`) should align soft trigger/suppression with hard-depth thresholds so soft single-drop no longer oscillates during hard-depth recovery windows.
+- Instrumentation + behavior change (`RemoteDesktop/iPadOS/Render/MetalRenderer.swift`):
+  - Added mid-depth soft threshold:
+    - `softCatchupMidDepthDelayThresholdMs = 18.0`.
+    - `pendingBefore=3` now uses `max(midSoftThreshold, hardDepthDelayThreshold)` instead of base `16ms`.
+  - Expanded cooldown suppression scope:
+    - soft suppression now applies for both mid+deep backlog under hard-depth cooldown (`midSoftDepth || deepSoftDepth`) when hard-delay is not triggered.
+    - suppression reason updated to `depth-cooldown-middeep`.
+  - Added branch-complete telemetry for touched paths:
+    - `midSoftThreshold` + `midSoftDepth` emitted in `catchup decision`, `dequeue branch`, and `render dequeue` logs on both hold/apply paths.
+- Validation:
+  - `xcodebuild -workspace RemoteDesktop/RemoteDesktop.xcworkspace -scheme RemoteDesktopApp -configuration Debug -destination 'generic/platform=iOS' build` ✅ (`** BUILD SUCCEEDED **`)
+- Next immediate move:
+  - Re-run canonical WiFi command and verify:
+    - depth3 soft apply count drops materially,
+    - `softSuppressedByDepthCooldown=true` rises in mid/deep cooldown windows,
+    - sustained/fps `1% low` and `maxGap` improve without resolution/fidelity/security regression.
+
 ## Lane WiFi Iteration 45 (iteration15.9 deep-cooldown soft-suppression validation + depth4 soft-threshold guard)
 
 - Timestamp: 2026-04-04 21:18:09 EDT
