@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `57.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.189` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `32 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `105 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `47 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `57 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `128 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `72 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `37 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `109 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `56.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.268` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `31 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `113 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `50 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `55 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `134 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `74 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `58.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `40 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `127 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `72.7%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -116,3 +116,4 @@ Rules:
 | 2026-04-04 | 19:54:08 EDT | `7fbb27d` | `2752x1786` | `2496x1620` | `58.1 fps` | `1.104` | `30/104/44 ms` | `53/126/69 ms` | `59.5 fps, 32/105 ms` | `1` | `26/33` | wifi: iteration13 hevc soft-hard saturation guard reduce pending2 skip tails |
 | 2026-04-04 | 20:02:02 EDT | `64ed33e` | `2752x1786` | `2496x1620` | `58.1 fps` | `0.533` | `28/43/30 ms` | `48/65/51 ms` | `60.0 fps, 25/39 ms` | `1` | `27/33` | wifi: iteration14 hevc hard-to-soft relief admit reduces hard skip tails |
 | 2026-04-04 | 20:08:30 EDT | `82317db` | `2752x1786` | `2496x1620` | `57.5 fps` | `1.189` | `32/105/47 ms` | `57/128/72 ms` | `59.6 fps, 37/109 ms` | `1` | `26/33` | wifi: iteration15 hard-first-hit relief grace reduce residual hard skip stutter |
+| 2026-04-04 | 20:24:31 EDT | `21faecf` | `2752x1786` | `2496x1620` | `56.9 fps` | `1.268` | `31/113/50 ms` | `55/134/74 ms` | `58.6 fps, 40/127 ms` | `1` | `24/33` | wifi: iteration15.2 pairing-connection retain + state-lifecycle instrumentation |
