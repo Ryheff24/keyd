@@ -495,20 +495,14 @@ final class SessionManager {
         }
 
         // Set up USB NCM transport callbacks.
-        // When USB NCM appears while WiFi is active, delay the FSM transition
-        // to let the Mac's peer address update arrive over WiFi first.
-        // The Mac sends its USB NCM link-local IP before transitioning.
+        // USBNetworkTransport gates onInterfaceChanged(true) on having both the
+        // interface AND the Mac's link-local peer address, so no artificial delay
+        // is needed here. Fire the FSM event immediately.
         usbTransport.onInterfaceChanged = { [weak self] appeared, interface in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if appeared && self.wirelessTransport.isConnected {
-                    print("[CONSOLE] USB NCM appeared while WiFi active — delaying FSM 300ms for peer address")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                        self?.handleTransportEvent(.wiredAppeared)
-                    }
-                } else {
-                    self.handleTransportEvent(appeared ? .wiredAppeared : .wiredDisappeared)
-                }
+                print("[CONSOLE] USB NCM onInterfaceChanged: appeared=\(appeared), usbConnected=\(self.usbTransport.isConnected), wifiConnected=\(self.wirelessTransport.isConnected)")
+                self.handleTransportEvent(appeared ? .wiredAppeared : .wiredDisappeared)
             }
         }
 
@@ -589,6 +583,28 @@ final class SessionManager {
             executeTransportEffect(effect)
         }
 
+        // Immediate fallback: when transitioning to .disconnected, check if the
+        // alternate transport is still connected and switch to it immediately.
+        // This avoids the reconnect/backoff cycle and keeps streaming uninterrupted.
+        if transition.state == .disconnected && state == .streaming {
+            if wirelessTransport.isConnected {
+                print("[CONSOLE] Immediate WiFi fallback — WiFi still connected, switching directly")
+                DispatchQueue.main.async {
+                    self.hudViewModel.flashTransportChange(to: .disconnected)
+                }
+                handleTransportEvent(.wifiAvailable)
+                return
+            }
+            if usbTransport.isConnected {
+                print("[CONSOLE] Immediate USB fallback — USB still connected, switching directly")
+                DispatchQueue.main.async {
+                    self.hudViewModel.flashTransportChange(to: .disconnected)
+                }
+                handleTransportEvent(.wiredAppeared)
+                return
+            }
+        }
+
         // Update session state based on transport
         switch transition.state {
         case .usbNCM, .wifi, .awdl:
@@ -626,9 +642,11 @@ final class SessionManager {
             print("[CONSOLE] Effect: connect AWDL — starting Bonjour browse (p2p)")
             wirelessTransport.startBrowsing()
         case .disconnectCurrent:
-            print("[CONSOLE] Effect: disconnect current transport")
-            usbTransport.stopMonitoring()
-            wirelessTransport.stopBrowsing()
+            // No-op: keep both transports alive for instant fallback.
+            // USB and WiFi connections persist across transport switches.
+            // The Mac side is already a no-op here. Data routing is handled by
+            // sendInputEventToMac (checks usbTransport.isConnected first).
+            print("[CONSOLE] Effect: disconnectCurrent — no-op, keeping transports alive for fallback")
         case .switchEncodeLZ4:
             Self.log.info("Effect: switch to LZ4 decode path")
             hudViewModel.isEcoMode = false

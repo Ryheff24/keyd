@@ -762,8 +762,20 @@ static const int32_t kMaxMediaSendsInFlightUSB = 5;
         self.onTransportStateChanged(_transportState);
     }
 
-    /* Handle connection state changes */
+    /* Immediate fallback: when transitioning to DISCONNECTED during active streaming,
+     * check if the alternate transport is still connected and switch directly.
+     * This avoids the reconnect/backoff cycle and keeps streaming + capture alive. */
     if (_transportState == TRANSPORT_DISCONNECTED && _sessionState == SESSION_STREAMING) {
+        if (_wirelessTransport.isConnected) {
+            os_log(sLog, "Immediate WiFi fallback — WiFi still connected, switching directly");
+            [self handleTransportEvent:TRANSPORT_EVT_WIFI_AVAILABLE];
+            return;
+        }
+        if (_usbTransport.isConnected) {
+            os_log(sLog, "Immediate USB fallback — USB still connected, switching directly");
+            [self handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
+            return;
+        }
         [self startReconnection];
     } else if (_transportState != TRANSPORT_IDLE && _transportState != TRANSPORT_DISCONNECTED) {
         if (_sessionState == SESSION_CONNECTING || _sessionState == SESSION_RECONNECTING) {
