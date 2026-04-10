@@ -135,6 +135,19 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_ProfileLevel,
                          kVTProfileLevel_HEVC_Main_AutoLevel);
 
+    /* Apple's explicit speed-over-quality hint for low-latency streaming
+     * (macOS 14.0+). Trades rate-distortion optimization cycles for raw
+     * encode throughput without changing the selected Quality target.
+     * Measured encode time on M-series ~14ms at 2496x1620; this key is
+     * documented to reduce that when set alongside RealTime + LowLatency.
+     * If the symbol is unavailable at runtime the call is a no-op. */
+    if (@available(macOS 14.0, *)) {
+        OSStatus speedStatus = VTSessionSetProperty(_session,
+                                                    kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+                                                    kCFBooleanTrue);
+        os_log_info(hevc_log(), "PrioritizeEncodingSpeedOverQuality set: status=%d", (int)speedStatus);
+    }
+
     /* Force zero-frame encoder delay — output each frame immediately.
      * Without this, the encoder may buffer 1-2 frames for rate control,
      * adding ~16ms to the pipeline latency. */
