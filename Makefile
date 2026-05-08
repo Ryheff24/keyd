@@ -8,17 +8,20 @@ LOG_ROOT ?= logs
 WORKSPACE_PATH ?= keyd.xcworkspace
 SCRIPT := ./scripts/deploy-and-run.sh
 RUN_APPS_SCRIPT := ./RemoteDesktop/scripts/run-apps.sh
+E2E_SCRIPT := ./RemoteDesktop/scripts/run-e2e-tests.sh
 IOS_LABELS ?=
+
+# `make run` invokes the canonical Wi-Fi E2E repro from CLAUDE.md:
+#   run-e2e-tests.sh --transport-rotation wifi --profile full
+# which uses the default capture file at RemoteDesktop/2026-04-02 10-55-42-prores.mov
+# and a 90s sustained stream. Override the run note with NOTES="...".
+NOTES ?= make run
 
 DEVICE_SELECTORS := $(filter ipad iphone ios mac,$(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS)))
 
 # Archived legacy targets remain below for backward compatibility.
-# `index-remote` is the supported indexing target here, and `run` delegates to the RemoteDesktop script.
-# Skip build variants:
-#   make run skip
-#   make run -- --skip
-#   make run-skip
-.PHONY: deploy run run-skip attach stop index index-remote index-legacy index-all test-integration ipad iphone ios mac skip --skip
+# `index-remote` is the supported indexing target here.
+.PHONY: deploy run run-apps run-apps-skip attach stop index index-remote index-legacy index-all test-integration ipad iphone ios mac skip --skip
 
 deploy: test-integration
 	@WORKSPACE_PATH="$(WORKSPACE_PATH)" \
@@ -33,9 +36,12 @@ deploy: test-integration
 	$(SCRIPT) deploy
 
 run:
+	@$(E2E_SCRIPT) --transport-rotation wifi --profile full --notes "$(NOTES)"
+
+run-apps:
 	@$(RUN_APPS_SCRIPT) $(if $(filter skip --skip,$(MAKECMDGOALS)),--skip,)
 
-run-skip:
+run-apps-skip:
 	@$(RUN_APPS_SCRIPT) --skip
 
 skip --skip:
