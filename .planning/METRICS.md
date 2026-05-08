@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `59.2 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.369` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `28 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `39 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `29 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `49 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `59 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `49 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `59.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `24 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `32 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `59.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.259` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `24 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `29 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `24 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `43 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `50 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `44 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `60.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `21 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `26 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `84.8%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -132,3 +132,4 @@ Rules:
 | 2026-04-05 | 12:36:34 EDT | `a32f314` | `2752x1786` | `2496x1620` | `54.4 fps` | `1.001` | `27/104/41 ms` | `47/120/58 ms` | `55.1 fps, 26/96 ms` | `1` | `27/34` | full run |
 | 2026-04-05 | 13:29:11 EDT | `48e111a` | `2752x1786` | `2496x1620` | `49.8 fps` | `1.404` | `40/132/67 ms` | `56/138/80 ms` | `50.5 fps, 35/105 ms` | `1` | `26/33` | user testing wifi |
 | 2026-04-06 | 14:21:09 EDT | `c93571e` | `2752x1786` | `2496x1620` | `59.2 fps` | `0.369` | `28/39/29 ms` | `49/59/49 ms` | `59.4 fps, 24/32 ms` | `1` | `26/33` | Transport fallback fix: no-op disconnectCurrent, immediate WiFi fallback, remove 300ms delay |
+| 2026-05-08 | 11:40:59 EDT | `f017d17` | `2752x1786` | `2496x1620` | `59.9 fps` | `0.259` | `24/29/24 ms` | `43/50/44 ms` | `60.1 fps, 21/26 ms` | `1` | `28/33` | make run wiring test |
