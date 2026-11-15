@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }
@@ -213,6 +213,20 @@ STRIPE_ROWS = StripeSync:StripeSync.cfg:pass \
 
 stripe: check-tools
 	$(call tlc_rows,$(STRIPE_ROWS))
+
+# FrameRing (C5 x C6, 2026-11-15): iPad present path. As built, one texture is overwritten in
+# place while command buffers may still sample it, and bunched arrivals are lost (newest wins).
+# Design: a 4-slot ring, a slot reused only once no in-flight command buffer holds it, one new
+# frame per tick in arrival order, and a drain after K ticks of standing backlog.
+FRAME_ROWS = FrameRing:FrameRing.cfg:pass \
+	FrameRing:cfg/FR-asbuilt.cfg:NoWriteWhileRead \
+	FrameRing:cfg/FR-ctl-no-gpu-wait.cfg:NoWriteWhileRead \
+	FrameRing:cfg/FR-ctl-no-drain.cfg:BoundedBacklog \
+	FrameRing:cfg/FR-ctl-lifo.cfg:InOrder \
+	FrameRing:cfg/FR-witness.cfg:NeverShown
+
+frame: check-tools
+	$(call tlc_rows,$(FRAME_ROWS))
 
 # TLAPS: the step-by-step properties (LabelsMatch, StreamOnlyWithRoute, CodecMatches) for any
 # bounds. Each control replaces one switch in Design by TRUE and must fail at exactly that

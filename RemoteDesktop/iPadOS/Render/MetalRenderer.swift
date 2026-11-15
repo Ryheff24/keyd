@@ -22,10 +22,15 @@ struct ViewportUniforms {
 /// arrives via `updateFrame(_:width:height:)` and is rendered on the next
 /// display link callback.
 ///
-/// Strategy: always present the newest frame. If frames arrive faster than
-/// the display can consume them, older frames are silently replaced.
-/// The renderer is intentionally simple — bandwidth adaptation belongs
-/// on the Mac encoder/transport side, not here.
+/// Strategy (tla/FrameRing.tla, 2026-11-15): frames arrive bunched (RENDER-CADENCE at d328f4f:
+/// ~18 ticks/s got 2+ frames, ~25 got none), so newest-wins dropped about one frame in five.
+/// Decoded frames are copied into a ring of `kRingSlots` textures and queued FIFO (cap
+/// `kQueueCap`); each display-link tick shows at most one new frame, oldest first. A slot is
+/// reused only when it is not queued, not shown and no in-flight command buffer samples it
+/// (`gpuRefs == 0`, decremented in the completion handler). Drain rule: after `kDrainTicks`
+/// ticks in a row that ended with frames still queued, a tick with 2+ queued drops the oldest,
+/// so a standing backlog cannot hold latency up by a refresh. Bandwidth adaptation still
+/// belongs on the Mac side.
 final class MetalRenderer: NSObject {
 
     struct StatsSnapshot {
@@ -55,10 +60,40 @@ final class MetalRenderer: NSObject {
     /// Prevents CPU stalls while GPU processes previous frames.
     private let inflightSemaphore = DispatchSemaphore(value: 3)
 
-    /// Current BGRA frame texture received from the decode pipeline.
-    /// Updated atomically on the frame delivery thread; read on the render thread.
-    private var frameTexture: MTLTexture?
+    /// One ring texture. `gpuRefs` counts in-flight command buffers sampling it; `filling` marks
+    /// the slot the producer is copying into outside the lock. Both change under textureLock.
+    private final class RingSlot {
+        let texture: MTLTexture
+        var gpuRefs = 0
+        var filling = false
+        init(texture: MTLTexture) { self.texture = texture }
+    }
+
+    /// A decoded frame ready to show. `slot` is nil for zero-copy HEVC textures (ARC keeps the
+    /// CVMetalTexture alive through `cvRef` and the completion handler).
+    private struct QueuedFrame {
+        let texture: MTLTexture
+        let slot: RingSlot?
+        let cvRef: CVMetalTexture?
+        let captureTimestampUs: UInt64
+        let enqueuedAtUs: UInt64
+    }
+
+    private static let kRingSlots = 4      // shown + up to 3 in flight + queue fit without stealing
+    private static let kQueueCap = 2
+    private static let kDrainTicks = 2
+
+    private var ring: [RingSlot] = []                 // textureLock
+    private var queue: [QueuedFrame] = []             // textureLock, FIFO
+    private var shownFrame: QueuedFrame?              // textureLock; redrawn on ticks with no new frame
+    private var backlogTicks = 0                      // textureLock
     private let textureLock = NSLock()
+
+    // Queue diagnostics, logged in RENDER-CADENCE (textureLock).
+    private var qDropCap = 0, qDropDrain = 0, qDropNoSlot = 0, qStealHead = 0
+    private var qMaxDepth = 0
+    private var qWaitMaxMs = 0.0
+    private var qShownFromQueue = 0                   // ticks that showed a frame that had waited >= 1 tick
 
     // Render-cadence diagnostics (RENDER-CADENCE, logged once per second from the display link).
     // Arrivals and upload time are written under textureLock; the rest only on the link's thread.
@@ -106,20 +141,8 @@ final class MetalRenderer: NSObject {
                                   _ gpuRoundtripMs: Double,
                                   _ mode: String) -> Void)?
 
-    /// Dirty flag: set when updateFrame uploads new pixel data, cleared after render.
-    private var frameDirty = false
-
-    /// Capture timestamp (Mac host-time microseconds) of the current frame texture.
-    private var frameCaptureTimestampUs: UInt64 = 0
-
-    /// Host-time microseconds when the current frame was enqueued.
-    private var frameEnqueuedAtUs: UInt64 = 0
-
-    /// Retain the CVMetalTexture ref so the IOSurface-backed texture stays valid until rendered.
-    private var cvTextureRef: CVMetalTexture?
-
-    /// Count of decoded frames that replaced a previous frame before the display
-    /// link consumed it. This quantifies render-path coalescing under load.
+    /// Count of decoded frames dropped from display before the display link showed them
+    /// (queue cap, drain rule, or no free slot). Decode itself is never skipped.
     private var overwrittenFrameCount = 0
 
     /// Mac display dimensions, set during session handshake.
@@ -224,45 +247,75 @@ final class MetalRenderer: NSObject {
     /// Called from the decode pipeline after LZ4 decompress or HEVC decode.
     /// Thread-safe: protected by NSLock.
     func updateFrame(_ data: UnsafeRawPointer, width: Int, height: Int, captureTimestampUs: UInt64 = 0) {
+        // Under the lock: pick a slot nobody reads (FrameRing ArriveRing) and reserve it.
         textureLock.lock()
-        defer { textureLock.unlock() }
-
-        if frameDirty { overwrittenFrameCount += 1 }
         cadArrivalsSinceTick += 1
-        let uploadStart = CACurrentMediaTime()
-        frameCaptureTimestampUs = captureTimestampUs
-        frameEnqueuedAtUs = UInt64(uploadStart * 1_000_000.0)
-
-        // Recreate texture if dimensions changed
-        if frameTexture == nil
-            || frameTexture!.width != width
-            || frameTexture!.height != height {
+        if ring.isEmpty || ring[0].texture.width != width || ring[0].texture.height != height {
+            // Old slots stay alive while queued/shown frames or command buffers hold them.
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .bgra8Unorm,
-                width: width,
-                height: height,
-                mipmapped: false
-            )
+                pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
             descriptor.usage = .shaderRead
             descriptor.storageMode = .shared
-            frameTexture = device.makeTexture(descriptor: descriptor)
+            ring = (0..<Self.kRingSlots).compactMap { _ in
+                device.makeTexture(descriptor: descriptor).map(RingSlot.init(texture:))
+            }
+            print("[CONSOLE] MetalRenderer: ring (re)built slots=\(ring.count) size=\(width)x\(height)")
         }
+        var slot = ring.first { isFree($0) }
+        if slot == nil, !queue.isEmpty {
+            // No free slot: drop the oldest queued frame and reuse its slot (never GPU-held).
+            let victim = queue.removeFirst()
+            overwrittenFrameCount += 1
+            qStealHead += 1
+            slot = victim.slot.flatMap { s in ring.contains { $0 === s } ? s : nil }
+            if slot == nil { slot = ring.first { isFree($0) } }
+        }
+        guard let target = slot else {
+            overwrittenFrameCount += 1
+            qDropNoSlot += 1
+            let refs = ring.map { "\($0.gpuRefs)" }.joined(separator: ",")
+            textureLock.unlock()
+            print("[CONSOLE] MetalRenderer: no free ring slot, display drop (gpuRefs=\(refs))")
+            return
+        }
+        target.filling = true
+        textureLock.unlock()
 
-        // Upload pixel data to texture
-        let bytesPerRow = width * 4
-        let region = MTLRegion(
-            origin: MTLOrigin(x: 0, y: 0, z: 0),
-            size: MTLSize(width: width, height: height, depth: 1)
-        )
-        frameTexture?.replace(
-            region: region,
+        // Copy outside the lock: the reserved slot is not queued, shown or GPU-held.
+        let uploadStart = CACurrentMediaTime()
+        target.texture.replace(
+            region: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
+                              size: MTLSize(width: width, height: height, depth: 1)),
             mipmapLevel: 0,
             withBytes: data,
-            bytesPerRow: bytesPerRow
-        )
-        cvTextureRef = nil
-        frameDirty = true
-        cadUploadMaxMs = max(cadUploadMaxMs, (CACurrentMediaTime() - uploadStart) * 1000.0)
+            bytesPerRow: width * 4)
+        let uploadEnd = CACurrentMediaTime()
+
+        textureLock.lock()
+        target.filling = false
+        cadUploadMaxMs = max(cadUploadMaxMs, (uploadEnd - uploadStart) * 1000.0)
+        enqueueLocked(QueuedFrame(texture: target.texture, slot: target, cvRef: nil,
+                                  captureTimestampUs: captureTimestampUs,
+                                  enqueuedAtUs: UInt64(uploadEnd * 1_000_000.0)))
+        textureLock.unlock()
+    }
+
+    /// FrameRing `Free`: not being filled, not queued, not shown, no in-flight command buffer.
+    private func isFree(_ slot: RingSlot) -> Bool {
+        if slot.filling || slot.gpuRefs > 0 { return false }
+        if shownFrame?.slot === slot { return false }
+        return !queue.contains { $0.slot === slot }
+    }
+
+    /// Append under textureLock; at the cap, the oldest queued frame is dropped from display.
+    private func enqueueLocked(_ frame: QueuedFrame) {
+        if queue.count >= Self.kQueueCap {
+            queue.removeFirst()
+            overwrittenFrameCount += 1
+            qDropCap += 1
+        }
+        queue.append(frame)
+        qMaxDepth = max(qMaxDepth, queue.count)
     }
 
     /// Zero-copy frame update from CVPixelBuffer (HEVC decode output).
@@ -310,13 +363,11 @@ final class MetalRenderer: NSObject {
         }
 
         textureLock.lock()
-        if frameDirty { overwrittenFrameCount += 1 }
         cadArrivalsSinceTick += 1
-        frameTexture = texture
-        cvTextureRef = cvTex  // retain so IOSurface stays valid until next frame
-        frameCaptureTimestampUs = captureTimestampUs
-        frameEnqueuedAtUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
-        frameDirty = true
+        // Each decoded pixel buffer is its own IOSurface; cvRef keeps it alive while queued/shown.
+        enqueueLocked(QueuedFrame(texture: texture, slot: nil, cvRef: cvTex,
+                                  captureTimestampUs: captureTimestampUs,
+                                  enqueuedAtUs: UInt64(CACurrentMediaTime() * 1_000_000.0)))
         textureLock.unlock()
     }
 
@@ -389,8 +440,8 @@ final class MetalRenderer: NSObject {
         defer { textureLock.unlock() }
         return StatsSnapshot(
             overwrittenFrames: overwrittenFrameCount,
-            hasPendingFrame: frameDirty,
-            pendingDepth: frameDirty ? 1 : 0,
+            hasPendingFrame: !queue.isEmpty,
+            pendingDepth: queue.count,
             adaptiveCatchupCount: 0,
             adaptiveCatchupDropFrames: 0,
             adaptiveSoftCatchupCount: 0,
@@ -426,6 +477,7 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         let arrivals = cadArrivalsSinceTick
         cadArrivalsSinceTick = 0
         let uploadMax = cadUploadMaxMs
+        let qStats = "q[maxDepth=\(qMaxDepth) waitMaxMs=\(String(format: "%.1f", qWaitMaxMs)) late1+=\(qShownFromQueue) dropCap=\(qDropCap) dropDrain=\(qDropDrain) steal=\(qStealHead) noSlot=\(qDropNoSlot)]"
         textureLock.unlock()
 
         if cadWindowStart == 0 { cadWindowStart = start }
@@ -445,12 +497,16 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         cadCallbackMaxMs = max(cadCallbackMaxMs, (now - start) * 1000.0)
 
         if now - cadWindowStart >= 1.0 {
-            print("[CONSOLE] RENDER-CADENCE ticks=\(cadTicks) late=\(cadLateTicks) maxGapMs=\(String(format: "%.1f", cadMaxGapMs)) arrivals0/1/2+=\(cadArr0)/\(cadArr1)/\(cadArr2Plus) semWaitMaxMs=\(String(format: "%.1f", cadSemWaitMaxMs)) callbackMaxMs=\(String(format: "%.1f", cadCallbackMaxMs)) uploadMaxMs=\(String(format: "%.1f", uploadMax)) thread=\(Thread.isMainThread ? "main" : "other")")
+            print("[CONSOLE] RENDER-CADENCE ticks=\(cadTicks) late=\(cadLateTicks) maxGapMs=\(String(format: "%.1f", cadMaxGapMs)) arrivals0/1/2+=\(cadArr0)/\(cadArr1)/\(cadArr2Plus) semWaitMaxMs=\(String(format: "%.1f", cadSemWaitMaxMs)) callbackMaxMs=\(String(format: "%.1f", cadCallbackMaxMs)) uploadMaxMs=\(String(format: "%.1f", uploadMax)) \(qStats) thread=\(Thread.isMainThread ? "main" : "other")")
             cadWindowStart = now
             cadTicks = 0; cadLateTicks = 0; cadMaxGapMs = 0
             cadArr0 = 0; cadArr1 = 0; cadArr2Plus = 0
             cadSemWaitMaxMs = 0; cadCallbackMaxMs = 0
-            textureLock.lock(); cadUploadMaxMs = 0; textureLock.unlock()
+            textureLock.lock()
+            cadUploadMaxMs = 0
+            qMaxDepth = 0; qWaitMaxMs = 0; qShownFromQueue = 0
+            qDropCap = 0; qDropDrain = 0; qStealHead = 0; qDropNoSlot = 0
+            textureLock.unlock()
         }
     }
 
@@ -484,20 +540,42 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
             return
         }
 
-        // Snapshot the texture/timestamp/dirty bit atomically
+        // FrameRing Tick: at most one new frame, oldest first; drain a standing backlog.
         let dequeueNowUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
         textureLock.lock()
-        let currentTexture = frameTexture
-        let currentCaptureTimestampUs = frameCaptureTimestampUs
-        let currentEnqueuedAtUs = frameEnqueuedAtUs
-        let hasNewFrame = frameDirty
-        let retainedCVTexture = cvTextureRef
-        if hasNewFrame {
-            frameDirty = false
+        let pendingBefore = queue.count
+        var hasNewFrame = false
+        var mode = "redraw"
+        if !queue.isEmpty {
+            if backlogTicks >= Self.kDrainTicks && queue.count >= 2 {
+                queue.removeFirst()
+                overwrittenFrameCount += 1
+                qDropDrain += 1
+                mode = "drain"
+            } else {
+                mode = "fifo"
+            }
+            shownFrame = queue.removeFirst()
+            hasNewFrame = true
+            backlogTicks = queue.isEmpty ? 0 : backlogTicks + 1
+        } else {
+            backlogTicks = 0
+        }
+        let pendingAfter = queue.count
+        let current = shownFrame
+        current?.slot?.gpuRefs += 1          // released in this command buffer's completion handler
+        if hasNewFrame, let f = current {
+            let waitMs = Double(dequeueNowUs &- f.enqueuedAtUs) / 1000.0
+            qWaitMaxMs = max(qWaitMaxMs, waitMs)
+            if waitMs > 8.3 { qShownFromQueue += 1 }
         }
         textureLock.unlock()
+        let currentCaptureTimestampUs = current?.captureTimestampUs ?? 0
+        let currentEnqueuedAtUs = current?.enqueuedAtUs ?? 0
+        let retainedCVTexture = current?.cvRef
+        let heldSlot = current?.slot
 
-        if let texture = currentTexture {
+        if let texture = current?.texture {
             encoder.setRenderPipelineState(pipelineState)
 
             var uniforms = viewportUniforms
@@ -520,9 +598,9 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
                                           currentEnqueuedAtUs,
                                           dequeueNowUs,
                                           queueDelayMs,
-                                          1, // pendingBefore
-                                          0, // pendingAfter
-                                          "newest")
+                                          pendingBefore,
+                                          pendingAfter,
+                                          mode)
 
                 encoder.endEncoding()
                 commandBuffer.present(drawable)
@@ -537,15 +615,18 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
                 }
 
                 let submitUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
-                commandBuffer.addCompletedHandler { [weak self, retainedCVTexture] _ in
+                commandBuffer.addCompletedHandler { [weak self, retainedCVTexture, heldSlot, mode] _ in
                     _ = retainedCVTexture
+                    if let self, let slot = heldSlot {
+                        self.textureLock.lock(); slot.gpuRefs -= 1; self.textureLock.unlock()
+                    }
                     let completionUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
                     let gpuRoundtripMs = Double(completionUs &- submitUs) / 1000.0
                     self?.onFrameRenderCompleted?(currentCaptureTimestampUs,
                                                   completionUs,
                                                   queueDelayMs,
                                                   gpuRoundtripMs,
-                                                  "newest")
+                                                  mode)
                     self?.inflightSemaphore.signal()
                 }
 
@@ -558,7 +639,11 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
         encoder.endEncoding()
         commandBuffer.present(drawable)
 
-        commandBuffer.addCompletedHandler { [weak self] _ in
+        commandBuffer.addCompletedHandler { [weak self, retainedCVTexture, heldSlot] _ in
+            _ = retainedCVTexture
+            if let self, let slot = heldSlot {
+                self.textureLock.lock(); slot.gpuRefs -= 1; self.textureLock.unlock()
+            }
             self?.inflightSemaphore.signal()
         }
 
