@@ -67,7 +67,7 @@ final class USBNetworkTransport {
     private var tcpDrainDeliveredLogCount = 0
     private var tcpBufferReservedCapacity = 0
     private var tcpBufferGrowthLogCount = 0
-    private static let tcpRecvAppendLogInterval = 64
+    private static let tcpRecvAppendLogInterval = 2048
     private static let tcpPartialLogInterval = 16
     private static let tcpCompactLogInterval = 16
     private static let tcpHoldLogInterval = 8
@@ -893,9 +893,11 @@ final class USBNetworkTransport {
                 let afterCount = self.tcpBuffer.count
                 if beforeCount == 0 || afterCount >= (2 << 20) || afterCount % (1 << 20) < data.count {
                     self.tcpRecvAppendLogCount += 1
+                    // Sampled only. A former `afterCount >= 4 MB` clause tested the whole buffer
+                    // (including consumed bytes), so it fired on nearly every read of a lossless
+                    // frame: ~4,000 print+os_log per second on the receive thread (718k lines/run).
                     if self.tcpRecvAppendLogCount <= 10 ||
-                        self.tcpRecvAppendLogCount % Self.tcpRecvAppendLogInterval == 0 ||
-                        afterCount >= (4 << 20) {
+                        self.tcpRecvAppendLogCount % Self.tcpRecvAppendLogInterval == 0 {
                         print("[CONSOLE] USBTransport: tcp-recv append=\(data.count)B buffer=\(afterCount)B readOffset=\(self.tcpBufferReadOffset) sample=\(self.tcpRecvAppendLogCount)")
                         self.log.info("USB TCP recv append=\(data.count, privacy: .public)B buffer=\(afterCount, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public) sample=\(self.tcpRecvAppendLogCount, privacy: .public)")
                     }

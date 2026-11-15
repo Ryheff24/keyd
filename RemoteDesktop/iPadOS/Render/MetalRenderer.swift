@@ -60,6 +60,19 @@ final class MetalRenderer: NSObject {
     private var frameTexture: MTLTexture?
     private let textureLock = NSLock()
 
+    // Render-cadence diagnostics (RENDER-CADENCE, logged once per second from the display link).
+    // Arrivals and upload time are written under textureLock; the rest only on the link's thread.
+    private var cadArrivalsSinceTick = 0        // frames handed in since the last callback (textureLock)
+    private var cadUploadMaxMs = 0.0            // longest updateFrame texture copy this window (textureLock)
+    private var cadWindowStart: CFTimeInterval = 0
+    private var cadLastTick: CFTimeInterval = 0
+    private var cadTicks = 0
+    private var cadMaxGapMs = 0.0
+    private var cadArr0 = 0, cadArr1 = 0, cadArr2Plus = 0
+    private var cadSemWaitMaxMs = 0.0
+    private var cadCallbackMaxMs = 0.0
+    private var cadLateTicks = 0                // gap > 1.5 refresh intervals (missed vsync)
+
     /// Count of NEW unique frames rendered (texture changed since last render).
     /// NOT display link tick count — a stale texture re-drawn doesn't count.
     private(set) var renderedFrameCount: Int = 0
@@ -215,8 +228,10 @@ final class MetalRenderer: NSObject {
         defer { textureLock.unlock() }
 
         if frameDirty { overwrittenFrameCount += 1 }
+        cadArrivalsSinceTick += 1
+        let uploadStart = CACurrentMediaTime()
         frameCaptureTimestampUs = captureTimestampUs
-        frameEnqueuedAtUs = UInt64(CACurrentMediaTime() * 1_000_000.0)
+        frameEnqueuedAtUs = UInt64(uploadStart * 1_000_000.0)
 
         // Recreate texture if dimensions changed
         if frameTexture == nil
@@ -247,6 +262,7 @@ final class MetalRenderer: NSObject {
         )
         cvTextureRef = nil
         frameDirty = true
+        cadUploadMaxMs = max(cadUploadMaxMs, (CACurrentMediaTime() - uploadStart) * 1000.0)
     }
 
     /// Zero-copy frame update from CVPixelBuffer (HEVC decode output).
@@ -295,6 +311,7 @@ final class MetalRenderer: NSObject {
 
         textureLock.lock()
         if frameDirty { overwrittenFrameCount += 1 }
+        cadArrivalsSinceTick += 1
         frameTexture = texture
         cvTextureRef = cvTex  // retain so IOSurface stays valid until next frame
         frameCaptureTimestampUs = captureTimestampUs
@@ -401,10 +418,49 @@ final class MetalRenderer: NSObject {
 
 extension MetalRenderer: CAMetalDisplayLinkDelegate {
 
+    /// One display-link callback finished: bucket arrivals since the previous callback and
+    /// print a RENDER-CADENCE line once per second. Runs on the display link's thread.
+    fileprivate func recordCadenceTick(start: CFTimeInterval, semWaitMs: Double) {
+        let now = CACurrentMediaTime()
+        textureLock.lock()
+        let arrivals = cadArrivalsSinceTick
+        cadArrivalsSinceTick = 0
+        let uploadMax = cadUploadMaxMs
+        textureLock.unlock()
+
+        if cadWindowStart == 0 { cadWindowStart = start }
+        if cadLastTick > 0 {
+            let gapMs = (start - cadLastTick) * 1000.0
+            cadMaxGapMs = max(cadMaxGapMs, gapMs)
+            if gapMs > 12.5 { cadLateTicks += 1 }   // > 1.5 x 8.33 ms
+        }
+        cadLastTick = start
+        cadTicks += 1
+        switch arrivals {
+        case 0: cadArr0 += 1
+        case 1: cadArr1 += 1
+        default: cadArr2Plus += 1
+        }
+        cadSemWaitMaxMs = max(cadSemWaitMaxMs, semWaitMs)
+        cadCallbackMaxMs = max(cadCallbackMaxMs, (now - start) * 1000.0)
+
+        if now - cadWindowStart >= 1.0 {
+            print("[CONSOLE] RENDER-CADENCE ticks=\(cadTicks) late=\(cadLateTicks) maxGapMs=\(String(format: "%.1f", cadMaxGapMs)) arrivals0/1/2+=\(cadArr0)/\(cadArr1)/\(cadArr2Plus) semWaitMaxMs=\(String(format: "%.1f", cadSemWaitMaxMs)) callbackMaxMs=\(String(format: "%.1f", cadCallbackMaxMs)) uploadMaxMs=\(String(format: "%.1f", uploadMax)) thread=\(Thread.isMainThread ? "main" : "other")")
+            cadWindowStart = now
+            cadTicks = 0; cadLateTicks = 0; cadMaxGapMs = 0
+            cadArr0 = 0; cadArr1 = 0; cadArr2Plus = 0
+            cadSemWaitMaxMs = 0; cadCallbackMaxMs = 0
+            textureLock.lock(); cadUploadMaxMs = 0; textureLock.unlock()
+        }
+    }
+
     func metalDisplayLink(_ link: CAMetalDisplayLink,
                           needsUpdate update: CAMetalDisplayLink.Update) {
+        let tickStart = CACurrentMediaTime()
         // Wait for an available in-flight slot (triple buffering)
         inflightSemaphore.wait()
+        let semWaitMs = (CACurrentMediaTime() - tickStart) * 1000.0
+        defer { recordCadenceTick(start: tickStart, semWaitMs: semWaitMs) }
 
         let drawable = update.drawable
 
