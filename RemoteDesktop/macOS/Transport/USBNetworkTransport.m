@@ -8,6 +8,28 @@
 #import <ifaddrs.h>
 #import <arpa/inet.h>
 #import <net/if.h>
+#import <dns_sd.h>
+
+/* AddrOnLink (tla/PLAN.md "Design mechanisms"): the Mac advertises its USB
+ * NCM endpoint on the NCM interface itself, with its current link-local IPv4
+ * in the TXT record, so the iPad can learn the address over the cable with no
+ * Wi-Fi session. Re-registered on address change, withdrawn on unplug. */
+static const char *kUSBServiceType = "_keydrd-usb._tcp";
+
+static void keydrd_usb_register_reply(DNSServiceRef sdRef, DNSServiceFlags flags,
+                                      DNSServiceErrorType errorCode, const char *name,
+                                      const char *regtype, const char *domain, void *context) {
+    (void)sdRef; (void)context;
+    if (errorCode == kDNSServiceErr_NoError) {
+        os_log(os_log_create("com.ryheff.keyd.remote.agent", "USBTransport"),
+               "USB advert registered: name=%{public}s type=%{public}s domain=%{public}s flags=0x%x",
+               name ?: "?", regtype ?: "?", domain ?: "?", flags);
+    } else {
+        os_log_error(os_log_create("com.ryheff.keyd.remote.agent", "USBTransport"),
+                     "USB advert registration FAILED: error=%d name=%{public}s",
+                     errorCode, name ?: "?");
+    }
+}
 
 static os_log_t transport_log(void) {
     static os_log_t log;
@@ -110,6 +132,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
 @property (nonatomic, readwrite) BOOL isConnected;
 @property (nonatomic, nullable) dispatch_source_t pollTimer;
 @property (nonatomic, copy, nullable) NSString *detectedLocalIP;
+@property (nonatomic, assign, nullable) DNSServiceRef usbAdvertRef;
 @end
 
 @implementation USBNetworkTransport
@@ -400,6 +423,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
                 os_log(transport_log(), "USB NCM interface detected: %{public}@ = %{public}@", name, ip);
                 self2.detectedLocalIP = ip;
                 [self2 bindToLocalIP:ip];
+                [self2 advertiseUSBServiceOnInterface:name ip:ip];
 
                 if (self2.onInterfaceChanged) {
                     self2.onInterfaceChanged(YES, nil);
@@ -409,6 +433,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
             if (self2.detectedLocalIP) {
                 /* USB NCM interface disappeared */
                 os_log(transport_log(), "USB NCM interface disappeared");
+                [self2 stopUSBAdvertising];
                 [self2 tearDownListeners];
                 self2.activeInterface = nil;
                 self2.detectedLocalIP = nil;
@@ -429,6 +454,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
         dispatch_source_cancel(_pollTimer);
         _pollTimer = nil;
     }
+    [self stopUSBAdvertising];
     [self tearDownListeners];
     _activeInterface = nil;
     _detectedLocalIP = nil;
@@ -1114,6 +1140,59 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
 }
 
 #pragma mark - Private: Teardown
+
+#pragma mark - AddrOnLink advertisement
+
+- (void)advertiseUSBServiceOnInterface:(NSString *)ifName ip:(NSString *)ip {
+    [self stopUSBAdvertising];
+
+    uint32_t ifIndex = if_nametoindex(ifName.UTF8String);
+    if (ifIndex == 0) {
+        os_log_error(transport_log(), "USB advert: if_nametoindex(%{public}@) failed; not advertising", ifName);
+        return;
+    }
+
+    TXTRecordRef txt;
+    TXTRecordCreate(&txt, 0, NULL);
+    const char *ipC = ip.UTF8String;
+    TXTRecordSetValue(&txt, "ip", (uint8_t)strlen(ipC), ipC);
+    TXTRecordSetValue(&txt, "v", 1, "1");
+
+    DNSServiceRef ref = NULL;
+    uint16_t portBE = htons((uint16_t)atoi(kInputPortStr));
+    DNSServiceErrorType err = DNSServiceRegister(&ref, 0, ifIndex, NULL, kUSBServiceType, NULL, NULL,
+                                                 portBE,
+                                                 TXTRecordGetLength(&txt), TXTRecordGetBytesPtr(&txt),
+                                                 keydrd_usb_register_reply, NULL);
+    TXTRecordDeallocate(&txt);
+
+    if (err != kDNSServiceErr_NoError || !ref) {
+        os_log_error(transport_log(), "USB advert: DNSServiceRegister failed err=%d if=%{public}@(%u) ip=%{public}@",
+                     err, ifName, ifIndex, ip);
+        return;
+    }
+    err = DNSServiceSetDispatchQueue(ref, _monitorQueue);
+    if (err != kDNSServiceErr_NoError) {
+        os_log_error(transport_log(), "USB advert: DNSServiceSetDispatchQueue failed err=%d", err);
+        DNSServiceRefDeallocate(ref);
+        return;
+    }
+    _usbAdvertRef = ref;
+    os_log(transport_log(), "USB advert: registering %{public}s on %{public}@(%u) ip=%{public}@ port=%{public}s",
+           kUSBServiceType, ifName, ifIndex, ip, kInputPortStr);
+}
+
+- (void)stopUSBAdvertising {
+    if (_usbAdvertRef) {
+        /* Deallocate on the queue the ref was attached to (dns_sd requirement). */
+        DNSServiceRef ref = _usbAdvertRef;
+        _usbAdvertRef = NULL;
+        dispatch_async(_monitorQueue, ^{
+            DNSServiceRefDeallocate(ref);
+            os_log(transport_log(), "USB advert: withdrawn");
+        });
+    }
+}
 
 - (void)tearDownListeners {
     if (_mediaListener) {

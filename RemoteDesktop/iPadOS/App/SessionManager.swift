@@ -1147,6 +1147,12 @@ final class SessionManager {
     /// Handle echoed latency probe from Mac.
     private func handleLatencyProbeResponse(_ header: InputEventHeader) {
         let now = currentTimestampUs()
+        // An echo can never be newer than now; a misframed message can. Unsigned
+        // subtraction would trap (SIGTRAP crash on 2026-11-15), so drop it instead.
+        guard header.tsUs <= now else {
+            print("[CONSOLE] handleLatencyProbeResponse: DROPPED invalid echo sent=\(header.tsUs) > now=\(now)")
+            return
+        }
         let roundTripUs = now - header.tsUs
         let oneWayMs = Int(roundTripUs / 2000)  // microseconds -> milliseconds, halved
 

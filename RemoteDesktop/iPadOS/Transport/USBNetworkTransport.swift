@@ -37,6 +37,11 @@ final class USBNetworkTransport {
     private var detectedLocalIP: String?
     private var detectedMacIP: String?
     private var detectedMacLinkLocalIP: String?
+    /// AddrOnLink (tla/PLAN.md): learn the Mac's USB address on the USB link itself.
+    private var detectedLocalIfName: String?
+    private var usbBrowser: NWBrowser?
+    private var usbConnectRetryPending = false
+    private static let usbServiceType = "_keydrd-usb._tcp"
     private let monitorQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.monitor")
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.transport")
 
@@ -70,7 +75,11 @@ final class USBNetworkTransport {
     private static let tcpBufferGrowthLogInterval = 16
     private static let tcpCompactionMinConsumedBytes = 8 << 20
     private static let tcpReceiveMaxLength = 1 << 20
-    private static let tcpMaxFrameLength = 4_000_000
+    /// Upper bound on one framed TCP message. Lossless LZ4 keyframes at 2752x1786 BGRA
+    /// (19.66 MB raw) were 4.25 MB on the E2E capture and can approach LZ4_compressBound
+    /// (~19.7 MB) on incompressible content. The old 4 MB cap rejected real keyframes,
+    /// cleared the buffer and lost framing for the rest of the session (2026-11-15).
+    private static let tcpMaxFrameLength = 32 << 20
     private static let tcpReserveBaseCapacity = 1 << 20
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "USBTransport")
@@ -402,6 +411,8 @@ final class USBNetworkTransport {
                     print("[CONSOLE] USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
                     self.log.info("USB NCM interface detected: \(ncm.name) = \(ncm.ip)")
                     self.detectedLocalIP = ncm.ip
+                    self.detectedLocalIfName = ncm.name
+                    self.startUSBBrowse()
 
                     if let linkLocal = self.detectedMacLinkLocalIP {
                         // Have link-local peer from a previous peerAddressUpdate — connect + notify
@@ -410,18 +421,20 @@ final class USBNetworkTransport {
                         self.onInterfaceChanged?(true, nil)
                     } else {
                         // No link-local peer yet. Don't fire wiredAppeared — we can't connect.
-                        // The Mac will send peerAddressUpdate over WiFi when it detects USB NCM.
-                        // setPeerAddress() will fire onInterfaceChanged when the IP arrives.
-                        print("[CONSOLE] USB NCM: no link-local peer yet — waiting for peerAddressUpdate from Mac")
+                        // The USB browse (AddrOnLink) or a Wi-Fi peerAddressUpdate delivers it;
+                        // setPeerAddress() fires onInterfaceChanged when the IP arrives.
+                        print("[CONSOLE] USB NCM: no link-local peer yet — browsing \(Self.usbServiceType) on \(ncm.name)")
                     }
                 }
             } else {
                 if self.detectedLocalIP != nil {
                     print("[CONSOLE] USB NCM interface disappeared")
                     self.log.info("USB NCM interface disappeared")
+                    self.stopUSBBrowse()
                     self.tearDownConnections()
                     self.activeInterface = nil
                     self.detectedLocalIP = nil
+                    self.detectedLocalIfName = nil
                     self.isConnected = false
                     self.onInterfaceChanged?(false, nil)
                 }
@@ -436,10 +449,101 @@ final class USBNetworkTransport {
     func stopMonitoring() {
         pollTimer?.cancel()
         pollTimer = nil
+        monitorQueue.async { [weak self] in self?.stopUSBBrowse() }
         tearDownConnections()
         activeInterface = nil
         detectedLocalIP = nil
+        detectedLocalIfName = nil
         isConnected = false
+    }
+
+    // MARK: - AddrOnLink: discover the Mac on the USB NCM link
+
+    /// Browse for the Mac's USB service while the NCM interface is up. Runs on monitorQueue.
+    /// The Mac registers `_keydrd-usb._tcp` on its NCM interface only, with `ip=<link-local>`
+    /// in the TXT record. Results not seen on our NCM interface are ignored.
+    private func startUSBBrowse() {
+        stopUSBBrowse()
+        let params = NWParameters()
+        params.includePeerToPeer = false
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.usbServiceType, domain: "local."),
+                                using: params)
+        browser.stateUpdateHandler = { state in
+            print("[CONSOLE] USB browse state: \(state)")
+        }
+        browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
+            guard let self = self, let browser = browser, browser === self.usbBrowser else {
+                print("[CONSOLE] USB browse: results from stale browser ignored")
+                return
+            }
+            self.handleUSBBrowseResults(results)
+        }
+        usbBrowser = browser
+        print("[CONSOLE] USB browse: start type=\(Self.usbServiceType) ncm=\(detectedLocalIfName ?? "nil")")
+        browser.start(queue: monitorQueue)
+    }
+
+    private func stopUSBBrowse() {
+        if let browser = usbBrowser {
+            print("[CONSOLE] USB browse: stop")
+            browser.cancel()
+            usbBrowser = nil
+        }
+    }
+
+    private func handleUSBBrowseResults(_ results: Set<NWBrowser.Result>) {
+        let ncmName = detectedLocalIfName
+        print("[CONSOLE] USB browse: \(results.count) result(s), ncm=\(ncmName ?? "nil")")
+        var candidate: String?
+        for result in results {
+            let ifNames = result.interfaces.map { $0.name }
+            var ip: String?
+            if case .bonjour(let txt) = result.metadata {
+                ip = txt["ip"]
+            }
+            let onNCM = ncmName != nil && ifNames.contains(ncmName!)
+            print("[CONSOLE] USB browse result: endpoint=\(result.endpoint) interfaces=\(ifNames) txtIP=\(ip ?? "nil") onNCM=\(onNCM)")
+            guard onNCM, let ip = ip, isLinkLocal(ip) else { continue }
+            candidate = ip
+        }
+        guard let ip = candidate else {
+            print("[CONSOLE] USB browse: no usable result on NCM yet")
+            return
+        }
+        let unchanged = (ip == detectedMacLinkLocalIP)
+        if unchanged && (isConnected || inputConnection != nil) {
+            print("[CONSOLE] USB browse: Mac link-local \(ip) unchanged and connection exists — no action")
+            return
+        }
+        print("[CONSOLE] USB browse: learned Mac link-local \(ip) on \(ncmName ?? "nil") (previous=\(detectedMacLinkLocalIP ?? "nil"), connected=\(isConnected))")
+        if !unchanged && isConnected {
+            // Address changed under a live connection (re-plug): drop it so setPeerAddress re-dials.
+            print("[CONSOLE] USB browse: address changed while connected — tearing down for re-dial")
+            tearDownConnections()
+            isConnected = false
+        }
+        setPeerAddress(ip)
+    }
+
+    /// Retry the USB connect while the cable is in (AddrOnLink: "retries while the cable is in").
+    private func scheduleUSBConnectRetry(reason: String) {
+        guard !usbConnectRetryPending else { return }
+        usbConnectRetryPending = true
+        print("[CONSOLE] USB retry: scheduled in 1.0s reason=\(reason)")
+        monitorQueue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            self.usbConnectRetryPending = false
+            guard let localIP = self.detectedLocalIP, self.detectedMacLinkLocalIP != nil else {
+                print("[CONSOLE] USB retry: skipped (ncm=\(self.detectedLocalIP ?? "nil"), mac=\(self.detectedMacLinkLocalIP ?? "nil"))")
+                return
+            }
+            guard !self.isConnected else {
+                print("[CONSOLE] USB retry: skipped (already connected)")
+                return
+            }
+            print("[CONSOLE] USB retry: re-dialing \(self.detectedMacLinkLocalIP!) from \(localIP)")
+            self.connectOverUSBNCMByIP(localIP: localIP)
+        }
     }
 
     /// Send an input event over TCP to the Mac.
@@ -669,10 +773,15 @@ final class USBNetworkTransport {
                 self.isConnected = true
                 self.scheduleInputReceive(inputConn)
             case .failed(let error):
-                print("[CONSOLE] USBTransport: TLS input FAILED: \(error)")
+                let current = inputConn === self.inputConnection
+                print("[CONSOLE] USBTransport: TLS input FAILED: \(error) (connection=\(current ? "current" : "stale"))")
                 self.log.error("USB NCM TLS input failed: \(error)")
+                guard current else { return }
                 self.inputConnection = nil
                 if self.mediaConnection == nil { self.isConnected = false }
+                self.monitorQueue.async { [weak self] in
+                    self?.scheduleUSBConnectRetry(reason: "input-failed")
+                }
             case .waiting(let error):
                 print("[CONSOLE] USBTransport: TLS input WAITING: \(error) — will retry in 0.5s")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
