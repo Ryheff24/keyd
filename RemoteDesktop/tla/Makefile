@@ -217,8 +217,10 @@ stripe: check-tools
 # FrameRing (C5 x C6, 2026-11-15): iPad present path. As built, one texture is overwritten in
 # place while command buffers may still sample it, and bunched arrivals are lost (newest wins).
 # Design: a 4-slot ring, a slot reused only once no in-flight command buffer holds it, one new
-# frame per tick in arrival order, and a drain after K ticks of standing backlog.
+# frame per tick in arrival order, and a drain after K ticks of standing backlog. Shipped with
+# QCap = 1 (FR-newest): the QCap = 2 FIFO raised glass latency at c7db83b and was backed out.
 FRAME_ROWS = FrameRing:FrameRing.cfg:pass \
+	FrameRing:cfg/FR-newest.cfg:pass \
 	FrameRing:cfg/FR-asbuilt.cfg:NoWriteWhileRead \
 	FrameRing:cfg/FR-ctl-no-gpu-wait.cfg:NoWriteWhileRead \
 	FrameRing:cfg/FR-ctl-no-drain.cfg:BoundedBacklog \

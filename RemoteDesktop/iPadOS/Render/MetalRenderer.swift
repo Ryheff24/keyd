@@ -25,7 +25,7 @@ struct ViewportUniforms {
 /// Strategy (tla/FrameRing.tla, 2026-11-15): frames arrive bunched (RENDER-CADENCE at d328f4f:
 /// ~18 ticks/s got 2+ frames, ~25 got none), so newest-wins dropped about one frame in five.
 /// Decoded frames are copied into a ring of `kRingSlots` textures and queued FIFO (cap
-/// `kQueueCap`); each display-link tick shows at most one new frame, oldest first. A slot is
+/// `kQueueCap`, now 1 = newest wins, see below); each display-link tick shows at most one new frame. A slot is
 /// reused only when it is not queued, not shown and no in-flight command buffer samples it
 /// (`gpuRefs == 0`, decremented in the completion handler). Drain rule: after `kDrainTicks`
 /// ticks in a row that ended with frames still queued, a tick with 2+ queued drops the oldest,
@@ -80,7 +80,11 @@ final class MetalRenderer: NSObject {
     }
 
     private static let kRingSlots = 4      // shown + up to 3 in flight + queue fit without stealing
-    private static let kQueueCap = 2
+    // kQueueCap = 2 (FIFO, one new frame per tick) was tried at c7db83b: pacing CV 0.53 -> 0.44 but
+    // glass median 23-27 -> 30 ms and p95 44-46 -> 51 ms. The multi-tick gaps that fail CV come from
+    // upstream (big-frame send time), which a 2-deep queue cannot bridge without standing latency.
+    // Cap 1 = newest wins (the queued frame is replaced) on a GPU-safe ring; the drain never fires.
+    private static let kQueueCap = 1
     private static let kDrainTicks = 2
 
     private var ring: [RingSlot] = []                 // textureLock
