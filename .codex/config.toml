@@ -149,8 +149,3 @@ config_file = "./.codex/agents/gsd-user-profiler.toml"
 description = "Verifies phase goal achievement through goal-backward analysis. Checks codebase delivers what phase promised, not just that tasks completed. Creates VERIFICATION.md report."
 config_file = "./.codex/agents/gsd-verifier.toml"
 
-
-# GSD Hooks
-[[hooks]]
-event = "SessionStart"
-command = "node ./.codex/hooks/gsd-check-update.js"

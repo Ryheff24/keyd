@@ -1,0 +1,167 @@
+## Critical findings
+
+**[C] Verdict: BLOCK. The reviewed work does not establish the owner’s security requirements.**
+
+[C] This was a static, read-only review; I modified nothing. [U] I did not independently reproduce the supplied 10/10 TLC and 41/41 TLAPS results: the targets create temporary files and proof artifacts, which this session’s read-only sandbox forbids. See [Makefile:75–85](./RemoteDesktop/tla/Makefile:75).
+
+1. **[C] Pairing remains remotely claimable and is not USB-only.** The listener binds `::`, requires no client identity or pairing secret, and provisions a usable client credential after receiving a valid P-256 public key. An attacker does not need the QR or the owner’s approval. [I] A reachable attacker can obtain the credential subsequently accepted by the normal pinned transports. Evidence: [PairingManager.m:660–707](./RemoteDesktop/macOS/Pairing/PairingManager.m:660), [785–842](./RemoteDesktop/macOS/Pairing/PairingManager.m:785), [1030–1070](./RemoteDesktop/macOS/Pairing/PairingManager.m:1030).
+
+2. **[C] The pairing theorem assumes the decisive authorization result.** `ConfirmOK(d)` directly admits only `d = I`; `Reach(A)` directly becomes false under USB pairing. There are no certificates, possession proofs, confirmation transcripts or USB deployment checks establishing those predicates. The theorem proves their consequences. Evidence: [Pairing.tla:109–135](./RemoteDesktop/tla/Pairing.tla:109).
+
+3. **[C] Production app sources contain plaintext and unauthenticated test traffic.** `DeviceTestRunner.swift` is in the app’s Sources phase. It sends plaintext TCP/UDP probes; test pairing accepts any server certificate. These paths violate “EVERY message encrypted under an authenticated key,” even if the Mac correctly rejects their probes. Evidence: [project.pbxproj:298–305](./RemoteDesktop/iPadOS/RemoteDesktopApp.xcodeproj/project.pbxproj:298), [DeviceTestRunner.swift:2425–2438](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2425), [2492–2504](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2492), [QRPairing.swift:454–479](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:454).
+
+4. **[C] Revocation is not the atomic lifecycle represented by the models.** “Pair iPad” deletes pairing state without first stopping existing transports. Ordinary `stop` omits the pairing listener and active pairing connection. The pairing completion callback has no generation or stopped-state check before starting transports. [I] Existing sessions can survive the first operation, and delayed callbacks can restart work after reset/stop. Evidence: [SessionManager.m:391–420](./RemoteDesktop/macOS/App/SessionManager.m:391), [510–548](./RemoteDesktop/macOS/App/SessionManager.m:510), [PairingManager.m:700–715](./RemoteDesktop/macOS/Pairing/PairingManager.m:700).
+
+5. **[C] End-to-end switching, delivery and encryption are not established by `PairingProofs`.** Its conclusion contains four pairing invariants only. [C] A new `SecureSession` model/proof appeared during review; its abstraction still substitutes arbitrary connections for the actual FSMs, makes link failure simultaneous at both endpoints, and excludes handshake/discovery metadata. [U] Its new proof results were not independently verified. Evidence: [Pairing.tla:161–179](./RemoteDesktop/tla/Pairing.tla:161), [SecureSession.tla:35–43](./RemoteDesktop/tla/SecureSession.tla:35), [149–190](./RemoteDesktop/tla/SecureSession.tla:149).
+
+## Model fidelity
+
+**[C] The as-built configuration captures the central pairing authorization defect, but is not a faithful complete pairing lifecycle.** All six mechanisms are disabled, and its checked properties are only `TypeOK` and `OnlyOwnerPaired`: [PR-asbuilt.cfg:7–16](./RemoteDesktop/tla/cfg/PR-asbuilt.cfg:7).
+
+| Tag | Model/code discrepancy | Evidence |
+|---|---|---|
+| [C] | `Accept` atomically stores the peer, sends a private key, closes the listener and closes the window. Code stores pairing state first; response construction, transmission and UI completion happen later and can fail. | [Pairing.tla:130–137](./RemoteDesktop/tla/Pairing.tla:130); [PairingManager.m:684–725](./RemoteDesktop/macOS/Pairing/PairingManager.m:684), [826–842](./RemoteDesktop/macOS/Pairing/PairingManager.m:826) |
+| [C] | `Accept(d)` requires the current `pending=d`. A replaced connection’s receive callback never checks `activePairingConnection == conn` before completing pairing. Separate connections receive separate queues. [I] Cancellation/receive/reset interleavings excluded by the model can use stale connections or changed global pairing material. | [Pairing.tla:132](./RemoteDesktop/tla/Pairing.tla:132); [PairingManager.m:632–684](./RemoteDesktop/macOS/Pairing/PairingManager.m:632) |
+| [C] | `OpenPairWindow` preserves `macPeer` and requires a closed window. Actual `showPairingQR` resets credentials every invocation, including invocation while another pairing/window/session exists. | [Pairing.tla:82–85](./RemoteDesktop/tla/Pairing.tla:82); [SessionManager.m:510–514](./RemoteDesktop/macOS/App/SessionManager.m:510); [AppDelegate.m:99–103](./RemoteDesktop/macOS/App/AppDelegate.m:99) |
+| [C] | `macPeer=d` identifies a device. Code pins a Mac-generated, cached client certificate, then transfers its private key to the connecting party. The model has no distinction between device identity, credential identity and credential holder. | [Pairing.tla:134](./RemoteDesktop/tla/Pairing.tla:134); [PairingManager.m:428–432](./RemoteDesktop/macOS/Pairing/PairingManager.m:428), [482–507](./RemoteDesktop/macOS/Pairing/PairingManager.m:482) |
+| [C] | There is no modeled iPad pairing/persistence state. Both apps ignore Keychain write results; the iPad stores the secret and Mac pin before validating the provisioned identity, and can report success after identity validation fails. | [Pairing.tla:57–79](./RemoteDesktop/tla/Pairing.tla:57); [PairingManager.m:874–883](./RemoteDesktop/macOS/Pairing/PairingManager.m:874); [QRPairing.swift:1038–1070](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:1038), [1105–1114](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:1105) |
+| [C] | Startup restoration, provisioning failure, TLS failure, partial TCP reads, response failure, test trust bypass and automation with no QR window are absent. The model therefore cannot establish agreement or successful recovery across these paths. | [PairingManager.m:49–54](./RemoteDesktop/macOS/Pairing/PairingManager.m:49), [660](./RemoteDesktop/macOS/Pairing/PairingManager.m:660); [SessionManager.m:551–554](./RemoteDesktop/macOS/App/SessionManager.m:551); [QRPairing.swift:202–218](./RemoteDesktop/iPadOS/App/SessionManager.swift:202) |
+
+**[C] Corrections to the audit:**
+
+| Audit claim | Assessment |
+|---|---|
+| Pairing accepts “1–256 bytes” ([audit:23–29](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:23)) | [C] Too broad. A valid importable P-256 public key and successful ECDH are required. No owner authentication or proof of possession is required. [PairingManager.m:785–814](./RemoteDesktop/macOS/Pairing/PairingManager.m:785). |
+| Listener survives closing QR; reset leaves Mac waiting for anyone ([audit:30–33](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:30)) | [C] Window-close finding is correct. Reset does **not** itself open a new listener; it stops transports, clears pairing and changes state. It also fails to cancel an existing pairing listener/connection. [SessionManager.m:622–627](./RemoteDesktop/macOS/App/SessionManager.m:622). |
+| Fresh client private key sent over network; mTLS optional ([audit:34–36](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:34)) | [C] Private-key transfer and “best-effort” provisioning are real. The identity is cached, not freshly generated for every connection. Missing provisioning does not itself demonstrate an insecure steady-state fallback: normal Mac transports require client authentication and reject missing pins. [PairingManager.m:428–432](./RemoteDesktop/macOS/Pairing/PairingManager.m:428); [USBNetworkTransport.m:229–256](./RemoteDesktop/macOS/Transport/USBNetworkTransport.m:229). |
+| `/tmp` TLS identity exposure ([audit:37–39](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:37)) | [C] Fixed path/password and startup dependency are correct. Both scripts explicitly set directory/file permissions to 0700/0600. [U] Actual deployed ownership, permissions and resistance to pre-created paths/symlinks were not checked. [mac-debug.sh:73–83](./RemoteDesktop/scripts/mac-debug.sh:73); [run-apps.sh:211–221](./RemoteDesktop/scripts/run-apps.sh:211). |
+| Test bypass reachable through `--qr-payload` ([audit:40–47](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:40)) | [C] Bypass ships in app source, but the ordinary session entry requires `--test-mode`; `--qr-payload` supplies its input. No remote activation of launch arguments was established. [SessionManager.swift:189–199](./RemoteDesktop/iPadOS/App/SessionManager.swift:189). |
+| Bonjour exposure; unlimited connections ([audit:51–57](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:51)) | [C] Wildcard advertising with peer-to-peer enabled is confirmed. “Unlimited concurrent” application connections is overstated: wireless rejects duplicates unless replacement conditions hold, and suspends its TCP listener after readiness. Pre-authentication DoS protection remains unproved. [WirelessTransport.m:587–623](./RemoteDesktop/macOS/Transport/WirelessTransport.m:587), [678–683](./RemoteDesktop/macOS/Transport/WirelessTransport.m:678). |
+| ECDH secret never used ([audit:58–60](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:58)) | [C] It does not protect transport traffic, but its existence is used as the persisted “paired” flag. [PairingManager.m:49–54](./RemoteDesktop/macOS/Pairing/PairingManager.m:49); [QRPairing.swift:130–132](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:130). |
+| Keyboard/mouse accepted while locked; input reaches CGEvent ([audit:61–63](./.planning/research/keyd-refresh/04-remotedesktop-security-and-housekeeping.md:61), [PLAN:17](./RemoteDesktop/tla/PLAN.md:17)) | [C] Unsupported by this app’s implementation. The handler dispatches control/probe types and otherwise logs “Unhandled”; it contains no mouse/key cases or CGEvent posting. Its implemented controls also lack a session-state guard. [SessionManager.m:2376–2409](./RemoteDesktop/macOS/App/SessionManager.m:2376). |
+
+[C] An additional delivery defect matters to future models: Mac input receive loops pass arbitrary TCP regions straight to the event parser without accumulating complete messages. [I] Fragmentation/coalescing can drop or misparse controls; successful single-write tests cannot establish ordered message delivery. Evidence: [USBNetworkTransport.m:1089–1112](./RemoteDesktop/macOS/Transport/USBNetworkTransport.m:1089), [WirelessTransport.m:982–1006](./RemoteDesktop/macOS/Transport/WirelessTransport.m:982).
+
+## Abstraction soundness
+
+| Assumption | Assessment |
+|---|---|
+| **A1: wireless attacker reaches listeners** | [I] Reasonable conservative public-network assumption. [U] Exact AWDL reachability of the pairing listener is unverified: wildcard binding is present, but pairing does not explicitly enable peer-to-peer. [Pairing.tla:24–25](./RemoteDesktop/tla/Pairing.tla:24); [PairingManager.m:1030–1045](./RemoteDesktop/macOS/Pairing/PairingManager.m:1030). |
+| **A2: attacker cannot reach USB** | [I] Valid only for a deliberately restricted remote attacker. It excludes malicious accessories, hostile USB peers and compromised endpoints. [C] Current USB detection uses interface/address heuristics; the IP-binding path does not require a verified USB interface. This assumption is not deployment evidence. [USBNetworkTransport.m:340–361](./RemoteDesktop/macOS/Transport/USBNetworkTransport.m:340), [918–939](./RemoteDesktop/macOS/Transport/USBNetworkTransport.m:918). |
+| **A3: matching confirmation identifies owner** | [C] `ConfirmOK(d) == ~ConfirmOnMac \/ d = I` directly assumes authorization. [I] A short code derived from public certificates does not uniquely prove physical ownership; collisions, grinding, transcript substitution and mistaken approval require explicit treatment. [U] No implemented confirmation protocol was found in these pairing paths. [Pairing.tla:28–31,128](./RemoteDesktop/tla/Pairing.tla:28). |
+| **A4: iPad pins QR fingerprint** | [C] Supported for normal pairing. [C] False for compiled test pairing. [I] It additionally assumes an authentic QR source and uncompromised Mac key; certificate matching alone does not establish those. [QRPairing.swift:831–863](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:831), [459–463](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:459). |
+
+[C] The properties are limited, rather than all being logically vacuous:
+
+- `NoPrivateKeyOnWire` follows directly from a Boolean controlling whether `Accept` sets a flag. It proves no key-generation, export or secrecy implementation.
+- `OwnerNotDisplaced` excludes explicit replacement only; it does not establish eventual owner pairing or prevent a pending connection from blocking progress.
+- Under USB-only reachability, the sole attacker cannot connect at all. Confirmation and replacement defenses consequently receive little adversarial exercise.
+- `NeverPaired` failing establishes **existence** of a pairing path, not successful pairing against every permitted schedule.
+
+Evidence: [Pairing.tla:113–144](./RemoteDesktop/tla/Pairing.tla:113), [161–177](./RemoteDesktop/tla/Pairing.tla:161).
+
+| Attack/lifecycle | What remains outside the model |
+|---|---|
+| USB attacker / malicious accessory | [C] Excluded by `Reach(A)`, rather than defeated by authentication. |
+| Lost or compromised iPad | [C] No credential theft, device compromise, lock state or attacker reuse of owner credentials. |
+| Pairing replay | [C] No request bytes, nonce, transcript, credential generation or replay history. [I] A previously obtained valid public-key request can be resubmitted over a new pairing TLS connection; the server demands no possession proof. This is distinct from replaying TLS ciphertext. [PairingManager.m:785–829](./RemoteDesktop/macOS/Pairing/PairingManager.m:785). |
+| Owner permanently blocked | [C] `Spec` permits infinite stuttering and has no fairness. The confirmation-only configuration also permits an attacker to occupy `pending` indefinitely. [Pairing.tla:113–125,156](./RemoteDesktop/tla/Pairing.tla:113). |
+| Pairing/pinning TOCTOU | [C] No intermediate persistence, verification, response or callback states. [I] Stale callbacks and reset/reopen races therefore disappear inside atomic `Accept`. |
+| Revocation/re-pairing | [C] No surviving TLS keys, delayed callbacks, resumption credentials or credential epochs. `ResetPairing` merely clears `macPeer`. [Pairing.tla:147–150](./RemoteDesktop/tla/Pairing.tla:147). |
+
+## Proof review
+
+**[C] The `PairingProofs` induction structure is appropriate for its narrow theorem.** It establishes initialization and preservation, includes the stuttering case, and invokes PTL for invariance. I found no `OMITTED`, `ASSUME FALSE` or contradictory design assumptions in that proof. A concrete design behavior exists: open → connect owner → accept owner. Evidence: [PairingProofs.tla:9–36](./RemoteDesktop/tla/PairingProofs.tla:9).
+
+**[C] It is the wrong theorem for the owner’s complete requirement.** It contains no encryption, authenticated-key agreement, mutual completion, message freshness, ordered delivery, switching or revocation guarantee. It quantifies over constants for one owner and one attacker; it does not prove an arbitrary population of devices. Evidence: [Pairing.tla:39–55](./RemoteDesktop/tla/Pairing.tla:39), [173–179](./RemoteDesktop/tla/Pairing.tla:173).
+
+**[C] The supplied proof control has a meaningful semantic counterexample:** after dropping both USB and confirmation requirements, choose both false and `TokenInQR=false`; attacker connect → accept violates `OnlyOwnerPaired`. [C] However, the harness accepts *any* failed obligation, rather than checking the intended failed goal or distinguishing a backend failure. It also ignores non-timeout process status and accepts any reported obligation count. Evidence: [Makefile:77–88](./RemoteDesktop/tla/Makefile:77).
+
+[C] The “one mechanism off” methodology is not followed consistently. `PR-ctl-replace` also changes USB pairing and token settings relative to the design. Removing two redundant authorization assumptions in the proof control is defensible, but should be documented as such. Evidence: [Pairing.cfg:7–13](./RemoteDesktop/tla/Pairing.cfg:7), [PR-ctl-replace.cfg:7–13](./RemoteDesktop/tla/cfg/PR-ctl-replace.cfg:7).
+
+[C] The additional `SecureSessionProofs` does not close these gaps:
+
+- Pairing is represented by a `PairingSecure` switch; the proof extends `SecureSession`, without an explicit refinement/composition mapping from `PairingProofs`.
+- Connections can be opened on any link without modeling availability, endpoint FSM states, fallback effects or address updates. `NeverSwitched` only requires input on two distinct links; simultaneous connections suffice.
+- Revocation atomically erases sessions, excluding the code’s pending callbacks.
+- `Inject` leaves its message in `inflight`; messages have no sequence/payload identity. Exactly-once or ordered input delivery is not established.
+- Frames/control are abstract send/leak events, not complete receive/decode/control lifecycles.
+
+Evidence: [SecureSession.tla:110–155](./RemoteDesktop/tla/SecureSession.tla:110), [196–230](./RemoteDesktop/tla/SecureSession.tla:196), [271–274](./RemoteDesktop/tla/SecureSession.tla:271), [SecureSessionProofs.tla:11–24](./RemoteDesktop/tla/SecureSessionProofs.tla:11).
+
+## Method review
+
+1. **[C] “Liveness at Quiet” is not a liveness proof.** An invariant evaluated at `Quiet` does not establish that `Quiet` is reached. Bounding environmental activity does not remove infinite stuttering. [I] Lifecycle completion needs explicit progress/fairness assumptions and a temporal proof; unrestricted network DoS cannot simultaneously be permitted and eventual pairing guaranteed. [METHOD.md:93–95](./RemoteDesktop/tla/METHOD.md:93).
+
+2. **[C] The method distinguishes model proof from code correctly, but its stated bridge is insufficient.** Enumerating pure FSM tables cannot validate asynchronous callbacks, persistence, TLS configuration or cancellation. Successful trace replay establishes compatibility of those traces, not coverage of all implementation behavior. [I] Security acceptance needs explicit abstraction/refinement obligations, including failed and stale callbacks. [METHOD.md:116–122](./RemoteDesktop/tla/METHOD.md:116).
+
+3. **[C] The cryptographic contract is incomplete.** The method assumes authentication/integrity after pinning but does not specify confidentiality, key possession, handshake completion, resumption, replay, compromise or authenticated binding between pairing and later sessions. [I] These must be explicit assumptions with corresponding implementation evidence. [METHOD.md:33–35](./RemoteDesktop/tla/METHOD.md:33).
+
+4. **[C] Requiring every property to fail when one mechanism is removed is too rigid for redundant defenses.** Conversely, a failed proof obligation alone is not evidence of an actual attack. The workflow needs both semantic counterexamples for controls and proof-goal-specific failure checks. [METHOD.md:17–19,53–57,87–88](./RemoteDesktop/tla/METHOD.md:17).
+
+5. **[C] Metadata cannot silently be excluded from “every message.”** The new model explicitly excludes Bonjour and TLS hello metadata, then names its invariant “Every message … encrypted.” That changes the requirement. [SecureSession.tla:35–40](./RemoteDesktop/tla/SecureSession.tla:35), [255–258](./RemoteDesktop/tla/SecureSession.tla:255).
+
+## Wire message inventory
+
+[C] Notation: **U** USB NCM, **W** Wi-Fi, **A** AWDL. **T** means configured TLS 1.3 over TCP/14568, with both fingerprints checked by normal transport code. **D** means configured DTLS over UDP/14567 with pin verification. “Pinned” means credential matching, not proof that initial enrollment selected the owner.
+
+[C] T protection comes from [Mac USB:229–259](./RemoteDesktop/macOS/Transport/USBNetworkTransport.m:229), [Mac wireless:188–217](./RemoteDesktop/macOS/Transport/WirelessTransport.m:188), [iPad USB:634–647](./RemoteDesktop/iPadOS/Transport/USBNetworkTransport.swift:634), [USB retry:701–714](./RemoteDesktop/iPadOS/Transport/USBNetworkTransport.swift:701), and [iPad wireless:208–227](./RemoteDesktop/iPadOS/Transport/WirelessTransport.swift:208).
+
+[U] Actual negotiated DTLS version is unverified. Production DTLS options specify `.TLSv13`, while the test explicitly specifies `.DTLSv12`: [Mac wireless:230–234](./RemoteDesktop/macOS/Transport/WirelessTransport.m:230), [iPad wireless:238–259](./RemoteDesktop/iPadOS/Transport/WirelessTransport.swift:238), [DeviceTestRunner.swift:2902–2907](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2902). Calling this proven “DTLS 1.3” is unsupported.
+
+| Tag | Message / direction | Links; connection | Protection; pin at that point | Source |
+|---|---|---|---|---|
+| [C] | QR JSON: fingerprint, ECDH key, geometry, version, service, host, port; Mac→iPad | Optical bootstrap | None; QR is the initial trust input | [PairingManager.m:605–616](./RemoteDesktop/macOS/Pairing/PairingManager.m:605) |
+| [C] | Pairing P-256 public key; iPad→Mac | U/W routed host; TCP/14569 | TLS 1.3; normal iPad pins Mac from QR; Mac does not authenticate iPad | [QRPairing.swift:826–880](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:826), [968](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:968) |
+| [C] | Length-prefixed pairing JSON: Mac public key, version, client certificate/private key/fingerprint; Mac→iPad | Same pairing connection | TLS 1.3; recipient unauthenticated; Mac stores generated pin before sending | [PairingManager.m:489–512](./RemoteDesktop/macOS/Pairing/PairingManager.m:489), [684–700](./RemoteDesktop/macOS/Pairing/PairingManager.m:684) |
+| [C] | Test pairing request and response; both directions | Routed QR host, Wi-Fi forced for non-link-local; TCP/14569 | TLS 1.3, **accept-any-server-cert**; neither side authenticates the intended peer during exchange | [QRPairing.swift:454–479](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:454), [554–563](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:554) |
+| [C] | Legacy `clientIdentityPKCS12` response field; Mac→iPad parser support | Pairing TCP | Inherits normal/test pairing protection; current Mac emits DER/private-key fields instead | [QRPairing.swift:54–86](./RemoteDesktop/iPadOS/Pairing/QRPairing.swift:54) |
+| [C] | Session handshake `0x01`: geometry, capabilities, FPS, version; Mac→iPad | U/W/A; TCP input | T; both pinned | [SessionManager.m:1067–1081](./RemoteDesktop/macOS/App/SessionManager.m:1067) |
+| [C] | LZ4 full/delta frame, media header/CRC; Mac→iPad | U; TCP input | T; both pinned | [SessionManager.m:1104–1117](./RemoteDesktop/macOS/App/SessionManager.m:1104), [USBNetworkTransport.m:750–816](./RemoteDesktop/macOS/Transport/USBNetworkTransport.m:750) |
+| [C] | HEVC key/inter frames, inline VPS/SPS/PPS; Mac→iPad | U/W/A; TCP input currently | T; both pinned; large USB frames may be chunked within TCP | [SessionManager.m:95](./RemoteDesktop/macOS/App/SessionManager.m:95), [1331–1344](./RemoteDesktop/macOS/App/SessionManager.m:1331); [HEVCEncoder.m:595–638](./RemoteDesktop/macOS/Encode/HEVCEncoder.m:595) |
+| [C] | Media UDP chunks; Mac→iPad | W/A; UDP media | D; pin checks configured. Session send branch disabled by `kWirelessUseTCPMedia=YES` | [SessionManager.m:1658–1701](./RemoteDesktop/macOS/App/SessionManager.m:1658) |
+| [C] | USB DTLS media connection | U; UDP media | D; connection setup still executes; no current iPad application payload sender found | [USBNetworkTransport.swift:592–631](./RemoteDesktop/iPadOS/Transport/USBNetworkTransport.swift:592) |
+| [C] | Eco mode `0x20/0x02`; iPad→Mac | U/W/A; TCP input | T; both pinned | [SessionManager.swift:1313–1324](./RemoteDesktop/iPadOS/App/SessionManager.swift:1313) |
+| [C] | Keyframe request `0x20/0x03`; iPad→Mac | W/A; TCP input | T; both pinned | [SessionManager.swift:1327–1344](./RemoteDesktop/iPadOS/App/SessionManager.swift:1327) |
+| [C] | Transport-change notification `0x20`, header only; Mac→iPad | U/W/A; TCP input | T; both pinned | [SessionManager.m:886–892](./RemoteDesktop/macOS/App/SessionManager.m:886) |
+| [C] | Resolution request `0x21`; iPad→Mac | U/W/A; TCP input | T; both pinned | [SessionManager.swift:409–422](./RemoteDesktop/iPadOS/App/SessionManager.swift:409) |
+| [C] | Resolution result `0x22`; Mac→iPad | U/W/A; TCP input | T; both pinned | [SessionManager.m:2975–2996](./RemoteDesktop/macOS/App/SessionManager.m:2975) |
+| [C] | Geometry update `0x23`; Mac→iPad | U/W/A; TCP input | T; both pinned | [SessionManager.m:3001–3019](./RemoteDesktop/macOS/App/SessionManager.m:3001) |
+| [C] | Viewport report `0x24`; iPad→Mac | U/W/A; TCP input | T; both pinned | [SessionManager.swift:474–481](./RemoteDesktop/iPadOS/App/SessionManager.swift:474) |
+| [C] | USB peer-address update `0x25`; Mac→iPad | Existing U/W/A connection; TCP input | T; both pinned | [SessionManager.m:2415–2440](./RemoteDesktop/macOS/App/SessionManager.m:2415) |
+| [C] | Latency probe `0xFF` and echo; both directions; normal and test senders | U/W/A; TCP input | T; both pinned | [SessionManager.swift:1134–1144](./RemoteDesktop/iPadOS/App/SessionManager.swift:1134); [SessionManager.m:2398–2400](./RemoteDesktop/macOS/App/SessionManager.m:2398) |
+| [C] | Keepalive `0x30`; iPad→Mac; test sender | U/W/A; TCP input | T; both pinned; Mac performs no response | [DeviceTestRunner.swift:647–655](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:647) |
+| [C] | Clock request `0xFE`; iPad→Mac; test sender | U/W/A; TCP input | T; both pinned | [DeviceTestRunner.swift:716–725](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:716) |
+| [C] | Clock response `0xFD`, three timestamps; Mac→iPad | U/W/A; TCP input | T; both pinned | [SessionManager.m:2756–2785](./RemoteDesktop/macOS/App/SessionManager.m:2756) |
+| [C] | Mouse move `0x01` | Declared iPad→Mac; no app producer/handler found | No implemented message path to assess | [protocol.h:38](./RemoteDesktop/Shared/protocol.h:38); [SessionManager.m:2381–2409](./RemoteDesktop/macOS/App/SessionManager.m:2381) |
+| [C] | Click `0x02` | Declared iPad→Mac; no app producer/handler found | No implemented message path to assess | [protocol.h:39](./RemoteDesktop/Shared/protocol.h:39) |
+| [C] | Scroll `0x03` | Declared iPad→Mac; no app producer/handler found | No implemented message path to assess | [protocol.h:40](./RemoteDesktop/Shared/protocol.h:40) |
+| [C] | Key `0x10` | Declared iPad→Mac; no app producer/handler found | No implemented message path to assess | [protocol.h:41](./RemoteDesktop/Shared/protocol.h:41) |
+| [C] | Bonjour service browse, including test browse; iPad→local network | Eligible interfaces, peer-to-peer enabled; discovery | **No app TLS/DTLS or peer pin** | [WirelessTransport.swift:278–282](./RemoteDesktop/iPadOS/Transport/WirelessTransport.swift:278); [DeviceTestRunner.swift:391–395](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:391) |
+| [C] | Bonjour advertisement/resolution metadata; Mac→local network | Wildcard listener, peer-to-peer enabled; discovery | **No app TLS/DTLS or peer pin**; auto-generated instance name | [WirelessTransport.m:290–307](./RemoteDesktop/macOS/Transport/WirelessTransport.m:290) |
+| [C] | `DE AD BE EF` cleartext probe; iPad→Mac | Routed QR host; TCP input/14568 | **None; unpinned** | [DeviceTestRunner.swift:2425–2438](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2425) |
+| [C] | `CLEARTEXT_PROBE`; iPad→Mac | Routed QR host; UDP media/14567 | **None; unpinned** | [DeviceTestRunner.swift:2492–2504](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2492) |
+| [C] | Pairing-port closed probes and two-connection race probe | Routed QR host; TCP pairing/14569 | **Plain TCP**; no application payload; no pin | [DeviceTestRunner.swift:2624–2637](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2624), [2683–2685](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2683), [3027–3031](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:3027) |
+| [C] | “Untrusted certificate” TLS probe; iPad connects/receives | Routed QR host; TCP input | TLS 1.3; **accept-any server**, no client identity | [DeviceTestRunner.swift:2553–2571](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2553) |
+| [C] | “MITM reconnect” `DE AD` probe; iPad→Mac | Routed QR host; TCP input | TLS 1.3; **accept-any server**. Identity helper always returns nil | [DeviceTestRunner.swift:2752–2768](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2752), [2860–2863](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2860) |
+| [C] | Fake media header `4B 44 00 00`; iPad→Mac | Routed QR host; UDP media | DTLS minimum 1.2; **accept-any server**, no client identity | [DeviceTestRunner.swift:2902–2917](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2902) |
+| [C] | “Pre-pairing” input TLS probe; iPad connects/receives | Routed QR host; TCP input | TLS 1.3; **accept-any server**, no client identity | [DeviceTestRunner.swift:2953–2967](./RemoteDesktop/iPadOS/App/DeviceTestRunner.swift:2953) |
+| [I] | TLS ClientHello, ServerHello/HelloRetryRequest; both directions; optional compatibility CCS/early errors | Every TLS pairing/input connection | Initial messages **unencrypted**; peer authentication not yet complete | Connection creation above; [TLS 1.3 §2](https://www.rfc-editor.org/rfc/rfc8446#section-2) |
+| [I] | TLS EncryptedExtensions, CertificateRequest, Certificate, CertificateVerify, Finished | TLS handshake | Encrypted after ServerHello; initial certificate authentication completes during handshake, not before its first message | [TLS 1.3 §2](https://www.rfc-editor.org/rfc/rfc8446#section-2) |
+| [U] | DTLS handshake flights: hellos/cookie, certificates, key exchange, verification, CCS, Finished | U/W/A UDP media; production version unresolved | DTLS 1.2 initial flights expose metadata/certificates; Finished is encrypted. Exact emitted flights unobserved | DTLS constructors above; [DTLS 1.2 §4.2](https://www.rfc-editor.org/rfc/rfc6347#section-4.2) |
+| [U] | Session tickets, KeyUpdate, alerts/close notifications | Framework-managed TLS/DTLS connections | Version/phase dependent; TLS 1.3 post-handshake messages encrypted. Actual emission/resumption policy unverified | [TLS 1.3 §4.6](https://www.rfc-editor.org/rfc/rfc8446#section-4.6) |
+| [I] | TCP SYN/ACK/FIN/RST, IP/UDP headers, link/address-resolution metadata | Underlying transports | Outside app TLS/DTLS protection; no application peer pin on these packets | TCP/UDP constructors cited above |
+
+[C] `sendMediaData` helpers exist, but no app caller was found; they do not establish an implemented ACK/congestion-feedback message protocol. See [USBNetworkTransport.swift:493–499](./RemoteDesktop/iPadOS/Transport/USBNetworkTransport.swift:493), [WirelessTransport.swift:416–422](./RemoteDesktop/iPadOS/Transport/WirelessTransport.swift:416).
+
+[C] Mac XCTest traffic belongs to a separate Sources phase and is excluded from this **app-compiled** inventory: [project.pbxproj:398–429](./RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj/project.pbxproj:398). [U] Framework-generated packet variants require a capture for an exhaustive observed packet inventory.
+
+## Unencrypted or unauthenticated paths
+
+- **[C] Plaintext test sends and connections:** the TCP/UDP probes and pairing-port probes/race listed above.
+- **[C] Encrypted but unauthenticated test channels:** test pairing and security probes explicitly accept arbitrary server certificates.
+- **[C] Normal pairing authenticates only the Mac:** the Mac transfers client credentials to an unauthenticated recipient. Encryption does not repair that authorization failure.
+- **[C] Discovery is outside the pinned channel:** the app supplies no encryption/authentication for Bonjour metadata. [I] Spoofing can redirect discovery or cause denial of service; normal transport pinning should reject a different certificate, whereas test paths do not. mDNS is a local-link query/response protocol, conventionally UDP/5353: [RFC 6762 §3](https://www.rfc-editor.org/rfc/rfc6762#section-3).
+- **[I] TLS initial hello messages and underlying network headers remain visible.** [U] Actual SNI, extensions and other emitted metadata were not captured. TLS 1.3 encrypts handshake messages **after** ServerHello; it does not encrypt every message from the start: [RFC 8446 §2](https://www.rfc-editor.org/rfc/rfc8446#section-2).
+- **[U] DTLS version, resumption/0-RTT policy and revocation of resumed authentication remain unverified.** No proof here establishes that every resumed link rechecks current authorization.
+- **[C] No plaintext fallback was found in the normal application transport constructors.** That narrower finding does not cover the separate test paths, compromised enrollment, metadata or stale-session authorization described above.

@@ -1,0 +1,5 @@
+.tlacache/
+states/
+*_TTrace_*
+*.old
+.claude/

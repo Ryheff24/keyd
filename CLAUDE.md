@@ -38,3 +38,8 @@ The user will ONLY perform simple physical actions on devices (tap buttons, scan
 4. Only then give the user ONE specific physical action to perform
 
 ### Never ask the user to verify something — add logging instead and check yourself.
+
+### Formal models (TLA+) — gate before code
+- Loop, lifecycle, concurrency, synchronization or anything across the iPad↔Mac boundary (pairing, transport switching, session, input)? Model it in TLA+ first: as built, then assumptions, every property with a control that must fail. TLC and TLAPS before code.
+- Method and safety limits: `RemoteDesktop/tla/METHOD.md` (adopted from d1preservation). Plan and status: `RemoteDesktop/tla/PLAN.md`. Run: `make -C RemoteDesktop/tla verify`.
+- Apple docs for agents: `scripts/xcode-docs.sh "query"` (Xcode 27 DocumentationSearch; run outside the sandbox).
