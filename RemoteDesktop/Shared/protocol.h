@@ -13,6 +13,8 @@
 #define KEYDRD_FLAG_HEVC       (1 << 0)   /* bit 0: HEVC-encoded frame */
 #define KEYDRD_FLAG_KEYFRAME   (1 << 1)   /* bit 1: keyframe / IDR */
 #define KEYDRD_FLAG_LAST_CHUNK (1 << 2)   /* bit 2: last chunk of frame */
+#define KEYDRD_FLAG_STRIPED    (1 << 3)   /* bit 3: LZ4 payload is a stripe table + K blocks
+                                           * (delta.h striped_decode; tla/StripeSync.tla) */
 #define KEYDRD_FLAG_DELTA      (1 << 6)   /* bit 6: XOR delta frame */
 
 /* ---- MediaFrameHeader (25 bytes, packed) ----

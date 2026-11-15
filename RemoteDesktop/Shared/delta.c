@@ -1,6 +1,8 @@
 #include "delta.h"
+#include "lz4.h"
 #include <stdlib.h>
 #include <string.h>
+#include <dispatch/dispatch.h>
 
 #if defined(__aarch64__) || defined(__arm64__)
 #include <arm_neon.h>
@@ -102,30 +104,14 @@ void update_keyframe_reference(DeltaBuffer *db, const void *keyframe) {
     pthread_rwlock_unlock(&db->lock);
 }
 
-int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_out) {
-    /*
-     * Fused XOR-delta + reference-update in one pass.
-     * For each byte: delta = current ^ ref, new_ref = current.
-     * Returns 1 if any byte differs (frame dirty), 0 if identical.
-     *
-     * Called from serial compress_queue — no locking needed.
-     */
-    int pending = 1 - db->active;
-    const uint8_t *src = (const uint8_t *)current;
-    const uint8_t *ref = db->buf[db->active];
-    uint8_t *delta = (uint8_t *)delta_out;
-    uint8_t *new_ref = db->buf[pending];
-    size_t n = db->frame_bytes;
-
+int delta_xor_update_range(const uint8_t *src, const uint8_t *ref,
+                           uint8_t *delta, uint8_t *new_ref, size_t n) {
+    /* delta = src ^ ref, new_ref = src, in one pass. Returns 1 if any byte differs. */
 #if HAVE_NEON
-    /* ARM NEON: process 128 bytes per iteration (8x 16-byte vectors).
-     * Fuses XOR + copy + dirty detection in a single pass over memory. */
     uint8x16_t acc0 = vdupq_n_u8(0);
     uint8x16_t acc1 = vdupq_n_u8(0);
-
     size_t i = 0;
     for (; i + 128 <= n; i += 128) {
-        /* Load 128 bytes of current and reference */
         uint8x16_t c0 = vld1q_u8(src + i);
         uint8x16_t c1 = vld1q_u8(src + i + 16);
         uint8x16_t c2 = vld1q_u8(src + i + 32);
@@ -135,26 +121,15 @@ int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_o
         uint8x16_t c6 = vld1q_u8(src + i + 96);
         uint8x16_t c7 = vld1q_u8(src + i + 112);
 
-        uint8x16_t r0 = vld1q_u8(ref + i);
-        uint8x16_t r1 = vld1q_u8(ref + i + 16);
-        uint8x16_t r2 = vld1q_u8(ref + i + 32);
-        uint8x16_t r3 = vld1q_u8(ref + i + 48);
-        uint8x16_t r4 = vld1q_u8(ref + i + 64);
-        uint8x16_t r5 = vld1q_u8(ref + i + 80);
-        uint8x16_t r6 = vld1q_u8(ref + i + 96);
-        uint8x16_t r7 = vld1q_u8(ref + i + 112);
+        uint8x16_t d0 = veorq_u8(c0, vld1q_u8(ref + i));
+        uint8x16_t d1 = veorq_u8(c1, vld1q_u8(ref + i + 16));
+        uint8x16_t d2 = veorq_u8(c2, vld1q_u8(ref + i + 32));
+        uint8x16_t d3 = veorq_u8(c3, vld1q_u8(ref + i + 48));
+        uint8x16_t d4 = veorq_u8(c4, vld1q_u8(ref + i + 64));
+        uint8x16_t d5 = veorq_u8(c5, vld1q_u8(ref + i + 80));
+        uint8x16_t d6 = veorq_u8(c6, vld1q_u8(ref + i + 96));
+        uint8x16_t d7 = veorq_u8(c7, vld1q_u8(ref + i + 112));
 
-        /* XOR: delta = current ^ reference */
-        uint8x16_t d0 = veorq_u8(c0, r0);
-        uint8x16_t d1 = veorq_u8(c1, r1);
-        uint8x16_t d2 = veorq_u8(c2, r2);
-        uint8x16_t d3 = veorq_u8(c3, r3);
-        uint8x16_t d4 = veorq_u8(c4, r4);
-        uint8x16_t d5 = veorq_u8(c5, r5);
-        uint8x16_t d6 = veorq_u8(c6, r6);
-        uint8x16_t d7 = veorq_u8(c7, r7);
-
-        /* Store delta */
         vst1q_u8(delta + i, d0);
         vst1q_u8(delta + i + 16, d1);
         vst1q_u8(delta + i + 32, d2);
@@ -164,7 +139,6 @@ int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_o
         vst1q_u8(delta + i + 96, d6);
         vst1q_u8(delta + i + 112, d7);
 
-        /* Copy current → new reference */
         vst1q_u8(new_ref + i, c0);
         vst1q_u8(new_ref + i + 16, c1);
         vst1q_u8(new_ref + i + 32, c2);
@@ -174,12 +148,9 @@ int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_o
         vst1q_u8(new_ref + i + 96, c6);
         vst1q_u8(new_ref + i + 112, c7);
 
-        /* Accumulate dirty bits */
         acc0 = vorrq_u8(acc0, vorrq_u8(vorrq_u8(d0, d1), vorrq_u8(d2, d3)));
         acc1 = vorrq_u8(acc1, vorrq_u8(vorrq_u8(d4, d5), vorrq_u8(d6, d7)));
     }
-
-    /* Handle remainder (< 128 bytes) */
     int dirty_tail = 0;
     for (; i < n; i++) {
         uint8_t d = src[i] ^ ref[i];
@@ -187,44 +158,114 @@ int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_o
         new_ref[i] = src[i];
         dirty_tail |= d;
     }
-
-    db->active = pending;
-
-    /* Check if any dirty: reduce NEON accumulators */
-    uint8x16_t acc = vorrq_u8(acc0, acc1);
-    return (vmaxvq_u8(acc) != 0) || (dirty_tail != 0);
-
+    return (vmaxvq_u8(vorrq_u8(acc0, acc1)) != 0) || (dirty_tail != 0);
 #else
-    /* Scalar fallback for non-ARM64 */
-    const uint64_t *src64 = (const uint64_t *)current;
-    const uint64_t *ref64 = (const uint64_t *)ref;
-    uint64_t *delta64 = (uint64_t *)delta_out;
-    uint64_t *new_ref64 = (uint64_t *)new_ref;
-
-    uint64_t dirty_acc = 0;
-    size_t stride = n / sizeof(uint64_t);
-    for (size_t i = 0; i < stride; i++) {
-        uint64_t s = src64[i];
-        uint64_t d = s ^ ref64[i];
-        delta64[i] = d;
-        new_ref64[i] = s;
-        dirty_acc |= d;
+    uint8_t acc = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint8_t d = src[i] ^ ref[i];
+        delta[i] = d;
+        new_ref[i] = src[i];
+        acc |= d;
     }
-
-    size_t remainder = n % sizeof(uint64_t);
-    if (remainder > 0) {
-        size_t off = stride * sizeof(uint64_t);
-        for (size_t i = 0; i < remainder; i++) {
-            uint8_t d = src[off + i] ^ ref[off + i];
-            delta[off + i] = d;
-            new_ref[off + i] = src[off + i];
-            dirty_acc |= d;
-        }
-    }
-
-    db->active = pending;
-    return dirty_acc != 0;
+    return acc != 0;
 #endif
+}
+
+void delta_buffer_flip(DeltaBuffer *db) {
+    db->active = 1 - db->active;
+}
+
+int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_out) {
+    /*
+     * Fused XOR-delta + reference-update in one pass over the whole frame.
+     * Called from serial compress_queue — no locking needed.
+     */
+    int pending = 1 - db->active;
+    int dirty = delta_xor_update_range((const uint8_t *)current, db->buf[db->active],
+                                       (uint8_t *)delta_out, db->buf[pending], db->frame_bytes);
+    db->active = pending;
+    return dirty;
+}
+
+void stripe_layout(size_t frame_bytes, int count, size_t *offs, size_t *lens) {
+    if (count < 1) count = 1;
+    size_t base = (frame_bytes / (size_t)count) & ~(size_t)127;
+    size_t off = 0;
+    for (int k = 0; k < count; k++) {
+        size_t len = (k == count - 1) ? frame_bytes - off : base;
+        offs[k] = off;
+        lens[k] = len;
+        off += len;
+    }
+}
+
+static inline uint32_t rd_u32le(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/* out = v, ref = v where v = delta ^ ref, one pass. */
+static void apply_delta_inplace(const uint8_t *delta, uint8_t *ref, uint8_t *out, size_t n) {
+    size_t i = 0;
+#if HAVE_NEON
+    for (; i + 64 <= n; i += 64) {
+        uint8x16_t v0 = veorq_u8(vld1q_u8(delta + i),      vld1q_u8(ref + i));
+        uint8x16_t v1 = veorq_u8(vld1q_u8(delta + i + 16), vld1q_u8(ref + i + 16));
+        uint8x16_t v2 = veorq_u8(vld1q_u8(delta + i + 32), vld1q_u8(ref + i + 32));
+        uint8x16_t v3 = veorq_u8(vld1q_u8(delta + i + 48), vld1q_u8(ref + i + 48));
+        vst1q_u8(out + i, v0);      vst1q_u8(ref + i, v0);
+        vst1q_u8(out + i + 16, v1); vst1q_u8(ref + i + 16, v1);
+        vst1q_u8(out + i + 32, v2); vst1q_u8(ref + i + 32, v2);
+        vst1q_u8(out + i + 48, v3); vst1q_u8(ref + i + 48, v3);
+    }
+#endif
+    for (; i < n; i++) {
+        uint8_t v = delta[i] ^ ref[i];
+        out[i] = v;
+        ref[i] = v;
+    }
+}
+
+int striped_decode(const uint8_t *payload, size_t payload_len, int is_keyframe,
+                   uint8_t *out, uint8_t *ref, uint8_t *scratch, size_t frame_bytes) {
+    if (payload_len < 1) return -1;
+    int count = payload[0];
+    if (count < 1 || count > KEYDRD_STRIPE_MAX) return -2;
+    size_t table = stripe_table_bytes(count);
+    if (payload_len < table) return -3;
+
+    /* Parse and validate the whole table before any worker runs. */
+    size_t raw_off_a[KEYDRD_STRIPE_MAX], raw_len_a[KEYDRD_STRIPE_MAX];
+    size_t comp_off_a[KEYDRD_STRIPE_MAX], comp_len_a[KEYDRD_STRIPE_MAX];
+    /* Blocks cannot capture arrays; workers read them through these pointers. */
+    size_t *raw_off = raw_off_a, *raw_len = raw_len_a, *comp_off = comp_off_a, *comp_len = comp_len_a;
+    size_t r = 0, c = table;
+    for (int k = 0; k < count; k++) {
+        size_t rl = rd_u32le(payload + 1 + (size_t)k * 8);
+        size_t cl = rd_u32le(payload + 1 + (size_t)k * 8 + 4);
+        if (rl == 0 || rl > frame_bytes - r) return -4;
+        if (cl == 0 || cl > payload_len - c) return -5;
+        raw_off[k] = r;  raw_len[k] = rl;  r += rl;
+        comp_off[k] = c; comp_len[k] = cl; c += cl;
+    }
+    if (r != frame_bytes || c != payload_len) return -6;
+
+    __block int failures = 0;
+    /* dispatch_apply returns only after every stripe worker has finished (IpadJoin). */
+    dispatch_apply((size_t)count, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^(size_t k) {
+        const char *src = (const char *)payload + comp_off[k];
+        uint8_t *dst = is_keyframe ? out + raw_off[k] : scratch + raw_off[k];
+        int got = LZ4_decompress_safe(src, (char *)dst, (int)comp_len[k], (int)raw_len[k]);
+        if (got != (int)raw_len[k]) {
+            __atomic_fetch_add(&failures, 1, __ATOMIC_RELAXED);
+            return;
+        }
+        if (is_keyframe) {
+            memcpy(ref + raw_off[k], out + raw_off[k], raw_len[k]);
+        } else {
+            apply_delta_inplace(scratch + raw_off[k], ref + raw_off[k], out + raw_off[k], raw_len[k]);
+        }
+    });
+    return failures == 0 ? 0 : -7;
 }
 
 uint64_t frame_sample_hash(const void *buf, size_t len) {

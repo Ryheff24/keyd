@@ -43,6 +43,14 @@ typedef struct {
     size_t           frame_bytes;               /* raw frame size in bytes */
     size_t           last_keyframe_compressed;  /* compressed size of last keyframe */
     dispatch_queue_t compress_queue;            /* high-priority serial queue */
+
+    /* Striped mode (stripe_count > 1, KEYDRD_FLAG_STRIPED, tla/StripeSync.tla). */
+    int              stripe_count;              /* 1 = single LZ4 stream (legacy format) */
+    size_t           stripe_off[KEYDRD_STRIPE_MAX];   /* raw byte range of each stripe */
+    size_t           stripe_len[KEYDRD_STRIPE_MAX];
+    size_t           stripe_slot[KEYDRD_STRIPE_MAX];  /* offset of each stripe's block in stripe_scratch */
+    size_t           stripe_bound[KEYDRD_STRIPE_MAX]; /* LZ4_compressBound(stripe_len) */
+    uint8_t         *stripe_scratch;            /* per-stripe compressed blocks before packing */
 } FrameCompressorState;
 
 /*
@@ -50,6 +58,13 @@ typedef struct {
  * Returns 0 on success, -1 on failure.
  */
 int frame_compressor_init(FrameCompressorState *state, size_t frame_bytes);
+
+/*
+ * Initialize for striped parallel compression with `stripes` stripes (1..KEYDRD_STRIPE_MAX).
+ * stripes == 1 is identical to frame_compressor_init (single-stream payload, no stripe flag).
+ * The receiver must understand KEYDRD_FLAG_STRIPED (iPad striped_decode).
+ */
+int frame_compressor_init_striped(FrameCompressorState *state, size_t frame_bytes, int stripes);
 
 /*
  * Free all compressor resources.

@@ -45,6 +45,36 @@ void update_keyframe_reference(DeltaBuffer *db, const void *keyframe);
  * MUST be called from a serial queue (no locking). */
 int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_out);
 
+/* ---- Striped frames (KEYDRD_FLAG_STRIPED, tla/StripeSync.tla) ----
+ * A frame is split into `count` contiguous byte ranges (stripes), each XOR-delta'd against
+ * its own slice of the reference and LZ4-compressed as an independent block, so both ends
+ * can work on stripes in parallel. Each end joins all stripe workers before the frame leaves
+ * it (Mac: before flipping the reference and emitting; iPad: before the renderer copies).
+ *
+ * Wire payload: u8 count, then count x {u32 raw_len, u32 comp_len} little-endian, then the
+ * count LZ4 blocks back to back. Raw ranges are contiguous and sum to frame_bytes. */
+#define KEYDRD_STRIPE_MAX 16
+
+static inline size_t stripe_table_bytes(int count) { return 1 + (size_t)count * 8; }
+
+/* Split frame_bytes into `count` ranges; every range but the last is a multiple of 128 bytes. */
+void stripe_layout(size_t frame_bytes, int count, size_t *offs, size_t *lens);
+
+/* Fused XOR + reference copy over one byte range: delta = src ^ ref, new_ref = src.
+ * Returns 1 if any byte differs. Ranges of different stripes may run concurrently. */
+int delta_xor_update_range(const uint8_t *src, const uint8_t *ref,
+                           uint8_t *delta, uint8_t *new_ref, size_t n);
+
+/* Make the pending reference buffer active (call once per frame, after all ranges). */
+void delta_buffer_flip(DeltaBuffer *db);
+
+/* iPad: decode a striped payload in parallel and join before returning.
+ * Keyframe: out = block, ref = out. Delta: v = block ^ ref, out = v, ref = v.
+ * scratch must hold frame_bytes. Returns 0 on success, negative on a malformed payload or
+ * LZ4 error (out/ref may then hold a partly decoded frame: the caller must not render it). */
+int striped_decode(const uint8_t *payload, size_t payload_len, int is_keyframe,
+                   uint8_t *out, uint8_t *ref, uint8_t *scratch, size_t frame_bytes);
+
 /* Sampled 64-bit FNV-1a over every 512th 8-byte word plus the last word of the frame.
  * Cheap (~5k words for a 2752x1786 BGRA frame) and identical on both ends, so the Mac
  * (pre-compress, packed pixels) and the iPad (post-decompress) can log it for the same seq

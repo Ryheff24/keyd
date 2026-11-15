@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import os.log
 
 /// LZ4 decompressor with XOR delta apply for wired mode frame decode.
@@ -94,7 +95,13 @@ final class LZ4Decompressor {
             return nil
         }
 
-        if header.isKeyframe {
+        if header.isStriped {
+            return decompressStriped(frameData: frameData,
+                                     payloadOffset: payloadOffset,
+                                     payloadLength: payloadLength,
+                                     header: header,
+                                     expectedBytes: frameBytes)
+        } else if header.isKeyframe {
             return decompressKeyframe(frameData: frameData,
                                       payloadOffset: payloadOffset,
                                       payloadLength: payloadLength,
@@ -111,6 +118,45 @@ final class LZ4Decompressor {
     }
 
     // MARK: - Private
+
+    private var stripedLogCount = 0
+
+    /// Striped frame (KEYDRD_FLAG_STRIPED, tla/StripeSync.tla): the C `striped_decode` runs one
+    /// worker per stripe and returns only after all of them finish (IpadJoin), so the renderer
+    /// never sees a half-written frame. Keyframe and delta both update `keyframeReference`.
+    private func decompressStriped(frameData: Data,
+                                   payloadOffset: Int,
+                                   payloadLength: Int,
+                                   header: MediaFrameHeader,
+                                   expectedBytes: Int) -> UnsafeRawPointer? {
+        guard header.isKeyframe || header.isDelta else {
+            print("[CONSOLE] LZ4 striped: frame is neither keyframe nor delta, flags=0x\(String(header.flags, radix: 16)) seq=\(header.seq)")
+            return nil
+        }
+        let t0 = CACurrentMediaTime()
+        var stripes = -1
+        let rc = frameData.withUnsafeBytes { buffer -> Int32 in
+            guard let src = buffer.baseAddress else { return -100 }
+            if payloadLength > 0 { stripes = Int(buffer[payloadOffset]) }
+            return striped_decode(src.advanced(by: payloadOffset).assumingMemoryBound(to: UInt8.self),
+                                  payloadLength,
+                                  header.isKeyframe ? 1 : 0,
+                                  decompressBuffer.assumingMemoryBound(to: UInt8.self),
+                                  keyframeReference.assumingMemoryBound(to: UInt8.self),
+                                  tempDeltaBuffer.assumingMemoryBound(to: UInt8.self),
+                                  expectedBytes)
+        }
+        let ms = (CACurrentMediaTime() - t0) * 1000.0
+        stripedLogCount += 1
+        guard rc == 0 else {
+            print("[CONSOLE] LZ4 striped: decode FAILED rc=\(rc) seq=\(header.seq) key=\(header.isKeyframe) payload=\(payloadLength) expected=\(expectedBytes) stripes=\(stripes)")
+            return nil
+        }
+        if stripedLogCount <= 10 || stripedLogCount % 240 == 0 || ms > 6.0 {
+            print("[CONSOLE] LZ4 striped: decoded seq=\(header.seq) key=\(header.isKeyframe) stripes=\(stripes) payload=\(payloadLength) decodeMs=\(String(format: "%.2f", ms))")
+        }
+        return UnsafeRawPointer(decompressBuffer)
+    }
 
     /// Decompress a keyframe: LZ4 decompress, update keyframe reference.
     private func decompressKeyframe(frameData: Data,

@@ -83,6 +83,102 @@ int frame_compressor_init(FrameCompressorState *state, size_t frame_bytes) {
     return 0;
 }
 
+int frame_compressor_init_striped(FrameCompressorState *state, size_t frame_bytes, int stripes) {
+    if (stripes < 1 || stripes > KEYDRD_STRIPE_MAX) return -1;
+    if (frame_compressor_init(state, frame_bytes) != 0) return -1;
+    state->stripe_count = 1;
+    if (stripes == 1) return 0;
+
+    stripe_layout(frame_bytes, stripes, state->stripe_off, state->stripe_len);
+    size_t slot = 0;
+    for (int k = 0; k < stripes; k++) {
+        int bound = LZ4_compressBound((int)state->stripe_len[k]);
+        if (bound <= 0) { frame_compressor_destroy(state); return -1; }
+        state->stripe_slot[k] = slot;
+        state->stripe_bound[k] = (size_t)bound;
+        slot += (size_t)bound;
+    }
+    state->stripe_scratch = (uint8_t *)malloc(slot);
+    if (!state->stripe_scratch) { frame_compressor_destroy(state); return -1; }
+
+    /* Packed payload = table + all blocks; worst case is the sum of per-stripe bounds. */
+    size_t need = stripe_table_bytes(stripes) + slot;
+    if (need > state->output.buf_capacity) {
+        uint8_t *bigger = (uint8_t *)realloc(state->output.buf, need);
+        if (!bigger) { frame_compressor_destroy(state); return -1; }
+        state->output.buf = bigger;
+        state->output.buf_capacity = need;
+    }
+    state->stripe_count = stripes;
+    os_log(fc_log(), "frame_compressor_init_striped: frameBytes=%zu stripes=%d stripeLen=%zu lastLen=%zu outCap=%zu",
+           frame_bytes, stripes, state->stripe_len[0], state->stripe_len[stripes - 1], state->output.buf_capacity);
+    return 0;
+}
+
+/* Striped compress (tla/StripeSync.tla MacJoin): every stripe worker reads its slice of the
+ * active reference and writes its slice of the pending one; dispatch_apply returns only after
+ * all workers finish, and only then is the reference flipped and the payload packed.
+ * Returns the payload size, or -1 (reference not flipped, nothing emitted). */
+static int compress_striped(FrameCompressorState *state, const uint8_t *base, int is_keyframe,
+                            uint8_t *out_buf, size_t out_cap, double *t_work_out) {
+    const int count = state->stripe_count;
+    DeltaBuffer *db = &state->delta_buf;
+    const uint8_t *ref = db->buf[db->active];
+    uint8_t *pending = db->buf[1 - db->active];
+    uint8_t *scratch = state->stripe_scratch;
+    uint8_t *delta = state->delta_scratch;
+    int comp_arr[KEYDRD_STRIPE_MAX];
+    int *comp = comp_arr;
+    dispatch_queue_t workers = dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0);
+
+    dispatch_apply((size_t)count, workers, ^(size_t k) {
+        size_t off = state->stripe_off[k];
+        size_t len = state->stripe_len[k];
+        char *dst = (char *)scratch + state->stripe_slot[k];
+        int bound = (int)state->stripe_bound[k];
+        if (is_keyframe) {
+            memcpy(pending + off, base + off, len);
+            comp[k] = LZ4_compress_default((const char *)base + off, dst, (int)len, bound);
+        } else {
+            (void)delta_xor_update_range(base + off, ref + off, delta + off, pending + off, len);
+            comp[k] = LZ4_compress_fast((const char *)delta + off, dst, (int)len, bound, 32);
+        }
+    });
+    *t_work_out = CACurrentMediaTime();
+
+    size_t table = stripe_table_bytes(count);
+    size_t total = table;
+    size_t dst_off_arr[KEYDRD_STRIPE_MAX];
+    size_t *dst_off = dst_off_arr;
+    for (int k = 0; k < count; k++) {
+        if (comp[k] <= 0) {
+            os_log_error(fc_log(), "compress_striped: stripe %d failed (%d), frame not emitted", k, comp[k]);
+            return -1;
+        }
+        dst_off[k] = total;
+        total += (size_t)comp[k];
+    }
+    if (total > out_cap) {
+        os_log_error(fc_log(), "compress_striped: payload %zu exceeds capacity %zu", total, out_cap);
+        return -1;
+    }
+
+    delta_buffer_flip(db);   /* once per frame, after the join */
+
+    out_buf[0] = (uint8_t)count;
+    for (int k = 0; k < count; k++) {
+        uint8_t *e = out_buf + 1 + (size_t)k * 8;
+        uint32_t rl = (uint32_t)state->stripe_len[k];
+        uint32_t cl = (uint32_t)comp[k];
+        e[0] = rl & 0xFF; e[1] = (rl >> 8) & 0xFF; e[2] = (rl >> 16) & 0xFF; e[3] = (rl >> 24) & 0xFF;
+        e[4] = cl & 0xFF; e[5] = (cl >> 8) & 0xFF; e[6] = (cl >> 16) & 0xFF; e[7] = (cl >> 24) & 0xFF;
+    }
+    dispatch_apply((size_t)count, workers, ^(size_t k) {
+        memcpy(out_buf + dst_off[k], scratch + state->stripe_slot[k], (size_t)comp[k]);
+    });
+    return (int)total;
+}
+
 /* ---- Teardown ---- */
 
 void frame_compressor_destroy(FrameCompressorState *state) {
@@ -98,6 +194,11 @@ void frame_compressor_destroy(FrameCompressorState *state) {
         free(state->packed_buf);
         state->packed_buf = NULL;
     }
+    if (state->stripe_scratch) {
+        free(state->stripe_scratch);
+        state->stripe_scratch = NULL;
+    }
+    state->stripe_count = 1;
     if (state->compress_queue) {
         /* dispatch_release not needed under ARC / non-ObjC,
          * but state->compress_queue is a C dispatch object.
@@ -172,7 +273,29 @@ int compress_frame(FrameCompressorState *state,
     uint8_t flags = 0;
     int should_log_frame_check = (state->seq < 10) || (state->seq % 120 == 0);
 
-    if (is_keyframe) {
+    if (state->stripe_count > 1) {
+        /* ---- Striped parallel path (keyframe or delta) ---- */
+        double t_work = 0;
+        compressed = compress_striped(state, (const uint8_t *)base, is_keyframe,
+                                      out->buf, out->buf_capacity, &t_work);
+        if (compressed <= 0) {
+            IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+            return -1;
+        }
+        flags = (uint8_t)((is_keyframe ? KEYDRD_FLAG_KEYFRAME : KEYDRD_FLAG_DELTA) | KEYDRD_FLAG_STRIPED);
+        if (is_keyframe) state->last_keyframe_compressed = (size_t)compressed;
+        {
+            static int stripeProbeCount = 0;
+            double workMs = (t_work - t_pack) * 1000;
+            double packMs = (CACurrentMediaTime() - t_work) * 1000;
+            if (stripeProbeCount < 10 || stripeProbeCount % 200 == 0 || workMs > 8.0) {
+                os_log(fc_log(), "stripe_detail #%d: %s stripes=%d xor+lz4=%.1fms pack=%.1fms compressed=%d bytes",
+                       stripeProbeCount, is_keyframe ? "KEY" : "delta", state->stripe_count,
+                       workMs, packMs, compressed);
+            }
+            stripeProbeCount++;
+        }
+    } else if (is_keyframe) {
         /* ---- Keyframe path ---- */
         /* Use default compression (acceleration=1) for keyframes — slower but
          * ~30-40% smaller than acceleration=8. Keyframes are infrequent (every 600

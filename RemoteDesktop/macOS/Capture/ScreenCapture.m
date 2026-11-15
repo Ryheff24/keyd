@@ -25,6 +25,9 @@ static const uint64_t kWatchdogIntervalNs = 2ULL * NSEC_PER_SEC;
 static const NSTimeInterval kFrameTimeoutSeconds = 2.0;
 static const int32_t kSyntheticFPS = 120;
 static const uint32_t kSyntheticCatchUpBurstMax = 3;
+/* Striped parallel LZ4 (tla/StripeSync.tla): one stripe per M1 Max performance core.
+ * The iPad must decode KEYDRD_FLAG_STRIPED (both apps are built and deployed together). */
+static const int kLZ4Stripes = 8;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
@@ -407,7 +410,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
 
     /* Initialize compressor: BGRA = 4 bytes/pixel at full Retina resolution */
     size_t frameBytes = pixelWidth * pixelHeight * 4;
-    if (frame_compressor_init(&self->_compressor, frameBytes) != 0) {
+    if (frame_compressor_init_striped(&self->_compressor, frameBytes, kLZ4Stripes) != 0) {
         os_log_error(sc_log(), "Failed to initialize frame compressor");
         _stream = nil;
         return;
@@ -561,7 +564,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         }
 
         size_t frameBytes = (size_t)width * (size_t)height * 4;
-        if (frameBytes > 0 && frame_compressor_init(&_compressor, frameBytes) == 0) {
+        if (frameBytes > 0 && frame_compressor_init_striped(&_compressor, frameBytes, kLZ4Stripes) == 0) {
             _compressorInitialized = YES;
         } else {
             os_log_error(sc_log(), "Failed to reinitialize compressor for synthetic resolution %ux%u",
@@ -607,7 +610,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         return NO;
     }
 
-    if (frame_compressor_init(&_compressor, frameBytes) != 0) {
+    if (frame_compressor_init_striped(&_compressor, frameBytes, kLZ4Stripes) != 0) {
         os_log_error(sc_log(), "Failed to initialize frame compressor for %lux%lu",
                      (unsigned long)pixelWidth, (unsigned long)pixelHeight);
         return NO;

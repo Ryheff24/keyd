@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }
@@ -200,6 +200,19 @@ DELTA_ROWS = DeltaSync:DeltaSync.cfg:pass \
 
 delta: check-tools
 	$(call tlc_rows,$(DELTA_ROWS))
+
+# StripeSync (H4 x C5, 2026-11-15): striped parallel LZ4. Each end joins its stripe workers
+# before the frame leaves it (Mac: before flipping the reference and emitting; iPad: before
+# the renderer copies). As built is one stripe. Dropping either join corrupts or tears.
+STRIPE_ROWS = StripeSync:StripeSync.cfg:pass \
+	StripeSync:cfg/SS-asbuilt.cfg:pass \
+	StripeSync:cfg/SS-ctl-no-mac-join.cfg:NoCorruption \
+	StripeSync:cfg/SS-ctl-no-mac-join-ref.cfg:MacRefUniform \
+	StripeSync:cfg/SS-ctl-no-ipad-join.cfg:NoTornPublish \
+	StripeSync:cfg/SS-witness.cfg:NeverPublished
+
+stripe: check-tools
+	$(call tlc_rows,$(STRIPE_ROWS))
 
 # TLAPS: the step-by-step properties (LabelsMatch, StreamOnlyWithRoute, CodecMatches) for any
 # bounds. Each control replaces one switch in Design by TRUE and must fail at exactly that

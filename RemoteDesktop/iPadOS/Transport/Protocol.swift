@@ -47,6 +47,7 @@ struct MediaFrameFlags: OptionSet {
     static let hevc      = MediaFrameFlags(rawValue: 1 << 0)
     static let keyframe  = MediaFrameFlags(rawValue: 1 << 1)
     static let lastChunk = MediaFrameFlags(rawValue: 1 << 2)
+    static let striped   = MediaFrameFlags(rawValue: 1 << 3)  // KEYDRD_FLAG_STRIPED (tla/StripeSync.tla)
     static let delta     = MediaFrameFlags(rawValue: 1 << 6)
 }
 
@@ -67,6 +68,7 @@ struct MediaFrameHeader {
     var isHEVC: Bool { flags & 0x01 != 0 }
     var isKeyframe: Bool { flags & 0x02 != 0 }
     var isLastChunk: Bool { flags & 0x04 != 0 }
+    var isStriped: Bool { flags & 0x08 != 0 }
     var isDelta: Bool { flags & 0x40 != 0 }
 
     static let size = 25
