@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `99.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.468` | `0.011` | `0.007` | ❌ |
+| FPS | `89.2 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.528` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `7 ms` | `7 ms` | `6 ms` | ❌ |
 | Pipeline latency p95 | `26 ms` | `8 ms` | `7 ms` | ❌ |
 | Pipeline latency avg | `10 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `27 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `44 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `29 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `101.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `6 ms` | `6 ms` | `6 ms` | ✅ |
-| Heavy-load pipeline p95 | `21 ms` | `8 ms` | `7 ms` | ❌ |
+| Glass-to-glass latency median | `23 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `46 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `27 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `97.5 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `7 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `23 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `93.9%` | `100.0%` | `100.0%` | ❌ |
 
@@ -138,3 +138,4 @@ Rules:
 | 2026-11-15 | 17:20:25 EST | `52cd800` | `2752x1786` | `2752x1786` | `84.8 fps` | `0.644` | `10/37/15 ms` | `29/54/33 ms` | `78.9 fps, 9/41 ms` | `1` | `29/33` | usb-only baseline at 10Gb/s link after replug; LZ4 gate-before-compress + frame-hash check |
 | 2026-11-15 | 17:33:24 EST | `ab163df` | `2752x1786` | `2752x1786` | `52.1 fps` | `1.426` | `10/103/24 ms` | `26/124/42 ms` | `30.0 fps, 8/202 ms` | `1` | `26/33` | usb: striped parallel LZ4 (8 stripes, Mac dispatch_apply + iPad striped_decode, tla/StripeSync) |
 | 2026-11-15 | 17:39:36 EST | `62906a2` | `2752x1786` | `2752x1786` | `99.7 fps` | `0.468` | `7/26/10 ms` | `27/44/29 ms` | `101.2 fps, 6/21 ms` | `1` | `31/33` | usb: striped LZ4 x8 + Mac Release code coverage off (counter contention made parallel LZ4 5x slower) |
+| 2026-11-15 | 17:53:46 EST | `d328f4f` | `2752x1786` | `2752x1786` | `89.2 fps` | `0.528` | `7/26/10 ms` | `23/46/27 ms` | `97.5 fps, 7/23 ms` | `1` | `31/33` | usb: remove iPad tcp-recv log spam (718k lines/run) + RENDER-CADENCE display-link counters |
