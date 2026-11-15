@@ -44,3 +44,10 @@ void update_keyframe_reference(DeltaBuffer *db, const void *keyframe);
  * Uses NEON SIMD on ARM64 for maximum throughput.
  * MUST be called from a serial queue (no locking). */
 int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_out);
+
+/* Sampled 64-bit FNV-1a over every 512th 8-byte word plus the last word of the frame.
+ * Cheap (~5k words for a 2752x1786 BGRA frame) and identical on both ends, so the Mac
+ * (pre-compress, packed pixels) and the iPad (post-decompress) can log it for the same seq
+ * and an E2E check can count mismatches. A desynchronized XOR reference garbles the whole
+ * frame, which sparse sampling detects. Not a cryptographic or exhaustive check. */
+uint64_t frame_sample_hash(const void *buf, size_t len);

@@ -191,6 +191,11 @@ static void keydrd_limit_size(uint32_t sourceWidth, uint32_t sourceHeight,
  * each send takes <5ms. 5 in-flight keeps the pipeline fully saturated
  * for 120fps at maximum quality without backpressure drops. */
 static const int32_t kMaxMediaSendsInFlightUSB = 5;
+/* LZ4 gate (tla/DeltaSync.tla, Cap): do not compress a new frame while this many USB media
+ * sends are in flight. Compressed deltas are never dropped (that desynchronized the iPad's
+ * XOR reference: 11,000 drops and a garbled picture on 2026-11-15). Fewer frames queued in
+ * the kernel also bounds latency: 5 x 2 MB frames at ~60 MB/s was ~170 ms of queue. */
+static const int32_t kUSBLZ4GateInFlight = 2;
 
 @interface SessionManager ()
 
@@ -1091,6 +1096,14 @@ static const int32_t kMaxMediaSendsInFlightUSB = 5;
 - (void)configureFrameDelivery {
     __weak SessionManager *weakSelf = self;
 
+    /* LZ4 gate: skip compressing while the USB sender is saturated (DeltaSync GateBeforeCompress). */
+    _capture.shouldCompressFrame = ^BOOL(void) {
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf) return NO;
+        int32_t inFlight = __atomic_load_n(&strongSelf->_tcpMediaSendsInFlight, __ATOMIC_ACQUIRE);
+        return inFlight < kUSBLZ4GateInFlight;
+    };
+
     /* LZ4 compressed frame callback (wired/USB mode) */
     _capture.onFrame = ^(CompressOutput *output) {
         SessionManager *strongSelf = weakSelf;
@@ -1317,24 +1330,25 @@ static const int32_t kMaxMediaSendsInFlightUSB = 5;
             os_log(sLog, "USB send queued: seq=%u inFlight=%d bytes=%zu", originalHeader->seq, inFlight, len);
         }
         if (inFlight > kMaxMediaSendsInFlightUSB) {
-            OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
-            static int dropCount = 0;
-            dropCount++;
-            if (dropCount <= 10 || dropCount % 500 == 0) {
-                os_log(sLog, "TCP backpressure: dropped frame seq=%u (%d in-flight, total dropped=%d)",
-                       originalHeader->seq, inFlight - 1, dropCount);
+            /* Never drop a compressed frame (DeltaSync NoCorruption). The LZ4 gate before
+             * compression keeps this unreachable; if it fires, send anyway and say so. */
+            static int overLimitCount = 0;
+            overLimitCount++;
+            if (overLimitCount <= 10 || overLimitCount % 500 == 0) {
+                os_log_error(sLog, "USB send over in-flight limit (gate missed): seq=%u inFlight=%d total=%d — sending, not dropping",
+                             originalHeader->seq, inFlight, overLimitCount);
             }
-            return;
         }
 
         __weak SessionManager *weakSelf = self;
+        const uint32_t sentSeq = originalHeader->seq; /* copy: header memory is gone by completion */
         [_usbTransport sendMediaViaTCP:data length:len completion:^(BOOL success) {
             SessionManager *strongSelf = weakSelf;
             if (strongSelf) {
                 int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
                 if (!success || left < 2) {
                     os_log(sLog, "USB send completion: seq=%u success=%{public}s inFlightNow=%d",
-                           originalHeader->seq, success ? "yes" : "no", left);
+                           sentSeq, success ? "yes" : "no", left);
                 }
             }
         }];
@@ -1720,24 +1734,24 @@ static const int32_t kMaxMediaSendsInFlightUSB = 5;
                    header->seq, inFlight, totalLen, payloadLen);
         }
         if (inFlight > kMaxMediaSendsInFlightUSB) {
-            OSAtomicDecrement32Barrier(&_tcpMediaSendsInFlight);
-            static int splitDropCount = 0;
-            splitDropCount++;
-            if (splitDropCount <= 10 || splitDropCount % 500 == 0) {
-                os_log(sLog, "USB split-send backpressure drop: seq=%u inFlight=%d totalDropped=%d",
-                       header->seq, inFlight - 1, splitDropCount);
+            /* Never drop a compressed frame (DeltaSync NoCorruption); see the LZ4 gate. */
+            static int splitOverLimitCount = 0;
+            splitOverLimitCount++;
+            if (splitOverLimitCount <= 10 || splitOverLimitCount % 500 == 0) {
+                os_log_error(sLog, "USB split-send over in-flight limit (gate missed): seq=%u inFlight=%d total=%d — sending, not dropping",
+                             header->seq, inFlight, splitOverLimitCount);
             }
-            return;
         }
 
         __weak SessionManager *weakSelf = self;
+        const uint32_t sentSeq = header->seq; /* copy: header memory is gone by completion */
         [_usbTransport sendMediaFrameWithHeader:header payload:payload payloadLength:payloadLen completion:^(BOOL success) {
             SessionManager *strongSelf = weakSelf;
             if (strongSelf) {
                 int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
                 if (!success || left < 2) {
                     os_log(sLog, "USB split-send completion: seq=%u success=%{public}s inFlightNow=%d",
-                           header->seq, success ? "yes" : "no", left);
+                           sentSeq, success ? "yes" : "no", left);
                 }
             }
         }];

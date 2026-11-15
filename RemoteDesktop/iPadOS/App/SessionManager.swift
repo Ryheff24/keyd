@@ -778,6 +778,12 @@ final class SessionManager {
                 return
             }
 
+            // End-to-end picture check: same sampled hash the Mac logs pre-compress (FRAME-HASH mac).
+            if header.seq % 30 == 0 {
+                let h = frame_sample_hash(pixels, frameBytes)
+                print("[CONSOLE] FRAME-HASH ipad seq=\(header.seq) hash=\(String(format: "%016llx", h))")
+            }
+
             // Report decoded dimensions for resolution test
             testRunner?.reportDecodedFrameDimensions(width: macDisplayWidth, height: macDisplayHeight)
 

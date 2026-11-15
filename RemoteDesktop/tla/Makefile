@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }
@@ -185,6 +185,21 @@ TRANSPORT_ROWS = TransportAgreement:TransportAgreement.cfg:pass \
 
 transport: check-tools
 	$(call tlc_rows,$(TRANSPORT_ROWS))
+
+# DeltaSync (H4 x C5, 2026-11-15): lossless XOR-delta frames over USB TCP. The design gates
+# before compression and never drops a compressed frame. As built (drop after compression)
+# corrupts the picture, with or without periodic keyframes, and breaks the chain of bases.
+# Without the gate and without the drop the queue is unbounded. The gate alone suffices.
+DELTA_ROWS = DeltaSync:DeltaSync.cfg:pass \
+	DeltaSync:cfg/DS-asbuilt.cfg:NoCorruption \
+	DeltaSync:cfg/DS-asbuilt-keyframes.cfg:NoCorruption \
+	DeltaSync:cfg/DS-asbuilt-chain.cfg:QueueIsChain \
+	DeltaSync:cfg/DS-ctl-no-gate.cfg:QueueBounded \
+	DeltaSync:cfg/DS-gate-and-drop.cfg:pass \
+	DeltaSync:cfg/DS-witness.cfg:NeverDelivered
+
+delta: check-tools
+	$(call tlc_rows,$(DELTA_ROWS))
 
 # TLAPS: the step-by-step properties (LabelsMatch, StreamOnlyWithRoute, CodecMatches) for any
 # bounds. Each control replaces one switch in Design by TRUE and must fail at exactly that

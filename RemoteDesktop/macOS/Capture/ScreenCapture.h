@@ -47,6 +47,12 @@ typedef void (^ScreenCaptureReauthCallback)(void);
 /* Called after compression with ready-to-send frame (LZ4 mode). */
 @property (nonatomic, copy, nullable) ScreenCaptureFrameCallback onFrame;
 
+/* LZ4 gate (tla/DeltaSync.tla GateBeforeCompress). Called on the serial compress queue
+ * immediately before compress_frame. Returning NO skips this frame WITHOUT compressing it,
+ * so the delta reference advances only on frames that will be sent. A compressed delta
+ * must never be dropped afterwards: the iPad's XOR reference would desynchronize. */
+@property (nonatomic, copy, nullable) BOOL (^shouldCompressFrame)(void);
+
 /* Called with raw pixel buffer before compression (HEVC mode).
  * Set this when HEVC encoding is active. When set AND onFrame is set,
  * BOTH callbacks fire — onPixelBuffer first, then onFrame. */

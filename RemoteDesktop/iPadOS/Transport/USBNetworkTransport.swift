@@ -968,9 +968,10 @@ final class USBNetworkTransport {
                 let available = tcpBuffer.count - tcpBufferReadOffset
                 if available >= (1 << 20) {
                     tcpPartialLogCount += 1
-                    if tcpPartialLogCount <= 10 ||
-                        tcpPartialLogCount % Self.tcpPartialLogInterval == 0 ||
-                        available >= (2 << 20) {
+                    // No "every append over 2 MB" clause: with 10 MB lossless frames that printed
+                // 114k lines per run on the receive queue (2026-11-15).
+                if tcpPartialLogCount <= 10 ||
+                        tcpPartialLogCount % 256 == 0 {
                         print("[CONSOLE] USBTransport: tcp-drain partial msgLen=\(msgLen) available=\(available)B buffer=\(tcpBuffer.count)B sample=\(tcpPartialLogCount)")
                         self.log.info("USB TCP drain partial msgLen=\(msgLen, privacy: .public) available=\(available, privacy: .public)B buffer=\(self.tcpBuffer.count, privacy: .public)B sample=\(self.tcpPartialLogCount, privacy: .public)")
                     }

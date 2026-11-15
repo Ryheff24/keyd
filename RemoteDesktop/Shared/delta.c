@@ -226,3 +226,24 @@ int compute_delta_and_update(DeltaBuffer *db, const void *current, void *delta_o
     return dirty_acc != 0;
 #endif
 }
+
+uint64_t frame_sample_hash(const void *buf, size_t len) {
+    const uint8_t *p = (const uint8_t *)buf;
+    uint64_t h = 1469598103934665603ULL;
+    size_t words = len / 8;
+    for (size_t i = 0; i < words; i += 512) {
+        uint64_t w;
+        memcpy(&w, p + i * 8, 8);
+        h ^= w;
+        h *= 1099511628211ULL;
+    }
+    if (words > 0) {
+        uint64_t w;
+        memcpy(&w, p + (words - 1) * 8, 8);
+        h ^= w;
+        h *= 1099511628211ULL;
+    }
+    h ^= (uint64_t)len;
+    h *= 1099511628211ULL;
+    return h;
+}

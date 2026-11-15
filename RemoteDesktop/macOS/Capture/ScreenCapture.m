@@ -1417,6 +1417,16 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         output.compressed_size = 0;
 
         dispatch_sync(self->_compressor.compress_queue, ^{
+            BOOL (^gate)(void) = self.shouldCompressFrame;
+            if (gate && !gate()) {
+                static uint64_t gateSkips = 0;
+                gateSkips++;
+                if (gateSkips <= 10 || gateSkips % 240 == 0) {
+                    os_log(sc_log(), "LZ4 gate: skipped frame before compress (sender saturated), totalSkips=%llu nextSeq=%u",
+                           gateSkips, self->_compressor.seq);
+                }
+                return;
+            }
             int result = compress_frame(&self->_compressor, surface, sampleBuffer, captureTimestampUs, &output);
             if (result < 0) {
                 os_log_error(sc_log(), "compress_frame failed for seq %u", self->_compressor.seq);

@@ -156,6 +156,14 @@ int compress_frame(FrameCompressorState *state,
 
     double t_pack = CACurrentMediaTime();
 
+    /* End-to-end picture check: sampled hash of the exact pixels being compressed, keyed by
+     * the 16-bit wire seq. The iPad logs the same hash after decompress (FRAME-HASH ipad). */
+    if ((state->seq % 30) == 0) {
+        os_log(fc_log(), "FRAME-HASH mac seq=%u hash=%016llx",
+               (unsigned)(state->seq & 0xFFFF),
+               (unsigned long long)frame_sample_hash(base, bytes));
+    }
+
     /* Determine keyframe vs delta */
     int is_keyframe = (state->seq == 0) ||
                       (state->seq % state->keyframe_interval_frames == 0);
