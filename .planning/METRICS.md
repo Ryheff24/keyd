@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `52.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.426` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `10 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `103 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `24 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `26 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `124 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `42 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `30.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `8 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `202 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `99.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.468` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `7 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `26 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `10 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `27 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `44 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `29 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `101.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `6 ms` | `6 ms` | `6 ms` | ✅ |
+| Heavy-load pipeline p95 | `21 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `93.9%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -137,3 +137,4 @@ Rules:
 | 2026-11-15 | 16:49:11 EST | `fa94785` | `2752x1786` | `2752x1786` | `29.4 fps` | `2.009` | `198/920/294 ms` | `216/969/317 ms` | `25.0 fps, 243/576 ms` | `1` | `26/33` | AddrOnLink USB discovery + iPad TCP frame cap 4MB->32MB (LZ4 keyframes) + probe echo overflow guard; usb-only baseline |
 | 2026-11-15 | 17:20:25 EST | `52cd800` | `2752x1786` | `2752x1786` | `84.8 fps` | `0.644` | `10/37/15 ms` | `29/54/33 ms` | `78.9 fps, 9/41 ms` | `1` | `29/33` | usb-only baseline at 10Gb/s link after replug; LZ4 gate-before-compress + frame-hash check |
 | 2026-11-15 | 17:33:24 EST | `ab163df` | `2752x1786` | `2752x1786` | `52.1 fps` | `1.426` | `10/103/24 ms` | `26/124/42 ms` | `30.0 fps, 8/202 ms` | `1` | `26/33` | usb: striped parallel LZ4 (8 stripes, Mac dispatch_apply + iPad striped_decode, tla/StripeSync) |
+| 2026-11-15 | 17:39:36 EST | `62906a2` | `2752x1786` | `2752x1786` | `99.7 fps` | `0.468` | `7/26/10 ms` | `27/44/29 ms` | `101.2 fps, 6/21 ms` | `1` | `31/33` | usb: striped LZ4 x8 + Mac Release code coverage off (counter contention made parallel LZ4 5x slower) |
