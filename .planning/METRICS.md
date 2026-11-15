@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `102.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.440` | `0.011` | `0.007` | ❌ |
+| FPS | `94.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.549` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `8 ms` | `7 ms` | `6 ms` | ❌ |
 | Pipeline latency p95 | `28 ms` | `8 ms` | `7 ms` | ❌ |
 | Pipeline latency avg | `12 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `30 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `51 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `32 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `108.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Glass-to-glass latency median | `27 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `50 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `30 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `100.5 fps` | `119.8 fps` | `120.0 fps` | ❌ |
 | Heavy-load pipeline median | `7 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `22 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load pipeline p95 | `23 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `87.9%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `90.9%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -140,3 +140,4 @@ Rules:
 | 2026-11-15 | 17:39:36 EST | `62906a2` | `2752x1786` | `2752x1786` | `99.7 fps` | `0.468` | `7/26/10 ms` | `27/44/29 ms` | `101.2 fps, 6/21 ms` | `1` | `31/33` | usb: striped LZ4 x8 + Mac Release code coverage off (counter contention made parallel LZ4 5x slower) |
 | 2026-11-15 | 17:53:46 EST | `d328f4f` | `2752x1786` | `2752x1786` | `89.2 fps` | `0.528` | `7/26/10 ms` | `23/46/27 ms` | `97.5 fps, 7/23 ms` | `1` | `31/33` | usb: remove iPad tcp-recv log spam (718k lines/run) + RENDER-CADENCE display-link counters |
 | 2026-11-15 | 18:04:38 EST | `c7db83b` | `2752x1786` | `2752x1786` | `102.1 fps` | `0.440` | `8/28/12 ms` | `30/51/32 ms` | `108.7 fps, 7/22 ms` | `1` | `29/33` | USB: iPad 4-slot texture ring + FIFO queue (one new frame per tick, K=2 drain), tla/FrameRing |
+| 2026-11-15 | 18:12:39 EST | `061f6a0` | `2752x1786` | `2752x1786` | `94.5 fps` | `0.549` | `8/28/12 ms` | `27/50/30 ms` | `100.5 fps, 7/23 ms` | `1` | `30/33` | USB control: ring kept, queue cap 1 (newest wins); FIFO cap 2 backed out after c7db83b latency rise |
