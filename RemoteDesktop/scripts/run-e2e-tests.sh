@@ -760,6 +760,7 @@ run_reporting() {
 log_progress "=== [1/6] Building Mac agent + iPad app in parallel ==="
 xcodebuild \
   -project "$MAC_PROJECT" \
+  -allowProvisioningUpdates \
   -scheme "$MAC_SCHEME" \
   -destination "platform=macOS,arch=arm64" \
   -configuration Release \
@@ -877,6 +878,20 @@ if [ -z "$MAC_APP" ] || [ ! -d "$MAC_APP" ]; then
   exit 1
 fi
 
+# Secure Enclave identity self-test (fail closed): key in the SE, export refused, TLS 1.3
+# loopback with that identity. The fingerprint goes to the iPad, which checks it against the
+# certificate it pinned over the real connection (sec-identity-secure-enclave).
+IDENTITY_SELFTEST_OUT=$("$MAC_APP/Contents/MacOS/RemoteDesktopAgent" --identity-selftest 2>&1)
+IDENTITY_SELFTEST_RC=$?
+echo "$IDENTITY_SELFTEST_OUT" | sed 's/^/[identity] /'
+if [ "$IDENTITY_SELFTEST_RC" -ne 0 ]; then
+  echo "ERROR: Secure Enclave identity self-test failed (rc=$IDENTITY_SELFTEST_RC); the agent cannot serve. Check signing (keychain-access-groups + provisioning profile)."
+  exit 1
+fi
+MAC_IDENTITY_FP=$(echo "$IDENTITY_SELFTEST_OUT" | sed -n 's/.*identity ok fingerprint=\([0-9a-f]*\).*/\1/p' | head -1)
+MAC_IDENTITY_TOKEN=$(echo "$IDENTITY_SELFTEST_OUT" | sed -n 's/.*export=refused token=\([^ ]*\).*/\1/p' | head -1)
+MAC_IDENTITY_ARG="fp=${MAC_IDENTITY_FP};export=refused;token=${MAC_IDENTITY_TOKEN};tls13=ok"
+
 IPAD_APP="$IPAD_DERIVED_DATA/Build/Products/Release-iphoneos/RemoteDesktopApp.app"
 if [ ! -d "$IPAD_APP" ]; then
   IPAD_APP=$(find "$IPAD_DERIVED_DATA" -name "RemoteDesktopApp.app" -path "*/Release-iphoneos/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
@@ -908,22 +923,9 @@ sleep 1
 security delete-certificate -c "keydrd-agent" 2>/dev/null || true
 security delete-identity -c "keydrd-agent" 2>/dev/null || true
 
-# Reuse existing TLS identity if available (preserves pairing across rebuilds).
-CERT_DIR="/tmp/keydrd-tls"
-mkdir -p "$CERT_DIR"
-chmod 700 "$CERT_DIR"
-if [ ! -f "$CERT_DIR/identity.p12" ]; then
-  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-    -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
-    -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
-  openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
-    -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd -legacy 2>/dev/null
-  chmod 600 "$CERT_DIR/identity.p12"
-  rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
-  log_progress "TLS identity generated (new)"
-else
-  log_progress "TLS identity reused (existing)"
-fi
+# The agent's TLS identity is a Secure Enclave key in the data-protection keychain
+# (PairingManager.m, tla/KeyCustody.tla). No key file, no fallback.
+rm -rf /tmp/keydrd-tls 2>/dev/null || true
 log_progress ""
 
 # ---- Step 4: Start Mac log capture, then launch Mac agent ----
@@ -1095,6 +1097,7 @@ launch_ipad_for_tests() {
 
 # Build launch arguments array
 IPAD_LAUNCH_ARGS=(--test-mode --qr-payload "$QR_PAYLOAD_B64")
+IPAD_LAUNCH_ARGS+=(--mac-identity "$MAC_IDENTITY_ARG")
 IPAD_LAUNCH_ARGS+=(--transport-rotation "$ROTATION_TRANSPORTS")
 IPAD_LAUNCH_ARGS+=(--transports "$ROTATION_TRANSPORTS")
 IPAD_LAUNCH_ARGS+=(--profile "$PROFILE")

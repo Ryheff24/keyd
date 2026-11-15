@@ -54,6 +54,9 @@ typedef NS_ENUM(NSInteger, SessionState) {
 @property (nonatomic, copy, nullable) void (^onResolutionChanged)(uint32_t width, uint32_t height);
 @property (nonatomic, copy, nullable) void (^onSessionStateChanged)(SessionState state);
 @property (nonatomic, copy, nullable) void (^onPermissionStatusChanged)(BOOL screenGranted, BOOL accessibilityGranted);
+/** The Secure Enclave TLS identity could not be created or loaded; the session will not start
+ *  (fail closed, no fallback; tla/KeyCustody.tla). */
+@property (nonatomic, copy, nullable) void (^onIdentityUnavailable)(void);
 
 - (instancetype)initWithTestMode:(BOOL)testMode
                   automationMode:(BOOL)automationMode

@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }
@@ -253,6 +253,18 @@ CUSTODY_ROWS = KeyCustody:KeyCustody.cfg:pass \
 
 custody: check-tools
 	$(call tlc_rows,$(CUSTODY_ROWS))
+
+# InputPath (2026-11-15): iPad keys/buttons -> Mac CGEvents across link switches, drops,
+# relaunch and agent stop. As built there is no injection (H5); the design is the requirement.
+INPUT_ROWS = InputPath:InputPath.cfg:pass \
+	InputPath:cfg/IP-ctl-no-seq.cfg:InOrder \
+	InputPath:cfg/IP-ctl-no-release-on-loss.cfg:HeldNeedsLink \
+	InputPath:cfg/IP-ctl-no-resync.cfg:NoStuckKey \
+	InputPath:cfg/IP-ctl-no-stop-release.cfg:StopReleasesAll \
+	InputPath:cfg/IP-witness.cfg:NeverHeld
+
+input: check-tools
+	$(call tlc_rows,$(INPUT_ROWS))
 
 # TLAPS: the step-by-step properties (LabelsMatch, StreamOnlyWithRoute, CodecMatches) for any
 # bounds. Each control replaces one switch in Design by TRUE and must fail at exactly that

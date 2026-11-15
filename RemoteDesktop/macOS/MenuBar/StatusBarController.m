@@ -17,6 +17,8 @@ static os_log_t sLog;
 @property (nonatomic, strong) NSMenuItem *resolutionItem;
 @property (nonatomic, strong) NSMenuItem *screenRecordingItem;
 @property (nonatomic, strong) NSMenuItem *accessibilityItem;
+/* Set once on the main queue when the Secure Enclave identity is unavailable (fail closed). */
+@property (atomic, assign) BOOL identityFailed;
 
 /* State */
 @property (nonatomic, assign) TransportState currentTransportState;
@@ -142,8 +144,24 @@ static os_log_t sLog;
 
 #pragma mark - State Updates
 
+- (void)showIdentityFailure {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.identityFailed = YES;
+        self.connectionStateItem.title = @"Not running: secure identity unavailable";
+        self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"exclamationmark.triangle"
+                                                accessibilityDescription:@"Secure identity unavailable"];
+        NSMenuItem *detail = [[NSMenuItem alloc] initWithTitle:@"The Secure Enclave TLS key could not be created or loaded. Reinstall a correctly signed build."
+                                                        action:nil keyEquivalent:@""];
+        detail.enabled = NO;
+        NSInteger idx = [self.menu indexOfItem:self.connectionStateItem];
+        [self.menu insertItem:detail atIndex:(idx >= 0 ? idx + 1 : 0)];
+        os_log_fault(sLog, "Menu bar: showing secure identity failure");
+    });
+}
+
 - (void)updateConnectionState:(TransportState)state {
     _currentTransportState = state;
+    if (self.identityFailed) return;   /* fail-closed state stays visible */
 
     dispatch_async(dispatch_get_main_queue(), ^{
         switch (state) {

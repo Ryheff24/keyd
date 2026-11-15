@@ -93,6 +93,9 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
     _sessionManager.onPermissionStatusChanged = ^(BOOL screenGranted, BOOL accessibilityGranted) {
         [weakBar updatePermissionStatus];
     };
+    _sessionManager.onIdentityUnavailable = ^{
+        [weakBar showIdentityFailure];
+    };
 
     /* Wire StatusBarController actions back to SessionManager */
     __weak SessionManager *weakSession = _sessionManager;

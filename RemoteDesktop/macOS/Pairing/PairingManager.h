@@ -9,8 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * Manages the macOS side of the QR pairing handshake for keyd-rd.
  *
- * Loads a self-signed P-256 TLS identity from an OpenSSL-generated PKCS12 file
- * using memory-only import (no login Keychain writes),
+ * Holds a self-signed P-256 TLS identity whose private key lives in the Secure Enclave,
  * computes its SHA-256 fingerprint for inclusion in the QR code payload,
  * performs ECDH key exchange over a cert-pinned TLS channel, and stores
  * the derived shared secret in Keychain.
@@ -27,16 +26,21 @@ NS_ASSUME_NONNULL_BEGIN
 /** The derived shared secret from ECDH key exchange (nil if not paired). */
 @property (nonatomic, readonly, nullable) NSData *sharedSecret;
 
-/** The Mac's TLS identity (SecIdentityRef), loaded in memory from PKCS12. */
+/** The Mac's TLS identity (SecIdentityRef): Secure Enclave key + self-signed certificate. */
 @property (nonatomic, readonly, nullable) SecIdentityRef tlsIdentity;
 
 /**
- * Ensure a TLS identity exists by loading /tmp/keydrd-tls/identity.p12
- * with memory-only import.
+ * Ensure the TLS identity exists: a non-exportable P-256 key in the Secure Enclave plus its
+ * self-signed certificate, both in the data-protection keychain under this app's access group.
+ * Created on first use, reused after. tlsIdentity stays NULL (fail closed) if unavailable.
  *
  * Must be called before generateQRPayload or startPairingListener.
  */
 - (void)ensureTLSIdentity;
+
+/** --identity-selftest: create/load the identity and complete a TLS 1.3 loopback handshake.
+ *  Returns a process exit code (0 = pass). */
++ (int)runIdentitySelfTest;
 
 /**
  * Returns SHA-256 fingerprint of the self-signed certificate's DER encoding.

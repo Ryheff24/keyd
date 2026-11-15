@@ -381,6 +381,16 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 #pragma mark - Lifecycle
 
 - (void)start {
+    /* Identity first, before permissions: with no Secure Enclave identity the agent can never
+     * serve, and the menu bar must say so right away (fail closed, tla/KeyCustody.tla). */
+    [_pairing ensureTLSIdentity];
+    os_log(sLog, "Session start: Secure Enclave identity %{public}s",
+           _pairing.tlsIdentity ? "ready" : "UNAVAILABLE");
+    if (!_pairing.tlsIdentity) {
+        [self failClosedNoIdentity];
+        return;
+    }
+
     os_log(sLog, "Session starting -- checking permissions");
     [self transitionTo:SESSION_AWAITING_PERMISSIONS];
 
@@ -485,9 +495,21 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     }];
 }
 
+/* Fail closed (owner decision 2026-11-15, tla/KeyCustody.tla): no identity, no pairing, no
+ * listeners, no fallback. Shown in the menu bar, not only in the log. */
+- (void)failClosedNoIdentity {
+    os_log_fault(sLog, "Session not started: Secure Enclave TLS identity unavailable (check signing: keychain-access-groups + provisioning profile)");
+    [self transitionTo:SESSION_STOPPED];
+    if (self.onIdentityUnavailable) self.onIdentityUnavailable();
+}
+
 - (void)onPermissionsGranted {
     /* Ensure TLS identity exists */
-    [_pairing ensureTLSIdentity];
+    if (!_pairing.tlsIdentity) [_pairing ensureTLSIdentity];
+    if (!_pairing.tlsIdentity) {
+        [self failClosedNoIdentity];
+        return;
+    }
 
     /* Set TLS identity on transports */
     _usbTransport.tlsIdentity = _pairing.tlsIdentity;

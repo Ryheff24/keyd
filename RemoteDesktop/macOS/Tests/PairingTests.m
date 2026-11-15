@@ -138,63 +138,9 @@ static NSData *deriveSharedSecret(SecKeyRef privateKey, NSData *peerPublicKeyDat
 
 #pragma mark - Helper: create a PKCS12 file for testing
 
-/**
- * Generate a self-signed P-256 identity via OpenSSL and write to /tmp/keydrd-tls/identity.p12
- * so that PairingManager.ensureTLSIdentity can load it (mirrors what mac-debug.sh does).
- */
-static BOOL ensureTestPKCS12(void) {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *dir = @"/tmp/keydrd-tls";
-    NSString *p12Path = [dir stringByAppendingPathComponent:@"identity.p12"];
-
-    /* Always regenerate to ensure consistent test state */
-    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-
-    /* Generate EC key + self-signed cert + PKCS12 via OpenSSL */
-    NSString *keyPath = [dir stringByAppendingPathComponent:@"key.pem"];
-    NSString *certPath = [dir stringByAppendingPathComponent:@"cert.pem"];
-
-    NSArray<NSArray<NSString *> *> *commands = @[
-        @[@"/usr/bin/openssl", @"ecparam", @"-genkey", @"-name", @"prime256v1", @"-noout", @"-out", keyPath],
-        @[@"/usr/bin/openssl", @"req", @"-new", @"-x509", @"-key", keyPath, @"-out", certPath,
-          @"-days", @"365", @"-subj", @"/CN=keydrd-test"],
-        @[@"/usr/bin/openssl", @"pkcs12", @"-export", @"-inkey", keyPath, @"-in", certPath,
-          @"-out", p12Path, @"-passout", @"pass:keydrd",
-          @"-legacy"],  /* -legacy needed on newer OpenSSL for SecPKCS12Import compat */
-    ];
-
-    for (NSArray<NSString *> *cmd in commands) {
-        NSTask *task = [[NSTask alloc] init];
-        task.executableURL = [NSURL fileURLWithPath:cmd[0]];
-        task.arguments = [cmd subarrayWithRange:NSMakeRange(1, cmd.count - 1)];
-        task.standardOutput = [NSPipe pipe];
-        task.standardError = [NSPipe pipe];
-        NSError *err = nil;
-        [task launchAndReturnError:&err];
-        if (err) return NO;
-        [task waitUntilExit];
-        if (task.terminationStatus != 0) {
-            /* Retry without -legacy flag if that was the pkcs12 command
-             * (older OpenSSL versions don't have -legacy) */
-            if ([cmd containsObject:@"-legacy"]) {
-                NSMutableArray *cmdRetry = [cmd mutableCopy];
-                [cmdRetry removeObject:@"-legacy"];
-                NSTask *retryTask = [[NSTask alloc] init];
-                retryTask.executableURL = [NSURL fileURLWithPath:cmdRetry[0]];
-                retryTask.arguments = [cmdRetry subarrayWithRange:NSMakeRange(1, cmdRetry.count - 1)];
-                retryTask.standardOutput = [NSPipe pipe];
-                retryTask.standardError = [NSPipe pipe];
-                [retryTask launchAndReturnError:nil];
-                [retryTask waitUntilExit];
-                if (retryTask.terminationStatus != 0) return NO;
-            } else {
-                return NO;
-            }
-        }
-    }
-
-    return [fm fileExistsAtPath:p12Path];
-}
+/* The agent identity is a Secure Enclave key in the data-protection keychain (no key file);
+ * PairingManager creates or loads it itself. These tests need a test host signed with the
+ * keychain-access-groups entitlement, like the agent. */
 
 #pragma mark - PairingManager Tests
 
@@ -206,9 +152,6 @@ static BOOL ensureTestPKCS12(void) {
 
 - (void)setUp {
     [super setUp];
-    /* Ensure PKCS12 identity file exists for TLS identity loading */
-    BOOL ok = ensureTestPKCS12();
-    XCTAssertTrue(ok, @"Failed to generate test PKCS12 identity via OpenSSL");
     self.manager = [[PairingManager alloc] init];
 }
 

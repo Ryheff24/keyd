@@ -43,6 +43,7 @@ cd "$(git rev-parse --show-toplevel)"
 echo "=== Building $SCHEME ==="
 xcodebuild \
   -project "$PROJECT" \
+  -allowProvisioningUpdates \
   -scheme "$SCHEME" \
   -destination "platform=macOS,arch=arm64" \
   -configuration "$CONFIG" \
@@ -68,23 +69,9 @@ while security delete-identity -c "keydrd-agent" 2>/dev/null; do :; done
 while security delete-certificate -c "keydrd-agent" 2>/dev/null; do :; done
 while security delete-certificate -c "keydrd-agent-tls" 2>/dev/null; do :; done
 
-# Reuse existing TLS identity if available (preserves pairing across rebuilds).
-# Only generate a new one if the file doesn't exist (first run or /tmp cleaned).
-CERT_DIR="/tmp/keydrd-tls"
-mkdir -p "$CERT_DIR"
-chmod 700 "$CERT_DIR"
-if [ ! -f "$CERT_DIR/identity.p12" ]; then
-  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-    -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
-    -days 3650 -nodes -subj "/CN=keydrd-agent" 2>/dev/null
-  openssl pkcs12 -export -out "$CERT_DIR/identity.p12" \
-    -inkey "$CERT_DIR/key.pem" -in "$CERT_DIR/cert.pem" -passout pass:keydrd -legacy 2>/dev/null
-  chmod 600 "$CERT_DIR/identity.p12"
-  rm -f "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
-  echo "TLS identity generated (new)"
-else
-  echo "TLS identity reused (existing)"
-fi
+# The agent's TLS identity is a Secure Enclave key in the data-protection keychain
+# (PairingManager.m, tla/KeyCustody.tla). No key file, no fallback.
+rm -rf /tmp/keydrd-tls 2>/dev/null || true
 
 # Launch the app
 "$APP_PATH/Contents/MacOS/RemoteDesktopAgent" &

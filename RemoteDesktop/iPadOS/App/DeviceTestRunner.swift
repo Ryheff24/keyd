@@ -3111,22 +3111,42 @@ final class DeviceTestRunner {
         }
     }
 
-    /// Security test: check /tmp/keydrd-tls/identity.p12 permissions on the Mac.
-    /// Since we run on iPad, we cannot directly check Mac filesystem.
-    /// Reports as a known vulnerability (C3) that requires Mac-side verification.
-    /// Catches C3: TLS identity in world-readable /tmp.
+    /// Security test: the Mac identity this iPad pinned is a Secure Enclave key (tla/KeyCustody.tla).
+    /// The harness runs `RemoteDesktopAgent --identity-selftest` on the Mac (key in the Secure
+    /// Enclave, export refused, TLS 1.3 loopback with that identity) and passes the result as
+    /// `--mac-identity "fp=<hex>;export=refused;token=<id>;tls13=ok"`. PASS only if the self-test
+    /// passed and its fingerprint equals the certificate fingerprint this iPad pinned and has been
+    /// verifying on every connection of this run.
     private func runIdentityFilePermissionsTest() {
-        print("[TEST] RUNNING: sec-identity-file-permissions")
-
-        // This test cannot directly check Mac filesystem from iPad.
-        // The Mac E2E test (E2ETests.m) should verify:
-        //   /tmp/keydrd-tls/identity.p12 has mode 0600 (owner-only)
-        //   /tmp/keydrd-tls/ directory has mode 0700 (owner-only)
-        //
-        // Record as FAIL to flag the known C3 vulnerability until the Mac-side fix
-        // and test are in place.
-        recordResult(name: "sec-identity-file-permissions", passed: false,
-                    detail: "KNOWN VULNERABILITY (C3): /tmp/keydrd-tls/identity.p12 uses hardcoded password 'keydrd' — requires Mac-side test in E2ETests.m to verify file permissions are 0600")
+        let name = "sec-identity-secure-enclave"
+        print("[TEST] RUNNING: \(name)")
+        let args = ProcessInfo.processInfo.arguments
+        var fields: [String: String] = [:]
+        if let idx = args.firstIndex(of: "--mac-identity"), idx + 1 < args.count {
+            for part in args[idx + 1].split(separator: ";") {
+                let kv = part.split(separator: "=", maxSplits: 1).map(String.init)
+                if kv.count == 2 { fields[kv[0]] = kv[1] }
+            }
+        }
+        let pinnedQuery: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: "com.ryheff.keyd.remote.app",
+            kSecAttrAccount: "peer-cert-fingerprint",
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var pinnedRef: CFTypeRef?
+        let pinnedStatus = SecItemCopyMatching(pinnedQuery as CFDictionary, &pinnedRef)
+        let pinnedHex = (pinnedRef as? Data)?.map { String(format: "%02x", $0) }.joined() ?? ""
+        let macHex = (fields["fp"] ?? "").lowercased()
+        let seToken = fields["token"] == "com.apple.setoken"
+        let exportRefused = fields["export"] == "refused"
+        let tlsOK = fields["tls13"] == "ok"
+        let fpMatch = !pinnedHex.isEmpty && pinnedHex == macHex
+        print("[CONSOLE] identity-test fields=\(fields) pinnedStatus=\(pinnedStatus) pinned=\(pinnedHex.prefix(16)) mac=\(macHex.prefix(16)) match=\(fpMatch)")
+        let passed = seToken && exportRefused && tlsOK && fpMatch
+        recordResult(name: name, passed: passed,
+                     detail: "pinned=\(pinnedHex.prefix(16)) mac-selftest=\(macHex.prefix(16)) match=\(fpMatch) token=\(fields["token"] ?? "missing") export=\(fields["export"] ?? "missing") tls13=\(fields["tls13"] ?? "missing")")
         runKeychainAccessControlTest()
     }
 
@@ -3315,7 +3335,7 @@ final class DeviceTestRunner {
                        "sec-cleartext-tcp", "sec-cleartext-udp", "sec-untrusted-cert",
                        "sec-pairing-port-closed", "sec-pairing-port-closed-after-stream",
                        "sec-mitm-reconnect", "sec-pre-pairing-transport-reject",
-                       "sec-pairing-race", "sec-identity-file-permissions",
+                       "sec-pairing-race", "sec-identity-secure-enclave",
                        "sec-keychain-access-control"]
         if sustainedStreamDuration > 0 {
             allTests.append("sustained-stream")

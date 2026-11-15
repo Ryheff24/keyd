@@ -39,6 +39,12 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)updatePermissionStatus;
 
+/**
+ * Show the fail-closed state: the Secure Enclave TLS identity is unavailable, so the agent will
+ * not pair or serve. Sticky: later connection-state updates do not hide it.
+ */
+- (void)showIdentityFailure;
+
 @end
 
 NS_ASSUME_NONNULL_END

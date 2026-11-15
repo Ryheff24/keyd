@@ -1031,55 +1031,28 @@ static void e2eReceiveMin(nw_connection_t conn, size_t minLen, size_t maxLen,
 
 #pragma mark - Security: Identity File Permissions (C3)
 
-/// Verify /tmp/keydrd-tls/identity.p12 has restrictive permissions (not world-readable).
-/// Catches C3: TLS identity stored in world-readable /tmp with hardcoded password.
-- (void)testIdentityFilePermissions {
-    NSString *identityDir = @"/tmp/keydrd-tls";
-    NSString *identityFile = @"/tmp/keydrd-tls/identity.p12";
-    NSFileManager *fm = [NSFileManager defaultManager];
-
-    /* Check if the identity file exists */
-    if (![fm fileExistsAtPath:identityFile]) {
-        /* File doesn't exist — may not have been generated yet.
-         * This is not a vulnerability per se, but note it. */
-        NSLog(@"sec-identity-file-permissions: identity.p12 not found at %@", identityFile);
-        /* Pass: no file = no exposure */
-        return;
-    }
-
-    /* Check directory permissions */
-    NSError *dirError = nil;
-    NSDictionary *dirAttrs = [fm attributesOfItemAtPath:identityDir error:&dirError];
-    XCTAssertNil(dirError, @"Failed to read directory attributes: %@", dirError);
-
-    if (dirAttrs) {
-        NSUInteger dirPerms = [dirAttrs filePosixPermissions];
-        /* Directory should be 0700 (owner-only) */
-        XCTAssertEqual(dirPerms & 0077, 0,
-                       @"VULNERABLE (C3): /tmp/keydrd-tls/ has group/other permissions: %lo (expected 0700)",
-                       (unsigned long)dirPerms);
-        NSLog(@"sec-identity-file-permissions: directory permissions = %lo", (unsigned long)dirPerms);
-    }
-
-    /* Check file permissions */
-    NSError *fileError = nil;
-    NSDictionary *fileAttrs = [fm attributesOfItemAtPath:identityFile error:&fileError];
-    XCTAssertNil(fileError, @"Failed to read file attributes: %@", fileError);
-
-    if (fileAttrs) {
-        NSUInteger filePerms = [fileAttrs filePosixPermissions];
-        /* File should be 0600 (owner-only read/write) */
-        XCTAssertEqual(filePerms & 0077, 0,
-                       @"VULNERABLE (C3): identity.p12 has group/other permissions: %lo (expected 0600)",
-                       (unsigned long)filePerms);
-        NSLog(@"sec-identity-file-permissions: file permissions = %lo", (unsigned long)filePerms);
-
-        /* Also check file owner matches current user */
-        NSString *fileOwner = fileAttrs[NSFileOwnerAccountName];
-        NSString *currentUser = NSUserName();
-        XCTAssertEqualObjects(fileOwner, currentUser,
-                              @"identity.p12 owned by %@ (expected %@)", fileOwner, currentUser);
-    }
+/// The agent's TLS identity is a Secure Enclave key (tla/KeyCustody.tla): no key file anywhere,
+/// the private key lives on the Secure Enclave token and cannot be exported.
+- (void)testIdentityIsSecureEnclaveKey {
+    XCTAssertFalse([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/keydrd-tls/identity.p12"],
+                   @"C3: an identity key file exists in /tmp");
+    PairingManager *pm = [[PairingManager alloc] init];
+    [pm ensureTLSIdentity];
+    SecIdentityRef identity = pm.tlsIdentity;
+    XCTAssertTrue(identity != NULL, @"No Secure Enclave identity (check signing/entitlements)");
+    if (!identity) return;
+    SecKeyRef priv = NULL;
+    XCTAssertEqual(SecIdentityCopyPrivateKey(identity, &priv), errSecSuccess);
+    if (!priv) return;
+    NSDictionary *attrs = CFBridgingRelease(SecKeyCopyAttributes(priv));
+    XCTAssertEqualObjects(attrs[(__bridge id)kSecAttrTokenID], (__bridge id)kSecAttrTokenIDSecureEnclave,
+                          @"Private key is not on the Secure Enclave token");
+    CFErrorRef err = NULL;
+    CFDataRef exported = SecKeyCopyExternalRepresentation(priv, &err);
+    XCTAssertTrue(exported == NULL, @"Private key export must be refused");
+    if (exported) CFRelease(exported);
+    if (err) CFRelease(err);
+    CFRelease(priv);
 }
 
 #pragma mark - Security: Keychain Access Controls (H1)
