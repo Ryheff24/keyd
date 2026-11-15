@@ -17,21 +17,21 @@ Rules:
 |--------|---------|------|------|--------|
 | Viewport width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
-| Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `59.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.274` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `24 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `29 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `24 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `42 ms` | `26 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `52 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `43 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `60.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `21 ms` | `8 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `24 ms` | `8 ms` | `7 ms` | ❌ |
+| Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
+| Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
+| FPS | `29.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `2.009` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `198 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `920 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `294 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `216 ms` | `26 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `969 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `317 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `25.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `243 ms` | `8 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `576 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `85.3%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `78.8%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -134,3 +134,4 @@ Rules:
 | 2026-04-06 | 14:21:09 EDT | `c93571e` | `2752x1786` | `2496x1620` | `59.2 fps` | `0.369` | `28/39/29 ms` | `49/59/49 ms` | `59.4 fps, 24/32 ms` | `1` | `26/33` | Transport fallback fix: no-op disconnectCurrent, immediate WiFi fallback, remove 300ms delay |
 | 2026-05-08 | 11:40:59 EDT | `f017d17` | `2752x1786` | `2496x1620` | `59.9 fps` | `0.259` | `24/29/24 ms` | `43/50/44 ms` | `60.1 fps, 21/26 ms` | `1` | `28/33` | make run wiring test |
 | 2026-11-15 | 16:38:03 EST | `c25f687` | `2752x1786` | `2496x1620` | `59.8 fps` | `0.274` | `24/29/24 ms` | `42/52/43 ms` | `60.0 fps, 21/24 ms` | `1` | `29/34` | baseline 2026-11-15: usb main stream via wifi peer-address bootstrap, OS 27.2 |
+| 2026-11-15 | 16:49:11 EST | `fa94785` | `2752x1786` | `2752x1786` | `29.4 fps` | `2.009` | `198/920/294 ms` | `216/969/317 ms` | `25.0 fps, 243/576 ms` | `1` | `26/33` | AddrOnLink USB discovery + iPad TCP frame cap 4MB->32MB (LZ4 keyframes) + probe echo overflow guard; usb-only baseline |
