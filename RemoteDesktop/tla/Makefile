@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }
@@ -229,6 +229,30 @@ FRAME_ROWS = FrameRing:FrameRing.cfg:pass \
 
 frame: check-tools
 	$(call tlc_rows,$(FRAME_ROWS))
+
+# Framing (input path, 2026-11-15): iPad -> Mac messages on one TCP connection. As built the Mac
+# dispatches every received region as one message; TCP may split or merge them. Design: a length
+# prefix and a reassembly buffer that keeps the partial tail.
+FRAMING_ROWS = Framing:Framing.cfg:pass \
+	Framing:cfg/FM-asbuilt.cfg:NoTornMessage \
+	Framing:cfg/FM-ctl-drop-partial.cfg:AllDelivered \
+	Framing:cfg/FM-witness.cfg:NeverParsed
+
+framing: check-tools
+	$(call tlc_rows,$(FRAMING_ROWS))
+
+# KeyCustody (2026-11-15): who can sign as the Mac the iPad pins (SecureSession A5's precondition).
+# As built the key is /tmp/keydrd-tls/identity.p12. Design: Secure Enclave key, no file, no
+# fallback; with the Secure Enclave unavailable the agent fails closed.
+CUSTODY_ROWS = KeyCustody:KeyCustody.cfg:pass \
+	KeyCustody:cfg/KC-se-unavailable.cfg:pass \
+	KeyCustody:cfg/KC-asbuilt.cfg:OnlyAgentSigns \
+	KeyCustody:cfg/KC-ctl-appsupport.cfg:OnlyAgentSigns \
+	KeyCustody:cfg/KC-ctl-fallback.cfg:OnlyAgentSigns \
+	KeyCustody:cfg/KC-witness.cfg:NeverPinned
+
+custody: check-tools
+	$(call tlc_rows,$(CUSTODY_ROWS))
 
 # TLAPS: the step-by-step properties (LabelsMatch, StreamOnlyWithRoute, CodecMatches) for any
 # bounds. Each control replaces one switch in Design by TRUE and must fail at exactly that

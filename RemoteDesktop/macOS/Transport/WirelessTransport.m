@@ -1,5 +1,6 @@
 #import "WirelessTransport.h"
 #import "protocol.h"
+#import "framing.h"
 #import "crypto.h"
 #import <os/log.h>
 #import <Security/Security.h>
@@ -977,9 +978,15 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     });
 }
 
+/* Each connection's receive chain owns its reassembly buffer (tla/Framing.tla F2), so a
+ * replaced connection's late callbacks never mix bytes into the new connection's stream. */
 - (void)scheduleInputReceive:(nw_connection_t)connection {
+    [self scheduleInputReceive:connection buffer:[NSMutableData data]];
+}
+
+- (void)scheduleInputReceive:(nw_connection_t)connection buffer:(NSMutableData *)rx {
     __weak WirelessTransport *weakSelf = self;
-    nw_connection_receive(connection, 1, 4096, ^(dispatch_data_t _Nullable content,
+    nw_connection_receive(connection, 1, 65536, ^(dispatch_data_t _Nullable content,
                                                   nw_content_context_t _Nullable context,
                                                   bool is_complete,
                                                   nw_error_t _Nullable error) {
@@ -1000,11 +1007,31 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
                                                 size_t offset,
                                                 const void *_Nonnull buffer,
                                                 size_t size) {
-                if (self2.onInputReceived) {
-                    self2.onInputReceived(buffer, size);
-                }
+                [rx appendBytes:buffer length:size];
                 return true;
             });
+            /* Dispatch whole frames only; keep the partial tail (Framing.tla KeepPartial). */
+            size_t off = 0;
+            const uint8_t *bytes = (const uint8_t *)rx.bytes;
+            for (;;) {
+                size_t consumed = 0, plen = 0;
+                const uint8_t *payload = NULL;
+                int r = keydrd_frame_next(bytes + off, rx.length - off, &consumed, &payload, &plen);
+                if (r == 0) break;
+                if (r < 0) {
+                    os_log_error(wireless_log(), "Input framing error: invalid length prefix (buffered=%lu), dropping connection",
+                                 (unsigned long)(rx.length - off));
+                    nw_connection_cancel(connection);
+                    return;
+                }
+                if (self2.onInputReceived) {
+                    self2.onInputReceived(payload, plen);
+                }
+                off += consumed;
+            }
+            if (off > 0) {
+                [rx replaceBytesInRange:NSMakeRange(0, off) withBytes:NULL length:0];
+            }
         }
 
         if (error) {
@@ -1025,7 +1052,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
             nw_connection_cancel(connection);
             return;
         }
-        [self2 scheduleInputReceive:connection];
+        [self2 scheduleInputReceive:connection buffer:rx];
     });
 }
 

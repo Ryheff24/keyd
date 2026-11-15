@@ -405,7 +405,13 @@ final class WirelessTransport {
     /// Send an input event over TCP to the Mac.
     func sendInputEvent(_ data: Data) {
         guard let connection = inputConnection else { return }
-        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+        // 4-byte big-endian length prefix (Shared/framing.h, tla/Framing.tla): TCP may split or
+        // merge messages, so the Mac reassembles whole frames.
+        var framed = Data(capacity: data.count + 4)
+        var len = UInt32(data.count).bigEndian
+        withUnsafeBytes(of: &len) { framed.append(contentsOf: $0) }
+        framed.append(data)
+        connection.send(content: framed, completion: .contentProcessed { [weak self] error in
             if let error = error {
                 self?.log.error("Wireless input send error: \(error)")
             }
