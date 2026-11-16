@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `59.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.307` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `27 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `33 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `27 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `47 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `55 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `48 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `60.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `24 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `30 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `48.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.337` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `65 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `198 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `83 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `78 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `208 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `98 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `50.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `48 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `118 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `82.6%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -148,3 +148,4 @@ Rules:
 | 2026-11-15 | 21:14:30 EST | `5f4b88c` | `2752x1786` | `2496x1620` | `49.3 fps` | `1.550` | `52/188/77 ms` | `66/197/92 ms` | `50.3 fps, 50/123 ms` | `1` | `39/46` | wifi stutter diag: log iPad PEER-ADDR; external 10Hz ping iPad+router during run (no behavior change) |
 | 2026-11-15 | 21:20:43 EST | `630998b` | `2752x1786` | `2496x1620` | `48.6 fps` | `1.588` | `64/299/100 ms` | `74/294/112 ms` | `50.4 fps, 53/130 ms` | `1` | `39/46` | wifi stutter A/B: --no-peer-to-peer (AWDL excluded both sides) + external ping probe |
 | 2026-11-15 | 21:27:24 EST | `bdc2ee5` | `2752x1786` | `2496x1620` | `59.9 fps` | `0.307` | `27/33/27 ms` | `47/55/48 ms` | `60.0 fps, 24/30 ms` | `1` | `40/46` | wifi stutter: interactive-video service class (WMM AC_VI) on Wi-Fi TCP/UDP both sides; --no-peer-to-peer |
+| 2026-11-15 | 21:54:09 EST | `2a077a9` | `2752x1786` | `2496x1620` | `48.7 fps` | `1.337` | `65/198/83 ms` | `78/208/98 ms` | `50.4 fps, 48/118 ms` | `1` | `38/46` | DIAG: iPad Continuity off; log Wi-Fi TCP connect states/path (prior run hung at connect, no retry) |
