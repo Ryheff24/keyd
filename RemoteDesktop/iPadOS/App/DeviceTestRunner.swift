@@ -153,8 +153,8 @@ final class DeviceTestRunner {
     /// --background-cycle: the harness backgrounds and reactivates the app with the
     /// RemoteDesktopAppUITests runner when this suite asks (background-recovery phase).
     private let backgroundCycleEnabled: Bool
-    /// --background-seconds: how long the UI test keeps the app in the background (logged only;
-    /// the harness passes the same value to the runner).
+    /// --background-seconds: how long the harness keeps the app in the background (logged only;
+    /// the harness waits that long before reactivating it).
     private let backgroundSeconds: Int
     private let profile: String
     private let videoPlaybackWindowSeconds: TimeInterval
@@ -2423,17 +2423,17 @@ final class DeviceTestRunner {
 
     // MARK: - Background recovery (the user's "backgrounding causes lasting poor performance")
     //
-    // The harness sees the request line and runs RemoteDesktopAppUITests/BackgroundCycleUITests,
-    // which presses Home (the app is suspended, same process), waits, and activates the app again.
+    // The harness sees the request line and, with devicectl, brings Settings to the front (the app
+    // is suspended, same process), waits, and launches this app again, which reactivates it. No UI
+    // automation: XCUITest needs the iPad passcode for automation mode on every run.
     // Measured from didBecomeActive: time to the first presented frame, time until a 1 s window
     // reaches 90% of the pre-background rate, the steady rate 10-30 s after resume against the
     // pre-background rate, the link each second (infra Wi-Fi is a failure: cascade is
     // USB > AWDL > infra, tla/TransportConnections.tla), and decode refusals (FL IpadFail).
 
     private enum BackgroundPhase { case idle, waitingForBackground, backgrounded, measuring }
-    private static let backgroundRecoveryBudget: TimeInterval = 210
-    /// Two runner attempts (~65 s each when "enabling automation mode" times out) plus start-up.
-    private static let backgroundRequestTimeout: TimeInterval = 180
+    private static let backgroundRecoveryBudget: TimeInterval = 90
+    private static let backgroundRequestTimeout: TimeInterval = 30
     private static let backgroundRecoveryWindow: TimeInterval = 30
     private static let backgroundFirstFrameGoalMs = 250.0
     private static let backgroundRecoverGoalMs = 1000.0
@@ -2451,6 +2451,7 @@ final class DeviceTestRunner {
     private var bgObservers: [NSObjectProtocol] = []
     private var bgStateDrops = 0
     private var bgFLFailStart = 0
+    private var bgFLFailAtResume = 0
     private var bgDecodeFailStart = 0
     private var frameLoopFailures = 0
 
@@ -2481,10 +2482,10 @@ final class DeviceTestRunner {
         print("[TEST] INFO: background-cycle request seconds=\(backgroundSeconds) link=\(currentLinkName()) state=\(sessionManager?.state.rawValue ?? "nil")")
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.backgroundRequestTimeout) { [weak self] in
             guard let self = self, self.bgPhase == .waitingForBackground else { return }
-            print("[CONSOLE] background-recovery timeout waiting for background (UI test did not run)")
+            print("[CONSOLE] background-recovery timeout waiting for background (harness background cycle did not run)")
             self.endBackgroundRecovery()
             self.recordResult(name: "background-recovery", passed: false,
-                              detail: "app was never backgrounded within \(Int(Self.backgroundRequestTimeout))s (UI test runner did not run; see /tmp/keyd-e2e-uitest.log)")
+                              detail: "app was never backgrounded within \(Int(Self.backgroundRequestTimeout))s (harness background cycle did not run; see /tmp/keyd-e2e-bgcycle.log)")
             self.runSecurityTests()
         }
     }
@@ -2504,6 +2505,7 @@ final class DeviceTestRunner {
         guard bgPhase == .backgrounded else { return }
         bgPhase = .measuring
         bgResumedAt = CFAbsoluteTimeGetCurrent()
+        bgFLFailAtResume = frameLoopFailures
         let link = currentLinkName()
         bgLinkSamples.append(link)
         print("[TEST] INFO: background-cycle resumed hostUs=\(keydrdHostTimeUs()) awaySec=\(String(format: "%.1f", bgResumedAt - bgEnteredAt)) link=\(link) state=\(sessionManager?.state.rawValue ?? "nil")")
@@ -2571,7 +2573,10 @@ final class DeviceTestRunner {
         for l in bgLinkSamples { linkSeconds[l, default: 0] += 1 }
         let infraSeconds = linkSeconds["wifi", default: 0]
         let finalLink = bgLinkSamples.last ?? "none"
-        let flFails = frameLoopFailures - bgFLFailStart
+        // Refusals while the app was off screen (entering the background) cost a key round trip
+        // but show nothing; the gate counts those after resume.
+        let flFailsAway = bgFLFailAtResume - bgFLFailStart
+        let flFails = frameLoopFailures - bgFLFailAtResume
         let decodeFails = hevcDecodeFailures - bgDecodeFailStart
 
         var issues: [String] = []
@@ -2596,9 +2601,9 @@ final class DeviceTestRunner {
         if steadyRatio < Self.backgroundSteadyRatioGoal {
             issues.append("steady \(String(format: "%.1f", steadyFPS))fps = \(Int(steadyRatio * 100))% of pre \(String(format: "%.1f", preFPS))fps")
         }
-        if flFails > 0 { issues.append("decode refusals \(flFails) (FL IpadFail)") }
+        if flFails > 0 { issues.append("decode refusals after resume \(flFails) (FL IpadFail)") }
 
-        var detail = "state@home=\(bgStateBefore) away=\(String(format: "%.1f", resumed - entered))s link[before/final]=\(bgLinkBefore)/\(finalLink) linkSeconds=\(linkSeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")) firstFrame=\(firstFrameMs.map { "\(Int($0))ms" } ?? "none") (goal <=\(Int(Self.backgroundFirstFrameGoalMs))ms) recover90=\(recoverMs.map { "\(Int($0))ms" } ?? "never") (goal <=\(Int(Self.backgroundRecoverGoalMs))ms) fps[pre/steady]=\(String(format: "%.1f", preFPS))/\(String(format: "%.1f", steadyFPS)) (goal steady >=90% pre) worst1s=\(perSecond.min() ?? 0) maxGap=\(Int(maxGapMs))ms perSecond=\(perSecond.map(String.init).joined(separator: ",")) flFail=\(flFails) decodeFail=\(decodeFails) stateDrops=\(bgStateDrops)"
+        var detail = "state@home=\(bgStateBefore) away=\(String(format: "%.1f", resumed - entered))s link[before/final]=\(bgLinkBefore)/\(finalLink) linkSeconds=\(linkSeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")) firstFrame=\(firstFrameMs.map { "\(Int($0))ms" } ?? "none") (goal <=\(Int(Self.backgroundFirstFrameGoalMs))ms) recover90=\(recoverMs.map { "\(Int($0))ms" } ?? "never") (goal <=\(Int(Self.backgroundRecoverGoalMs))ms) fps[pre/steady]=\(String(format: "%.1f", preFPS))/\(String(format: "%.1f", steadyFPS)) (goal steady >=90% pre) worst1s=\(perSecond.min() ?? 0) maxGap=\(Int(maxGapMs))ms perSecond=\(perSecond.map(String.init).joined(separator: ",")) flFail[afterResume/whileAway]=\(flFails)/\(flFailsAway) decodeFail=\(decodeFails) stateDrops=\(bgStateDrops)"
         if !issues.isEmpty { detail += " [ISSUES: \(issues.joined(separator: ", "))]" }
         recordResult(name: "background-recovery", passed: issues.isEmpty, detail: detail)
         runSecurityTests()

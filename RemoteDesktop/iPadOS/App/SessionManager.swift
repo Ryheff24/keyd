@@ -307,7 +307,7 @@ final class SessionManager {
     /// Resume session after app returns to foreground.
     func resumeFromBackground() {
         Self.log.info("[SessionManager] resumeFromBackground() called, state=\(self.state.rawValue), isPaired=\(self.qrPairing.isPaired)")
-        print("[CONSOLE] resumeFromBackground: state=\(state.rawValue), usb=\(usbTransport.isConnected), wifi=\(wirelessTransport.isConnected)")
+        print("[CONSOLE] resumeFromBackground: state=\(state.rawValue), usb=\(usbTransport.isConnected), wifi=\(wirelessTransport.isConnected) tUs=\(keydrdHostTimeUs())")
         wirelessTransport.noteAppResumed()
 
         guard qrPairing.isPaired else {
@@ -1517,7 +1517,7 @@ final class SessionManager {
             flEnterAwaitLocked(reason: "handshake", nowUs: nowUs)
         }
         flLock.unlock()
-        print("[CONSOLE] FL IpadHs ep=\(epoch) link=\(link) accepted=\(accept ? 1 : 0) prevEp=\(prevEpoch) prevLink=\(prevLink?.description ?? "none")")
+        print("[CONSOLE] FL IpadHs ep=\(epoch) link=\(link) accepted=\(accept ? 1 : 0) prevEp=\(prevEpoch) prevLink=\(prevLink?.description ?? "none") tUs=\(keydrdHostTimeUs())")
         if accept { flStartKeyRetryTimer() }
         return accept
     }
@@ -1571,7 +1571,7 @@ final class SessionManager {
         flLock.unlock()
         if let c = cleared {
             let (reason, since, ep) = c
-            print("[CONSOLE] FL IpadKey seq=\(header.seq) hevc=\(header.isHEVC) ep=\(ep) reason=\(reason) waitMs=\((nowUs &- since) / 1000) gen=\(gen)")
+            print("[CONSOLE] FL IpadKey seq=\(header.seq) hevc=\(header.isHEVC) ep=\(ep) reason=\(reason) waitMs=\((nowUs &- since) / 1000) gen=\(gen) tUs=\(keydrdHostTimeUs())")
         }
         return gen
     }

@@ -55,6 +55,7 @@ def parse_ipad(path):
     links = []           # (approx iPad us, link)
     sizes = set()
     away = []            # (entered us, resumed us): the app was deliberately backgrounded
+    in_away = False      # file order: between an entered and its resumed line
     last_us = None
     for line in open(path, errors="replace"):
         m = FT_I.search(line)
@@ -77,8 +78,10 @@ def parse_ipad(path):
         if m:
             if m.group(1) == "entered":
                 away.append([int(m.group(2)), None])
+                in_away = True
             elif away and away[-1][1] is None:
                 away[-1][1] = int(m.group(2))
+                in_away = False
         m = TEST.search(line)
         if m and last_us is not None:
             phases.append((last_us, m.group(2)))
@@ -86,7 +89,7 @@ def parse_ipad(path):
         if m and last_us is not None:
             links.append((last_us, m.group(1)))
         if "[CONSOLE] FL IpadFail" in line:
-            fails.append((last_us, line.strip()[10:120]))
+            fails.append((last_us, line.strip()[10:120], in_away))
         if "FL IpadKey " in line:
             w = re.search(r"waitMs=(\d+)", line)
             r = re.search(r"reason=(\S+)", line)
@@ -255,10 +258,14 @@ def main():
     gate("never on infrastructure Wi-Fi", infra == 0,
          f"{sum(1 for l in per_link if l == 'wifi')} s on wifi, Mac peers {sorted(set(p for _, p in peers))}")
 
-    print(f"  decode refusals (FL IpadFail): {len(fails)}")
-    for us, txt in fails[:5]:
-        print(f"    s{int((us - t0) // 1_000_000) if us else '?'}: {txt}")
-    gate("no decode refusals", not fails, f"{len(fails)}")
+    # Refusals while the app was deliberately off screen (background-recovery) show nothing;
+    # they are listed but not gated. Everything else counts.
+    off = [f for f in fails if f[2]]
+    on = [f for f in fails if not f[2]]
+    print(f"  decode refusals (FL IpadFail): {len(on)} on screen, {len(off)} while backgrounded")
+    for us, txt, bg in fails[:5]:
+        print(f"    s{int((us - t0) // 1_000_000) if us else '?'}{' (backgrounded)' if bg else ''}: {txt}")
+    gate("no decode refusals", not on, f"{len(on)} on screen ({len(off)} while backgrounded, not gated)")
 
     if keys:
         print(f"  handshake/await -> first key ms: {[(w, r) for _, w, r in keys]}")

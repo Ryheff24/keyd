@@ -31,7 +31,8 @@
 #   --video-playback-offset-seconds N  Override playback freeze-check start offset
 #   --skip-transport-rotation     Skip reconnect/rotation checks after main stream tests
 #   --no-background-cycle         Skip the background-recovery phase (on by default for --profile full:
-#                                 RemoteDesktopAppUITests presses Home, waits, reactivates the app)
+#                                 devicectl brings Settings to the front, waits, reactivates the app;
+#                                 no UI automation, so no passcode prompt on the iPad)
 #   --background-seconds N        Time the app stays in the background in that phase (default 15)
 #   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
@@ -384,8 +385,8 @@ if [ "$BACKGROUND_CYCLE" = auto ]; then
   if [ "$PROFILE" = "full" ]; then BACKGROUND_CYCLE=true; else BACKGROUND_CYCLE=false; fi
 fi
 if [ "$BACKGROUND_CYCLE" = true ] && [ "$TIMEOUT_SPECIFIED" = false ]; then
-  # background-recovery: up to two UI-runner starts (~65 s each) + away + 30 s measured (iPad budget 210 s + away)
-  TIMEOUT=$((TIMEOUT + 210 + BACKGROUND_SECONDS))
+  # background-recovery: away + 30 s measured + slack (iPad budget 90 s + away)
+  TIMEOUT=$((TIMEOUT + 90 + BACKGROUND_SECONDS))
 fi
 
 if [ -z "$CAPTURE_FILE" ] && [ "$STRESS_CAPTURE" = false ] && [ "$REAL_CAPTURE" = false ]; then
@@ -418,18 +419,14 @@ IPAD_INSTALL_PID=""
 MAC_PID=""
 IPAD_PID=""
 MAC_LOG_PID=""
-UITEST_PID=""
-UITEST_LOG_FILE="/tmp/keyd-e2e-uitest.log"
-UITEST_BUILD_LOG="/tmp/keyd-e2e-uitest-build.log"
-UITEST_DERIVED_DATA="$DERIVED_DATA_ROOT/ipados-uitests"
-UITEST_SCHEME="RemoteDesktopAppUITests"
-UITEST_XCTESTRUN=""
+BGCYCLE_PID=""
+BGCYCLE_LOG_FILE="/tmp/keyd-e2e-bgcycle.log"
 
 cleanup() {
   echo ""
   echo "=== Cleaning up ==="
   # SIGTERM first, then SIGKILL after 2s if still alive
-  for pid in "$UITEST_PID" "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
+  for pid in "$BGCYCLE_PID" "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
     [ -n "$pid" ] && [ "$pid" != none ] && kill "$pid" 2>/dev/null || true
   done
   sleep 2
@@ -443,7 +440,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$UITEST_LOG_FILE" "$UITEST_LOG_FILE.attempt1" "$UITEST_BUILD_LOG" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -900,27 +897,17 @@ if [ "$MAC_BUILD_OK" != true ] || [ "$IPAD_BUILD_OK" != true ]; then
   exit 1
 fi
 
-# background-recovery: the UI-test runner that presses Home and reactivates the app. It has no
-# target app, so running it installs only the runner and attaches to the app already running.
-if [ "$BACKGROUND_CYCLE" = true ]; then
-  log_progress "[CONSOLE] e2e-uitest-build entry scheme=$UITEST_SCHEME derivedData=$UITEST_DERIVED_DATA"
-  if xcodebuild \
-      -workspace "$WORKSPACE" \
-      -scheme "$UITEST_SCHEME" \
-      -destination "id=$IPAD_DEVICE_ID" \
-      -configuration Release \
-      -derivedDataPath "$UITEST_DERIVED_DATA" \
-      build-for-testing > "$UITEST_BUILD_LOG" 2>&1; then
-    UITEST_XCTESTRUN=$(find "$UITEST_DERIVED_DATA/Build/Products" -maxdepth 1 -name "${UITEST_SCHEME}_*.xctestrun" 2>/dev/null | head -1)
-  fi
-  if [ -n "$UITEST_XCTESTRUN" ]; then
-    log_progress "[CONSOLE] e2e-uitest-build exit status=ok xctestrun=$UITEST_XCTESTRUN"
-  else
-    # The iPad still asks; with no runner it records background-recovery FAIL after its timeout.
-    log_progress "[CONSOLE] e2e-uitest-build exit status=failed log=$UITEST_BUILD_LOG"
-    tail -n 20 "$UITEST_BUILD_LOG" 2>/dev/null
-  fi
-fi
+# background-recovery: no UI automation (XCUITest needs the iPad passcode to enable automation
+# mode on each run). devicectl brings another app to the front, which backgrounds ours (same
+# process, suspended), then launches ours without --terminate-existing, which reactivates it.
+background_cycle() {
+  echo "[CONSOLE] e2e-bgcycle entry away=${BACKGROUND_SECONDS}s $(date '+%H:%M:%S.%3N')"
+  xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" com.apple.Preferences 2>&1 | tail -1
+  echo "[CONSOLE] e2e-bgcycle backgrounded $(date '+%H:%M:%S.%3N')"
+  sleep "$BACKGROUND_SECONDS"
+  xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" com.ryheff.keyd.remote.app 2>&1 | tail -1
+  echo "[CONSOLE] e2e-bgcycle reactivated $(date '+%H:%M:%S.%3N')"
+}
 
 start_async_index "run-e2e-tests.sh"
 
@@ -1273,39 +1260,15 @@ wait_and_parse_results() {
       continue
     fi
 
-    if [ "$BACKGROUND_CYCLE" = true ] && [ -z "$UITEST_PID" ] && \
+    if [ "$BACKGROUND_CYCLE" = true ] && [ -z "$BGCYCLE_PID" ] && \
        grep -q "\[TEST\] INFO: background-cycle request" "$IPAD_LOG_FILE" 2>/dev/null; then
-      if [ -n "$UITEST_XCTESTRUN" ]; then
-        log_progress "[CONSOLE] e2e-uitest entry elapsedSec=$ELAPSED test=BackgroundCycleUITests seconds=$BACKGROUND_SECONDS"
-        TEST_RUNNER_KEYD_BG_SECONDS="$BACKGROUND_SECONDS" xcodebuild test-without-building \
-          -xctestrun "$UITEST_XCTESTRUN" \
-          -destination "id=$IPAD_DEVICE_ID" \
-          -only-testing:RemoteDesktopAppUITests/BackgroundCycleUITests/testBackgroundCycle \
-          > "$UITEST_LOG_FILE" 2>&1 &
-        UITEST_PID=$!
-      else
-        UITEST_PID="none"
-        log_progress "[CONSOLE] e2e-uitest skipped reason=no-xctestrun (iPad will time out the phase)"
-      fi
+      log_progress "[CONSOLE] e2e-bgcycle start elapsedSec=$ELAPSED away=${BACKGROUND_SECONDS}s"
+      background_cycle > "$BGCYCLE_LOG_FILE" 2>&1 &
+      BGCYCLE_PID=$!
     fi
-    if [ -n "$UITEST_PID" ] && [ "$UITEST_PID" != none ] && [ "${UITEST_REPORTED:-false}" != true ] && \
-       ! kill -0 "$UITEST_PID" 2>/dev/null; then
-      log_progress "[CONSOLE] e2e-uitest exit attempt=${UITEST_ATTEMPT:-1} elapsedSec=$ELAPSED $(grep -E '\[UITEST\]|TEST (EXECUTE )?(SUCCEEDED|FAILED)|automation mode' "$UITEST_LOG_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
-      # The runner can time out "enabling automation mode" before it touches the app
-      # (2026-11-16 18:08): retry once if the app was never backgrounded.
-      if [ "${UITEST_ATTEMPT:-1}" = 1 ] && ! grep -q "\[UITEST\] background-cycle backgrounded" "$UITEST_LOG_FILE" 2>/dev/null; then
-        UITEST_ATTEMPT=2
-        cp "$UITEST_LOG_FILE" "$UITEST_LOG_FILE.attempt1" 2>/dev/null || true
-        log_progress "[CONSOLE] e2e-uitest retry attempt=2 elapsedSec=$ELAPSED reason=not-backgrounded"
-        TEST_RUNNER_KEYD_BG_SECONDS="$BACKGROUND_SECONDS" xcodebuild test-without-building \
-          -xctestrun "$UITEST_XCTESTRUN" \
-          -destination "id=$IPAD_DEVICE_ID" \
-          -only-testing:RemoteDesktopAppUITests/BackgroundCycleUITests/testBackgroundCycle \
-          > "$UITEST_LOG_FILE" 2>&1 &
-        UITEST_PID=$!
-      else
-        UITEST_REPORTED=true
-      fi
+    if [ -n "$BGCYCLE_PID" ] && [ "${BGCYCLE_REPORTED:-false}" != true ] && ! kill -0 "$BGCYCLE_PID" 2>/dev/null; then
+      BGCYCLE_REPORTED=true
+      log_progress "[CONSOLE] e2e-bgcycle exit elapsedSec=$ELAPSED $(tr '\n' ' ' < "$BGCYCLE_LOG_FILE" | cut -c1-400)"
     fi
 
     if [ $ELAPSED -ge "$TIMEOUT" ]; then

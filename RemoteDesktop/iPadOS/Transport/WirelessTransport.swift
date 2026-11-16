@@ -358,7 +358,7 @@ final class WirelessTransport {
         // 2026-11-16 01:22, three candidates reached the Mac). awdl0 reports type wifi, so
         // prohibiting every other type leaves AWDL (and infrastructure, prohibited by name).
         params.prohibitedInterfaceTypes = useAWDL ? [.wiredEthernet, .other, .cellular, .loopback] : nil
-        print("[CONSOLE] WirelessTransport: TCP params dial=\(useAWDL ? "awdl" : "infra") avoidAWDL=\(avoidAWDL) prohibited=\(prohibited.map { $0.name }) requiredInterface=\(String(describing: params.requiredInterfaceType))")
+        print("[CONSOLE] WirelessTransport: TCP params dial=\(useAWDL ? "awdl" : "infra") avoidAWDL=\(avoidAWDL) prohibited=\(prohibited.map { $0.name }) requiredInterface=\(String(describing: params.requiredInterfaceType)) tUs=\(keydrdHostTimeUs())")
         return params
     }
 
@@ -448,7 +448,7 @@ final class WirelessTransport {
             for change in changes {
                 switch change {
                 case .added(let result):
-                    print("[CONSOLE] Bonjour service FOUND: \(result.endpoint.debugDescription) interfaces=\(result.interfaces.map { "\($0.name)/\($0.type)" })")
+                    print("[CONSOLE] Bonjour service FOUND: \(result.endpoint.debugDescription) interfaces=\(result.interfaces.map { "\($0.name)/\($0.type)" }) tUs=\(keydrdHostTimeUs())")
                     self.log.info("Bonjour service found: \(result.endpoint.debugDescription)")
 
                     if !self.isConnected && self.connectedServiceName == nil {
@@ -618,7 +618,7 @@ final class WirelessTransport {
 
         let inputConn = NWConnection(to: endpoint, using: tcpParams)
         inputConnection = inputConn
-        print("[CONSOLE] LC IpadDial endpoint=\(endpoint.debugDescription)")
+        print("[CONSOLE] LC IpadDial endpoint=\(endpoint.debugDescription) tUs=\(keydrdHostTimeUs())")
         scheduleConnectWatchdog(for: inputConn)
 
         inputConn.stateUpdateHandler = { [weak self] state in
@@ -636,7 +636,7 @@ final class WirelessTransport {
                 self.connectWatchdogWorkItem = nil
                 self.cancelControlPathRecovery(reason: "tcp-ready")
                 print("[CONSOLE] WirelessTransport: TLS TCP connection READY")
-                print("[CONSOLE] LC IpadReady local=\(String(describing: inputConn.currentPath?.localEndpoint)) remote=\(String(describing: inputConn.currentPath?.remoteEndpoint))")
+                print("[CONSOLE] LC IpadReady local=\(String(describing: inputConn.currentPath?.localEndpoint)) remote=\(String(describing: inputConn.currentPath?.remoteEndpoint)) tUs=\(keydrdHostTimeUs())")
                 self.log.info("TLS wireless TCP connection ready")
 
                 // Determine if AWDL or Wi-Fi via connection path interface type
@@ -1193,7 +1193,7 @@ final class WirelessTransport {
         browserRestartAttempt += 1
         let cappedAttempt = min(browserRestartAttempt, 4)
         let delay = 0.25 * pow(2.0, Double(cappedAttempt - 1))
-        print("[CONSOLE] WirelessTransport: scheduling browser restart attempt=\(browserRestartAttempt) reason=\(reason) delay=\(String(format: "%.2f", delay))s connectedServiceName=\(connectedServiceName ?? "nil")")
+        print("[CONSOLE] WirelessTransport: scheduling browser restart attempt=\(browserRestartAttempt) reason=\(reason) delay=\(String(format: "%.2f", delay))s connectedServiceName=\(connectedServiceName ?? "nil") tUs=\(keydrdHostTimeUs())")
         log.info("Scheduling browser restart attempt=\(self.browserRestartAttempt) reason=\(reason)")
 
         transportQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -1210,7 +1210,7 @@ final class WirelessTransport {
                 print("[CONSOLE] WirelessTransport: browser restart aborted (\(reason)) isConnected=\(self.isConnected) inputActive=\(self.inputConnection != nil)")
                 return
             }
-            print("[CONSOLE] WirelessTransport: browser restart firing attempt=\(self.browserRestartAttempt) reason=\(reason)")
+            print("[CONSOLE] WirelessTransport: browser restart firing attempt=\(self.browserRestartAttempt) reason=\(reason) tUs=\(keydrdHostTimeUs())")
             self.startBrowsing()
         }
     }
@@ -1444,20 +1444,20 @@ final class WirelessTransport {
         transportQueue.async { [weak self] in
             guard let self = self else { return }
             guard self.suspendedAtUptimeNs != 0 else {
-                print("[CONSOLE] WirelessTransport: app-resumed no-suspension-recorded connected=\(self.isConnected)")
+                print("[CONSOLE] WirelessTransport: app-resumed no-suspension-recorded connected=\(self.isConnected) tUs=\(keydrdHostTimeUs())")
                 return
             }
             let awaySec = Double(DispatchTime.now().uptimeNanoseconds &- self.suspendedAtUptimeNs) / 1_000_000_000.0
             self.suspendedAtUptimeNs = 0
             let held = self.inputConnection != nil && self.isConnected
             if held && awaySec >= self.linkSilenceDeadline {
-                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=drop-and-redial (away past the \(Int(self.linkSilenceDeadline * 1000)) ms deadline) AWDL=\(self.isAWDL)")
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=drop-and-redial (away past the \(Int(self.linkSilenceDeadline * 1000)) ms deadline) AWDL=\(self.isAWDL) tUs=\(keydrdHostTimeUs())")
                 self.handleSilentLinkLoss(silentSec: awaySec, reason: "resume-after-suspension")
             } else if held {
                 self.lastControlRxUptimeNs = DispatchTime.now().uptimeNanoseconds
-                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=keep (silence clock restarted) AWDL=\(self.isAWDL)")
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=keep (silence clock restarted) AWDL=\(self.isAWDL) tUs=\(keydrdHostTimeUs())")
             } else {
-                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=0 connected=\(self.isConnected) nextDial=\(self.nextDialAWDL ? "awdl" : "infra")")
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=0 connected=\(self.isConnected) nextDial=\(self.nextDialAWDL ? "awdl" : "infra") tUs=\(keydrdHostTimeUs())")
             }
         }
     }
@@ -1465,7 +1465,7 @@ final class WirelessTransport {
     /// A connection that delivers no byte for linkSilenceDeadline is lost, whatever TCP thinks.
     private func handleSilentLinkLoss(silentSec: Double, reason: String = "link-silent") {
         let wasAWDL = isAWDL
-        print("[CONSOLE] WirelessTransport: link silent decision=lost reason=\(reason) silentMs=\(Int(silentSec * 1000)) deadlineMs=\(Int(linkSilenceDeadline * 1000)) AWDL=\(wasAWDL) heartbeatsSent=\(linkHeartbeatsSent) heartbeatsReceived=\(linkHeartbeatsReceived) action=drop-and-redial")
+        print("[CONSOLE] WirelessTransport: link silent decision=lost reason=\(reason) silentMs=\(Int(silentSec * 1000)) deadlineMs=\(Int(linkSilenceDeadline * 1000)) AWDL=\(wasAWDL) heartbeatsSent=\(linkHeartbeatsSent) heartbeatsReceived=\(linkHeartbeatsReceived) action=drop-and-redial tUs=\(keydrdHostTimeUs())")
         log.error("Wireless link silent for \(silentSec)s: dropping and redialling")
         stopLinkHeartbeat(reason: "silent")
         cancelControlPathRecovery(reason: "link-silent")
