@@ -122,6 +122,9 @@ while [[ $# -gt 0 ]]; do
       VIDEO_PLAYBACK_OFFSET_SECONDS="$2"; VIDEO_OFFSET_SPECIFIED=true; shift 2 ;;
     --skip-transport-rotation)
       SKIP_TRANSPORT_ROTATION=true; shift ;;
+    --no-peer-to-peer)
+      # Diagnostic: both apps stop including peer-to-peer (AWDL) interfaces.
+      NO_PEER_TO_PEER=true; shift ;;
     --full-suite)
       FULL_SUITE=true; shift ;;
     --wired-only)
@@ -948,6 +951,9 @@ if [ -n "$CAPTURE_FILE" ] && [ "$REAL_CAPTURE" = true ]; then
 fi
 
 MAC_LAUNCH_ARGS=(--test-mode --automation-mode)
+if [ "${NO_PEER_TO_PEER:-false}" = true ]; then
+  MAC_LAUNCH_ARGS+=(--no-peer-to-peer)
+fi
 if [ "$WIRED_ONLY" = true ]; then
   MAC_LAUNCH_ARGS+=(--wired-only)
 elif [ "$WIRELESS_ONLY" = true ]; then
@@ -1157,6 +1163,9 @@ if [ -n "$SUSTAINED_STREAM_SECONDS" ]; then
 fi
 if [ "$SKIP_TRANSPORT_ROTATION" = true ]; then
   IPAD_LAUNCH_ARGS+=(--skip-transport-rotation)
+fi
+if [ "${NO_PEER_TO_PEER:-false}" = true ]; then
+  IPAD_LAUNCH_ARGS+=(--no-peer-to-peer)
 fi
 if [ "$WIRED_ONLY" = true ]; then
   IPAD_LAUNCH_ARGS+=(--wired-only)

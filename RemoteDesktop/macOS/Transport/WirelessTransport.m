@@ -76,6 +76,18 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
 
 static char kWirelessTransportQueueKey;
 
+/* Diagnostic launch arg --no-peer-to-peer: leave AWDL out of the listeners, to tell AWDL
+ * off-channel time apart from Wi-Fi power save in latency spikes. Default on. */
+static bool wireless_include_peer_to_peer(void) {
+    static bool on = true;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        on = ![[NSProcessInfo processInfo].arguments containsObject:@"--no-peer-to-peer"];
+        os_log(wireless_log(), "includePeerToPeer=%{public}d", on);
+    });
+    return on;
+}
+
 @implementation WirelessTransport
 
 - (BOOL)mediaChannelReady {
@@ -307,7 +319,7 @@ static char kWirelessTransportQueueKey;
     nw_parameters_t tcpParams = [self createSecureTCPParameters];
 
     /* Enable peer-to-peer for AWDL support (RD-TRANS-03) */
-    nw_parameters_set_include_peer_to_peer(tcpParams, true);
+    nw_parameters_set_include_peer_to_peer(tcpParams, wireless_include_peer_to_peer());
     nw_parameters_set_reuse_local_address(tcpParams, true);
     nw_parameters_set_local_endpoint(tcpParams,
         nw_endpoint_create_host("::", kInputPortStr));
@@ -802,7 +814,7 @@ static char kWirelessTransportQueueKey;
     }
 
     nw_parameters_t udpParams = [self createSecureUDPParameters];
-    nw_parameters_set_include_peer_to_peer(udpParams, true);
+    nw_parameters_set_include_peer_to_peer(udpParams, wireless_include_peer_to_peer());
     nw_parameters_set_reuse_local_address(udpParams, true);
     nw_parameters_set_local_endpoint(udpParams,
         nw_endpoint_create_host("::", kMediaPortStr));

@@ -15,6 +15,14 @@ import os.log
 ///
 /// iPad is the CONNECTOR side -- it discovers and connects to the Mac.
 final class WirelessTransport {
+    /// Diagnostic launch arg `--no-peer-to-peer`: leave AWDL out of browse and connect,
+    /// to tell AWDL off-channel time apart from Wi-Fi power save in latency spikes.
+    static let includePeerToPeer: Bool = {
+        let on = !ProcessInfo.processInfo.arguments.contains("--no-peer-to-peer")
+        print("[CONSOLE] WirelessTransport: includePeerToPeer=\(on)")
+        return on
+    }()
+
 
     // MARK: - Properties
 
@@ -229,7 +237,7 @@ final class WirelessTransport {
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
-        params.includePeerToPeer = true
+        params.includePeerToPeer = WirelessTransport.includePeerToPeer
         return params
     }
 
@@ -257,7 +265,7 @@ final class WirelessTransport {
             }, DispatchQueue.global())
 
         let params = NWParameters(dtls: dtlsOptions, udp: .init())
-        params.includePeerToPeer = true
+        params.includePeerToPeer = WirelessTransport.includePeerToPeer
         return params
     }
 
@@ -276,7 +284,7 @@ final class WirelessTransport {
         log.info("Starting Bonjour browse for \(keydrdService) (TLS/DTLS enabled)")
 
         let params = NWParameters()
-        params.includePeerToPeer = true
+        params.includePeerToPeer = WirelessTransport.includePeerToPeer
 
         let descriptor = NWBrowser.Descriptor.bonjour(type: keydrdService, domain: nil)
         let newBrowser = NWBrowser(for: descriptor, using: params)
