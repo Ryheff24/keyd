@@ -63,8 +63,10 @@ static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps — reasonable WiFi
 /* AWDL target (WiFiRateControl T on AWDL). Run a470989 on AWDL: target 10 Mbps, actual ~7 Mbps
  * (16 KB/frame at 56 fps), visibly soft; big frames moved at p10 27 / p50 59 Mb/s. 20 Mbps keeps a
  * frame's air time (~12 ms at 27 Mb/s) under the 16.7 ms interval. Infrastructure keeps 10: its
- * 512 TU receive holds already cap it (ddfd000 at 20-30 Mbps fell to 29 fps). */
-static const int kAWDLHEVCBitrate = 20000000;
+ * 512 TU receive holds already cap it (ddfd000 at 20-30 Mbps fell to 29 fps).
+ * 2026-11-16 trial: 30 Mbps. Encode bench (prores test movie, busy part): worst-decile luma PSNR
+ * 37 dB at 20 Mbps vs 43 dB at 30; encode time unchanged; frame p99 238 -> 283 KB. */
+static const int kAWDLHEVCBitrate = 30000000;
 static const int kWirelessAdaptiveMinFPS = 30;
 static const int kWirelessAdaptiveMidFPS = 52;
 static const int kWirelessAdaptiveMaxFPS = 60;
