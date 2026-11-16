@@ -85,7 +85,7 @@ def parse_ipad(path):
         m = LINK_I.search(line)
         if m and last_us is not None:
             links.append((last_us, m.group(1)))
-        if "FL IpadFail" in line:
+        if "[CONSOLE] FL IpadFail" in line:
             fails.append((last_us, line.strip()[10:120]))
         if "FL IpadKey " in line:
             w = re.search(r"waitMs=(\d+)", line)

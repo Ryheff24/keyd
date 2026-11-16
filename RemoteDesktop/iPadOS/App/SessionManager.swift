@@ -308,6 +308,7 @@ final class SessionManager {
     func resumeFromBackground() {
         Self.log.info("[SessionManager] resumeFromBackground() called, state=\(self.state.rawValue), isPaired=\(self.qrPairing.isPaired)")
         print("[CONSOLE] resumeFromBackground: state=\(state.rawValue), usb=\(usbTransport.isConnected), wifi=\(wirelessTransport.isConnected)")
+        wirelessTransport.noteAppResumed()
 
         guard qrPairing.isPaired else {
             Self.log.info("[SessionManager] resumeFromBackground(): not paired, returning early")
@@ -356,6 +357,8 @@ final class SessionManager {
     /// Pause session when app goes to background.
     func pauseForBackground() {
         Self.log.info("App backgrounded -- pausing")
+        print("[CONSOLE] pauseForBackground: state=\(state.rawValue), usb=\(usbTransport.isConnected), wifi=\(wirelessTransport.isConnected)")
+        wirelessTransport.noteAppSuspended()
         udpReassembler.resetForNewStreamSession(reason: "app-background")
         fpsUpdateTimer?.invalidate()
         latencyProbeTimer?.invalidate()

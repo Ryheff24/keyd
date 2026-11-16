@@ -60,6 +60,31 @@
 (*   RedialOnLoss:  after any loss the iPad restarts discovery (new        *)
 (*                  browser, fresh results) and dials again.               *)
 (*                                                                         *)
+(*   CauseAware:    only evidence that AWDL is broken (silence, TCP       *)
+(*                  timeout, a dial that missed its watchdog) sets         *)
+(*                  avoidAwdl; the OS aborting the sockets of a suspended  *)
+(*                  app does not.                                          *)
+(*                                                                         *)
+(* OPEN (not in Design): ClimbsBack.  Nothing moves a session that is on   *)
+(*   infrastructure back to AWDL; Design fails ClimbsBack (TC-design-climb).*)
+(*   A make-before-break probe needs the Mac's listener up during a session *)
+(*   (Lifecycle cancels it at Ready), must cost a healthy infrastructure   *)
+(*   stream nothing when AWDL does not come up, and must not loop on an    *)
+(*   AWDL that completes TLS then goes silent (2026-11-15).                *)
+(*                                                                         *)
+(* As built 2026-11-16 (OneLink, AwdlFirst, ExactLabel, SilenceDetect,     *)
+(*   RedialOnLoss; ~CauseAware, no climb back): live session (scratchpad *)
+(*   live/keyd-run-ipad.log), E2E 68e521e and 6222ff7 (background-recovery *)
+(*   phase).  Backgrounding: iPadOS resets the connection (Mac: "Connection *)
+(*   reset by peer" within 1 s of Home); on resume the iPad sees the loss  *)
+(*   either as TCP FAILED "Software caused connection abort" (live) or as  *)
+(*   its silence deadline, whose clock ran while suspended (6222ff7:       *)
+(*   silentMs=15110), and both exits set avoidAWDL: "loss on awdl -> next  *)
+(*   dial infra".  Nothing ever dials AWDL again: the rest of the session  *)
+(*   runs on infrastructure (the 512 TU holds).  68e521e: the first AWDL   *)
+(*   dial missed the 3 s connect watchdog (dial=awdl -> next=infra) and    *)
+(*   182 of 230 s ran on en0.                                              *)
+(*                                                                         *)
 (* Test-mode switch (not part of Design):                                  *)
 (*   AwdlPin:       E2E diagnostic `--awdl-only`: a dial offers AWDL only. *)
 (*                  Run 251f328 showed the iPad's infrastructure receive   *)
@@ -83,6 +108,12 @@
 (*  W4 [I] Time: Tick advances the age of a silence by one heartbeat       *)
 (*         period; a side's timer fires no later than D ticks (Tick waits  *)
 (*         for an expired timer).                                          *)
+(*  W6 [O] Backgrounded, the app is suspended: it runs no step until it is *)
+(*         foregrounded, and iPadOS may abort its sockets meanwhile (the  *)
+(*         error shows on resume).  Whether the Mac sees the abort is [U]: *)
+(*         modelled as the Mac's side going silent.                       *)
+(*  W7 [O] A dial on a usable AWDL link can still miss the connect         *)
+(*         watchdog (68e521e), at most MaxStalls times (probes included).  *)
 (*  W5 [I] A dial to a usable link succeeds (TLS pin checks: SecureSession;*)
 (*         the Mac takes over a stale connection: WirelessTransport.m      *)
 (*         staleByIdle / allowReconnectTakeover).                          *)
@@ -94,7 +125,9 @@ CONSTANTS
     MaxFlaps,       \* link down/up events
     D,              \* silence deadline, in ticks
     MaxAge,         \* bound on a silence's age (as built it grows past D)
-    OneLink, AwdlFirst, ExactLabel, SilenceDetect, RedialOnLoss,
+    MaxBackgrounds, \* times the app is sent to the background
+    MaxStalls,      \* AWDL dials or probes that miss the connect watchdog
+    OneLink, AwdlFirst, ExactLabel, SilenceDetect, CauseAware, RedialOnLoss,
     AwdlPin         \* test mode only, see header
 
 Links == {"wifi", "awdl"}
@@ -112,12 +145,14 @@ VARIABLES
     age,         \* ticks since the connection went silent
     badPick,     \* history: a dial offered infrastructure while AWDL was usable and not avoided
     avoidAwdl,   \* the iPad's last loss was a connection on AWDL
-    silences, flaps
+    avoidWhy,    \* history: what set avoidAwdl ("none", "fault", "suspend")
+    suspended,   \* the app is in the background (W6)
+    silences, flaps, backgrounds, stalls
 
 vars == <<up, ipad, pending, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
-          age, badPick, avoidAwdl, silences, flaps>>
+          age, badPick, avoidAwdl, avoidWhy, suspended, silences, flaps, backgrounds, stalls>>
 
-Design == OneLink /\ AwdlFirst /\ ExactLabel /\ SilenceDetect /\ RedialOnLoss
+Design == OneLink /\ AwdlFirst /\ ExactLabel /\ SilenceDetect /\ CauseAware /\ RedialOnLoss
 
 TypeOK ==
     /\ up \in [Links -> BOOLEAN]
@@ -128,14 +163,19 @@ TypeOK ==
     /\ ipadLabel \in Links \cup {None} /\ macLabel \in Links \cup {None}
     /\ age \in 0..MaxAge
     /\ badPick \in BOOLEAN /\ avoidAwdl \in BOOLEAN
+    /\ avoidWhy \in {"none", "fault", "suspend"}
+    /\ suspended \in BOOLEAN
     /\ silences \in 0..MaxSilence /\ flaps \in 0..MaxFlaps
+    /\ backgrounds \in 0..MaxBackgrounds /\ stalls \in 0..MaxStalls
 
 Init ==
     /\ up \in [Links -> BOOLEAN]
     /\ ipad = "discovering" /\ pending = {}
     /\ link = None /\ live = FALSE /\ ipadHolds = FALSE /\ macHolds = FALSE
     /\ ipadLabel = None /\ macLabel = None
-    /\ age = 0 /\ badPick = FALSE /\ avoidAwdl = FALSE /\ silences = 0 /\ flaps = 0
+    /\ age = 0 /\ badPick = FALSE /\ avoidAwdl = FALSE /\ avoidWhy = "none"
+    /\ suspended = FALSE
+    /\ silences = 0 /\ flaps = 0 /\ backgrounds = 0 /\ stalls = 0
 
 Held == ipadHolds \/ macHolds
 
@@ -156,40 +196,44 @@ AfterLoss == IF RedialOnLoss THEN "discovering" ELSE "stuck"
 ------------------------------------------------------------------------------
 (* System *)
 
+Env6 == <<avoidWhy, suspended, backgrounds, stalls>>
+
 Dial ==
-    /\ ipad = "discovering" /\ Candidates # {}
+    /\ ~suspended /\ ipad = "discovering" /\ Candidates # {}
     /\ ipad' = "dialing" /\ pending' = Candidates
     /\ badPick' = (badPick \/ ("wifi" \in Candidates /\ up["awdl"] /\ ~avoidAwdl))
     /\ UNCHANGED <<up, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
-                   age, avoidAwdl, silences, flaps>>
+                   age, avoidAwdl, silences, flaps>> /\ UNCHANGED Env6
 
 \* Both sides settle on candidate l (W1); the Mac takes over any old connection (W5).
 Establish(l) ==
-    /\ ipad = "dialing" /\ l \in pending /\ up[l]
+    /\ ~suspended /\ ipad = "dialing" /\ l \in pending /\ up[l]
     /\ ipad' = "streaming" /\ pending' = {}
     /\ link' = l /\ live' = TRUE /\ ipadHolds' = TRUE /\ macHolds' = TRUE
     /\ ipadLabel' = LabelOf(l) /\ macLabel' = LabelOf(l)
     /\ age' = 0 /\ avoidAwdl' = FALSE
-    /\ UNCHANGED <<up, badPick, silences, flaps>>
+    /\ UNCHANGED <<up, badPick, silences, flaps>> /\ UNCHANGED Env6
 
 \* The connect watchdog gives up on a dial whose links all went down.
 DialFail ==
-    /\ ipad = "dialing" /\ \A l \in pending : ~up[l]
+    /\ ~suspended /\ ipad = "dialing" /\ \A l \in pending : ~up[l]
     /\ ipad' = "discovering" /\ pending' = {}
     /\ UNCHANGED <<up, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
-                   age, badPick, avoidAwdl, silences, flaps>>
+                   age, badPick, avoidAwdl, silences, flaps>> /\ UNCHANGED Env6
 
 IpadDetect ==
-    /\ SilenceDetect /\ ipadHolds /\ ~live /\ age >= D
+    /\ ~suspended /\ SilenceDetect /\ ipadHolds /\ ~live /\ age >= D
     /\ ipadHolds' = FALSE /\ ipadLabel' = None /\ ipad' = AfterLoss
     /\ avoidAwdl' = (link = "awdl")
+    /\ avoidWhy' = IF link = "awdl" THEN "fault" ELSE avoidWhy
     /\ UNCHANGED <<up, pending, link, live, macHolds, macLabel, age, badPick, silences, flaps>>
+    /\ UNCHANGED <<suspended, backgrounds, stalls>>
 
 MacDetect ==
     /\ SilenceDetect /\ macHolds /\ ~live /\ age >= D
     /\ macHolds' = FALSE /\ macLabel' = None
     /\ UNCHANGED <<up, ipad, pending, link, live, ipadHolds, ipadLabel, age, badPick, avoidAwdl,
-                   silences, flaps>>
+                   silences, flaps>> /\ UNCHANGED Env6
 
 \* One heartbeat period passes on a silent, held connection.  An expired
 \* detector fires before time moves on (W4).
@@ -198,7 +242,7 @@ Tick ==
     /\ ~(SilenceDetect /\ age >= D)
     /\ age' = age + 1
     /\ UNCHANGED <<up, ipad, pending, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
-                   badPick, avoidAwdl, silences, flaps>>
+                   badPick, avoidAwdl, silences, flaps>> /\ UNCHANGED Env6
 
 System == Dial \/ (\E l \in Links : Establish(l)) \/ DialFail \/ IpadDetect \/ MacDetect \/ Tick
 
@@ -209,7 +253,7 @@ GoSilent ==
     /\ Held /\ live /\ silences < MaxSilence
     /\ live' = FALSE /\ age' = 0 /\ silences' = silences + 1
     /\ UNCHANGED <<up, ipad, pending, link, ipadHolds, macHolds, ipadLabel, macLabel, badPick,
-                   avoidAwdl, flaps>>
+                   avoidAwdl, flaps>> /\ UNCHANGED Env6
 
 \* A link goes down: a connection on it stops carrying bytes, with no error.
 LinkDown(l) ==
@@ -218,13 +262,13 @@ LinkDown(l) ==
     /\ live' = (live /\ link # l)
     /\ age' = IF live /\ link = l THEN 0 ELSE age
     /\ UNCHANGED <<ipad, pending, link, ipadHolds, macHolds, ipadLabel, macLabel, badPick,
-                   avoidAwdl, silences>>
+                   avoidAwdl, silences>> /\ UNCHANGED Env6
 
 LinkUp(l) ==
     /\ ~up[l] /\ flaps < MaxFlaps
     /\ up' = [up EXCEPT ![l] = TRUE] /\ flaps' = flaps + 1
     /\ UNCHANGED <<ipad, pending, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
-                   age, badPick, avoidAwdl, silences>>
+                   age, badPick, avoidAwdl, silences>> /\ UNCHANGED Env6
 
 \* TCP's retransmission timeout ends the silent connection on both sides (W3).
 TcpTimeout ==
@@ -232,9 +276,47 @@ TcpTimeout ==
     /\ ipadHolds' = FALSE /\ macHolds' = FALSE /\ ipadLabel' = None /\ macLabel' = None
     /\ ipad' = IF ipadHolds THEN AfterLoss ELSE ipad
     /\ avoidAwdl' = IF ipadHolds THEN link = "awdl" ELSE avoidAwdl
+    /\ avoidWhy' = IF ipadHolds /\ link = "awdl" THEN "fault" ELSE avoidWhy
     /\ UNCHANGED <<up, pending, link, live, age, badPick, silences, flaps>>
+    /\ UNCHANGED <<suspended, backgrounds, stalls>>
+
+\* W6: the app goes to the background / comes back.
+Background ==
+    /\ ~suspended /\ backgrounds < MaxBackgrounds
+    /\ suspended' = TRUE /\ backgrounds' = backgrounds + 1
+    /\ UNCHANGED <<up, ipad, pending, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
+                   age, badPick, avoidAwdl, avoidWhy, silences, flaps, stalls>>
+
+Foreground ==
+    /\ suspended /\ suspended' = FALSE
+    /\ UNCHANGED <<up, ipad, pending, link, live, ipadHolds, macHolds, ipadLabel, macLabel,
+                   age, badPick, avoidAwdl, avoidWhy, silences, flaps, backgrounds, stalls>>
+
+\* W6: iPadOS resets the suspended app's connection; on resume the iPad takes it as a loss.  One
+\* step stands for both observed exits: TCP FAILED (connection abort) and the silence deadline,
+\* whose clock counted the suspended time.  As built the teardown sets avoidAwdl when the connection was on AWDL
+\* ("wasAWDL=true -> next dial infra"); CauseAware: an abort is not evidence about the link.
+SuspendAbort ==
+    /\ suspended /\ ipadHolds
+    /\ ipadHolds' = FALSE /\ ipadLabel' = None /\ ipad' = AfterLoss
+    /\ live' = FALSE /\ age' = 0
+    /\ avoidAwdl' = IF CauseAware THEN avoidAwdl ELSE link = "awdl"
+    /\ avoidWhy' = IF ~CauseAware /\ link = "awdl" THEN "suspend" ELSE avoidWhy
+    /\ UNCHANGED <<up, pending, link, macHolds, macLabel, badPick, silences, flaps>>
+    /\ UNCHANGED <<suspended, backgrounds, stalls>>
+
+\* W7: an AWDL dial on a usable link misses the connect watchdog: the next dial avoids AWDL.
+DialStall ==
+    /\ ~suspended /\ stalls < MaxStalls /\ up["awdl"]
+    /\ ipad = "dialing" /\ pending = {"awdl"}
+    /\ ipad' = "discovering" /\ pending' = {}
+    /\ avoidAwdl' = TRUE /\ avoidWhy' = "fault"
+    /\ stalls' = stalls + 1
+    /\ UNCHANGED <<up, link, live, ipadHolds, macHolds, ipadLabel, macLabel, age, badPick,
+                   silences, flaps, suspended, backgrounds>>
 
 Env == GoSilent \/ TcpTimeout \/ \E l \in Links : LinkDown(l) \/ LinkUp(l)
+       \/ Background \/ Foreground \/ SuspendAbort \/ DialStall
 
 Next == System \/ Env
 
@@ -261,20 +343,32 @@ LabelExact ==
 \* Neither side keeps a silent connection (and its "Connected" label) past D.
 DetectDeadline == (Held /\ ~live) => age <= D
 
-Inv == TypeOK /\ PreferAwdl /\ LabelExact /\ DetectDeadline
+\* CauseAware: the iPad avoids AWDL only after evidence the AWDL link is broken.
+AvoidOnFault == avoidAwdl => avoidWhy = "fault"
 
-\* Once the environment settles with some link usable, both sides stream on
-\* a live connection.
+Inv == TypeOK /\ PreferAwdl /\ LabelExact /\ DetectDeadline /\ AvoidOnFault
+
+\* Once the environment settles with some link usable and the app in the
+\* foreground, both sides stream on a live connection.
 Recovers ==
-    (<>[](up["wifi"] \/ up["awdl"])) => <>[](ipadHolds /\ macHolds /\ live)
+    (<>[](up["wifi"] \/ up["awdl"]) /\ <>[]~suspended) => <>[](ipadHolds /\ macHolds /\ live)
 
 \* Under the AwdlPin test mode: once AWDL stays usable, both sides stream.
 RecoversPinned ==
-    (<>[]up["awdl"]) => <>[](ipadHolds /\ macHolds /\ live)
+    (<>[]up["awdl"] /\ <>[]~suspended) => <>[](ipadHolds /\ macHolds /\ live)
+
+\* Cascade AWDL > infrastructure as an outcome: once AWDL stays usable and the
+\* app stays in the foreground, the session ends up streaming on AWDL, whatever
+\* sent it to infrastructure (an AWDL loss, a missed watchdog, a background).
+ClimbsBack ==
+    (<>[]up["awdl"] /\ <>[]~suspended) => <>[](ipadHolds /\ macHolds /\ live /\ link = "awdl")
 
 \* Witness: after losing an AWDL connection the iPad dials infrastructure
 \* although AWDL is still usable (the avoidAwdl fallback is reachable).
 NeverFallsBackFromAwdl == ~(avoidAwdl /\ ipad = "dialing" /\ pending = {"wifi"} /\ up["awdl"])
+
+\* Witness: the app is suspended and no longer holds its connection (SuspendAbort).
+NeverAbortedSuspended == ~(suspended /\ ~ipadHolds /\ macHolds)
 
 \* Witness: a connection does stream.
 NeverStreams == ~(ipadHolds /\ macHolds /\ live)

@@ -168,16 +168,21 @@ CONN_ROWS = TransportConnections:TransportConnections.cfg:pass \
 	TransportConnections:cfg/TC-ctl-silence.cfg:DetectDeadline \
 	TransportConnections:cfg/TC-ctl-redial.cfg:Temporal \
 	TransportConnections:cfg/TC-witness.cfg:NeverStreams \
-	TransportConnections:cfg/TC-witness-fallback.cfg:NeverFallsBackFromAwdl
+	TransportConnections:cfg/TC-witness-fallback.cfg:NeverFallsBackFromAwdl \
+	TransportConnections:cfg/TC-asbuilt-climb.cfg:Temporal \
+	TransportConnections:cfg/TC-asbuilt-cause.cfg:AvoidOnFault \
+	TransportConnections:cfg/TC-ctl-cause.cfg:AvoidOnFault \
+	TransportConnections:cfg/TC-design-climb.cfg:Temporal \
+	TransportConnections:cfg/TC-witness-abort.cfg:NeverAbortedSuspended
 
 conn: check-tools
 	$(call tlc_rows,$(CONN_ROWS))
 
 # TLAPS: PreferAwdl, LabelExact, DetectDeadline for any bounds. Controls: Design without one
 # switch must fail at exactly that mechanism's step: OneLink and AwdlFirst at Dial (<2>1), ExactLabel at
-# Establish (<2>2), SilenceDetect at Tick (<2>6).
+# Establish (<2>2), SilenceDetect at Tick (<2>6), CauseAware at SuspendAbort (<2>14).
 CONN_PROOF_CTLS = 'OneLink:SpecSafe.<1>2.<2>1:Dial' 'AwdlFirst:SpecSafe.<1>2.<2>1:Dial' 'ExactLabel:SpecSafe.<1>2.<2>2:Establish' \
-	'SilenceDetect:SpecSafe.<1>2.<2>6:Tick'
+	'SilenceDetect:SpecSafe.<1>2.<2>6:Tick' 'CauseAware:SpecSafe.<1>2.<2>14:SuspendAbort'
 
 conn-proofs:
 	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }

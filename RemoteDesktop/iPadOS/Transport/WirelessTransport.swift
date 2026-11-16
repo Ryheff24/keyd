@@ -170,6 +170,12 @@ final class WirelessTransport {
     private let linkSilenceDeadline: TimeInterval = 4.0
     private var avoidAWDL = false
     private var lastDialAWDL = false
+    //  CauseAware    -- (tla/TransportConnections.tla, W6) iPadOS resets a suspended app's connection
+    //                   (the Mac sees "Connection reset by peer" within 1 s of Home). A loss of a
+    //                   connection that spanned a suspension says nothing about the AWDL link, so it
+    //                   does not set avoidAWDL; the resume redial goes back to AWDL.
+    private var spannedSuspension = false
+    private var suspendedAtUptimeNs: UInt64 = 0
     private var nextDialAWDL: Bool {
         if WirelessTransport.pinAWDL { return true }
         return WirelessTransport.includePeerToPeer && !avoidAWDL
@@ -639,6 +645,7 @@ final class WirelessTransport {
                 self.isConnected = true
 
                 self.avoidAWDL = false
+                self.spannedSuspension = false
                 self.startLinkHeartbeat(for: inputConn)
                 print("[CONSOLE] WirelessTransport: AWDL=\(detectedAWDL), calling onConnectionChanged")
                 self.log.info("Wireless transport: AWDL=\(detectedAWDL)")
@@ -677,7 +684,11 @@ final class WirelessTransport {
                     self.connectedServiceName = nil
                     self.isConnected = false
                     // A loss on AWDL, or a failed AWDL dial, makes the next dial infrastructure.
-                    self.avoidAWDL = wasConnected ? wasAWDL : self.lastDialAWDL
+                    if wasConnected {
+                        self.setAvoidAfterLoss(wasAWDL: wasAWDL, site: "tcp-failed")
+                    } else {
+                        self.avoidAWDL = self.lastDialAWDL
+                    }
                     print("[CONSOLE] WirelessTransport: TCP FAILED teardown branch isConnected=\(self.isConnected), mediaActive=\(hasMediaPath), wasAWDL=\(wasAWDL) -> next dial \(self.nextDialAWDL ? "awdl" : "infra")")
                     self.onConnectionChanged?(false, wasAWDL)
                     self.scheduleBrowserRestart(reason: "tcp-failed")
@@ -1296,7 +1307,7 @@ final class WirelessTransport {
             self.tcpBufferReservedCapacity = 0
             self.cancelControlPathRecovery(reason: "control-recovery-timeout")
             self.stopLinkHeartbeat(reason: "control-recovery-timeout")
-            self.avoidAWDL = wasAWDL
+            self.setAvoidAfterLoss(wasAWDL: wasAWDL, site: "control-recovery-timeout")
             print("[CONSOLE] WirelessTransport: loss on \(wasAWDL ? "awdl" : "infra") -> next dial \(self.nextDialAWDL ? "awdl" : "infra")")
             self.onConnectionChanged?(false, wasAWDL)
             self.scheduleBrowserRestart(reason: "control-recovery-timeout")
@@ -1350,7 +1361,7 @@ final class WirelessTransport {
         tcpBufferReservedCapacity = 0
 
         stopLinkHeartbeat(reason: "media-path-loss")
-        avoidAWDL = wasAWDL
+        setAvoidAfterLoss(wasAWDL: wasAWDL, site: "media-path-loss")
         print("[CONSOLE] WirelessTransport: loss on \(wasAWDL ? "awdl" : "infra") -> next dial \(nextDialAWDL ? "awdl" : "infra")")
         print("[CONSOLE] WirelessTransport: media path loss decision=reconnect-triggered reason=\(reason) wasAWDL=\(wasAWDL) inputReady=\(inputReady)")
         log.error("Media path loss decision=reconnect-triggered reason=\(reason) inputReady=\(inputReady)")
@@ -1404,10 +1415,57 @@ final class WirelessTransport {
         }
     }
 
+    /// CauseAware: a loss on AWDL sets avoidAWDL only when it is evidence about the link, not when
+    /// the connection spanned a suspension (iPadOS resets it; tla/TransportConnections.tla W6).
+    private func setAvoidAfterLoss(wasAWDL: Bool, site: String) {
+        if spannedSuspension {
+            avoidAWDL = false
+            print("[CONSOLE] WirelessTransport: CauseAware loss site=\(site) wasAWDL=\(wasAWDL) spannedSuspension=1 -> not evidence, avoidAWDL=false")
+        } else {
+            avoidAWDL = wasAWDL
+            print("[CONSOLE] WirelessTransport: CauseAware loss site=\(site) wasAWDL=\(wasAWDL) spannedSuspension=0 -> avoidAWDL=\(wasAWDL)")
+        }
+    }
+
+    /// The app is going to the background (SessionManager.pauseForBackground).
+    func noteAppSuspended() {
+        transportQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.suspendedAtUptimeNs = DispatchTime.now().uptimeNanoseconds
+            self.spannedSuspension = (self.inputConnection != nil || self.isConnected)
+            print("[CONSOLE] WirelessTransport: app-suspended held=\(self.spannedSuspension ? 1 : 0) connected=\(self.isConnected) AWDL=\(self.isAWDL)")
+        }
+    }
+
+    /// The app is active again (SessionManager.resumeFromBackground). The silence clock ran while
+    /// suspended; the Mac's own deadline (linkSilenceDeadline) has dropped the connection if the
+    /// app was away longer, so drop it now and redial instead of waiting for a heartbeat tick.
+    func noteAppResumed() {
+        transportQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard self.suspendedAtUptimeNs != 0 else {
+                print("[CONSOLE] WirelessTransport: app-resumed no-suspension-recorded connected=\(self.isConnected)")
+                return
+            }
+            let awaySec = Double(DispatchTime.now().uptimeNanoseconds &- self.suspendedAtUptimeNs) / 1_000_000_000.0
+            self.suspendedAtUptimeNs = 0
+            let held = self.inputConnection != nil && self.isConnected
+            if held && awaySec >= self.linkSilenceDeadline {
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=drop-and-redial (away past the \(Int(self.linkSilenceDeadline * 1000)) ms deadline) AWDL=\(self.isAWDL)")
+                self.handleSilentLinkLoss(silentSec: awaySec, reason: "resume-after-suspension")
+            } else if held {
+                self.lastControlRxUptimeNs = DispatchTime.now().uptimeNanoseconds
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=keep (silence clock restarted) AWDL=\(self.isAWDL)")
+            } else {
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=0 connected=\(self.isConnected) nextDial=\(self.nextDialAWDL ? "awdl" : "infra")")
+            }
+        }
+    }
+
     /// A connection that delivers no byte for linkSilenceDeadline is lost, whatever TCP thinks.
-    private func handleSilentLinkLoss(silentSec: Double) {
+    private func handleSilentLinkLoss(silentSec: Double, reason: String = "link-silent") {
         let wasAWDL = isAWDL
-        print("[CONSOLE] WirelessTransport: link silent decision=lost silentMs=\(Int(silentSec * 1000)) deadlineMs=\(Int(linkSilenceDeadline * 1000)) AWDL=\(wasAWDL) heartbeatsSent=\(linkHeartbeatsSent) heartbeatsReceived=\(linkHeartbeatsReceived) action=drop-and-redial")
+        print("[CONSOLE] WirelessTransport: link silent decision=lost reason=\(reason) silentMs=\(Int(silentSec * 1000)) deadlineMs=\(Int(linkSilenceDeadline * 1000)) AWDL=\(wasAWDL) heartbeatsSent=\(linkHeartbeatsSent) heartbeatsReceived=\(linkHeartbeatsReceived) action=drop-and-redial")
         log.error("Wireless link silent for \(silentSec)s: dropping and redialling")
         stopLinkHeartbeat(reason: "silent")
         cancelControlPathRecovery(reason: "link-silent")
@@ -1422,13 +1480,13 @@ final class WirelessTransport {
         connectedServiceName = nil
         isConnected = false
         isAWDL = false
-        avoidAWDL = wasAWDL
+        setAvoidAfterLoss(wasAWDL: wasAWDL, site: reason)
         print("[CONSOLE] WirelessTransport: loss on \(wasAWDL ? "awdl" : "infra") -> next dial \(nextDialAWDL ? "awdl" : "infra")")
         tcpBuffer.removeAll()
         tcpBufferReadOffset = 0
         tcpBufferReservedCapacity = 0
         onConnectionChanged?(false, wasAWDL)
-        scheduleBrowserRestart(reason: "link-silent")
+        scheduleBrowserRestart(reason: reason)
     }
 
     deinit {
