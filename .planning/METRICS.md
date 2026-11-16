@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `45.2 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.333` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `36 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `171 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `59 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `55 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `187 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `77 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `52.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `31 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `84 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `49.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.158` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `32 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `150 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `52 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `53 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `166 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `70 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `57.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `29 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `53 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `84.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -167,3 +167,4 @@ Rules:
 | 2026-11-16 | 10:32:15 EST | `5e0007b` | `2752x1786` | `2496x1620` | `56.1 fps` | `0.587` | `33/71/39 ms` | `53/88/58 ms` | `58.7 fps, 29/46 ms` | `1` | `40/46` | AWDL target 30 Mbps (was 20) for sharpness; daytime, compare a25f021 |
 | 2026-11-16 | 14:27:20 EST | `d425995` | `2752x1786` | `2496x1620` | `55.7 fps` | `0.680` | `31/75/38 ms` | `52/89/57 ms` | `52.5 fps, 29/95 ms` | `1` | `39/45` | Lifecycle fix: iPad relaunch at 20s keeping pairing, LC trace check |
 | 2026-11-16 | 16:51:55 EST | `6e079b6` | `2752x1786` | `2496x1620` | `45.2 fps` | `1.333` | `36/171/59 ms` | `55/187/77 ms` | `52.0 fps, 31/84 ms` | `1` | `39/46` | FrameLoop design: epoch handshakes, KeyOnBreak gate, HsConn filter, KeyRetry, IdleKey, AwaitOnFail + FL trace |
+| 2026-11-16 | 16:57:24 EST | `20d1ea9` | `2752x1786` | `2496x1620` | `49.6 fps` | `1.158` | `32/150/52 ms` | `53/166/70 ms` | `57.3 fps, 29/53 ms` | `1` | `40/46` | FrameLoop design run 2: iPad await clock from handshake after reset (logging fix) |
