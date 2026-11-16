@@ -3453,7 +3453,9 @@ final class DeviceTestRunner {
                 let sc = kinds(ev, "scrollWheel")
                 let dy = sc.compactMap { $0["dy"] as? Double }.reduce(0, +)
                 let phases = sc.compactMap { $0["ph"] as? Int }
-                let ok = sc.count >= 6 && dy > 0 && phases.contains(1) && phases.contains(8)
+                // AppKit coalesces scroll events, so the count varies; the total does not.
+                // 6 sends of dy=10 (began + 5 changed) must arrive as sumDy 60, began through ended.
+                let ok = abs(dy - 60) < 1 && phases.contains(1) && phases.contains(8)
                 return (ok, "scrollEvents=\(sc.count) sumDy=\(String(format: "%.1f", dy)) phases=\(phases)")
             }),
             ("input-text", { s, done in

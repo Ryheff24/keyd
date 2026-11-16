@@ -63,6 +63,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     dispatch_block_t _Nullable _controlPathRecoveryWorkItem; // delayed control replacement evaluator
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
+    atomic_bool _mediaReady;               // SessionLanes FreshCheck: true only while the current media connection is ready
 }
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t bonjourListener;
@@ -74,6 +75,10 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
 @end
 
 @implementation WirelessTransport
+
+- (BOOL)mediaChannelReady {
+    return atomic_load(&_mediaReady);
+}
 
 - (instancetype)init {
     self = [super init];
@@ -816,6 +821,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
         if (self2->_mediaConnection) {
             nw_connection_cancel(self2->_mediaConnection);
         }
+        atomic_store(&self2->_mediaReady, false);
         self2->_mediaConnection = conn;
 
         nw_connection_set_queue(conn, self2->_transportQueue);
@@ -834,6 +840,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
                 if (self3) {
                     [self3 resetSendPacing];
                     [self3 scheduleMediaReceive:conn];
+                    atomic_store(&self3->_mediaReady, true);
                     if (self3.onMediaChannelReady) {
                         self3.onMediaChannelReady();
                     }
@@ -851,6 +858,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
                 os_log_error(wireless_log(), "DTLS wireless media connection failed: %{public}@",
                              cError ?: (nw_error_t)@"unknown");
                 if (self3) {
+                    atomic_store(&self3->_mediaReady, false);
                     self3->_mediaConnection = nil;
                     [self3 handleActiveMediaPathLossWithReason:"media-failed"
                                                          detail:cError ?: (nw_error_t)@"unknown"];
@@ -866,6 +874,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
                 }
                 os_log(wireless_log(), "DTLS wireless media connection cancelled");
                 if (self3) {
+                    atomic_store(&self3->_mediaReady, false);
                     self3->_mediaConnection = nil;
                     [self3 handleActiveMediaPathLossWithReason:"media-cancelled"
                                                          detail:(nw_error_t)@"dtls-state-cancelled"];
@@ -966,6 +975,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
             os_log_error(wireless_log(),
                          "DTLS media receive error on active connection: %{public}@",
                          error);
+            atomic_store(&self2->_mediaReady, false);
             self2->_mediaConnection = nil;
             [self2 handleActiveMediaPathLossWithReason:"media-receive-error" detail:error];
             return;
@@ -1131,6 +1141,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
                      elapsedNs / 1000000ULL,
                      hasMediaPath);
         nw_connection_t staleMedia = self2->_mediaConnection;
+        atomic_store(&self2->_mediaReady, false);
         self2->_mediaConnection = nil;
         if (staleMedia) {
             nw_connection_cancel(staleMedia);
@@ -1166,6 +1177,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     }
     if (_mediaConnection) {
         nw_connection_cancel(_mediaConnection);
+        atomic_store(&_mediaReady, false);
         _mediaConnection = nil;
     }
     if (_inputConnection) {

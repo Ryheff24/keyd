@@ -170,6 +170,23 @@ static void lane_report(const char *lane, const char *what, int type, uint64_t s
     }
 }
 
+/* tla/SessionLanes.tla RT set: messages handled inline on the transport queue. Each is
+ * O(1) and touches no session state: pointer/key go to the injector's own queue, probes
+ * and clock sync echo at once, keepalive is a no-op, test control drives the test window.
+ * Everything else is forwarded, in arrival order, to the session queue. */
+static BOOL session_lane_is_realtime(uint8_t type) {
+    if ([InputInjector isInputMessageType:type]) return YES;
+    switch (type) {
+        case KEYDRD_INPUT_LATENCY_PROBE:
+        case KEYDRD_INPUT_CLOCK_SYNC_REQ:
+        case KEYDRD_INPUT_KEEPALIVE:
+        case KEYDRD_INPUT_TEST_CONTROL:
+            return YES;
+        default:
+            return NO;
+    }
+}
+
 static void keydrd_limit_size(uint32_t sourceWidth, uint32_t sourceHeight,
                               uint32_t maxWidth, uint32_t maxHeight,
                               uint32_t *outWidth, uint32_t *outHeight) {
@@ -224,6 +241,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 @property (nonatomic, strong) InputInjector *inputInjector;
 /* Test mode only: agent-owned window that observes injected input (E2E). */
 @property (nonatomic, strong, nullable) InputTestHarness *inputTestHarness;
+/* tla/SessionLanes.tla: one serial session queue S owns the session FSM, handshake,
+ * encoder/capture start, viewport and mode change. Transport queues only route. */
+@property (nonatomic, strong) dispatch_queue_t sessionQueue;
+/* Owned by S. Set when a Wi-Fi session is up and capture waits for the media channel. */
+@property (nonatomic, assign) BOOL awaitingMedia;
 
 /* Compression state (pure C struct) */
 @property (nonatomic, assign) FrameCompressorState compressorState;
@@ -376,6 +398,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         _wirelessTransport = [[WirelessTransport alloc] init];
         _pairing = [[PairingManager alloc] init];
         _inputInjector = [[InputInjector alloc] init];
+        _sessionQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.session",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
         _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
         _wifiAdaptiveTargetBitrate = kWirelessHEVCBitrate;
         _wifiAdaptiveAppliedFPS = 0;
@@ -688,31 +712,41 @@ static const int32_t kUSBLZ4GateInFlight = 2;
      * The interface appears before any iPad connection arrives. The handshake
      * must wait until the TCP channel is ready (not just interface detected). */
     _usbTransport.onInputConnectionReady = ^{
-        SessionManager *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        if (strongSelf->_transportState != TRANSPORT_USB_NCM) {
-            [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
-        } else {
-            os_log(sLog, "USB NCM TCP input ready — sending handshake");
-            [strongSelf onTransportConnected];
-        }
+        SessionManager *outer = weakSelf;
+        if (!outer) return;
+        [outer onSession:"usb-input-ready" type:0 block:^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            if (strongSelf->_transportState != TRANSPORT_USB_NCM) {
+                [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
+            } else {
+                os_log(sLog, "USB NCM TCP input ready — sending handshake");
+                [strongSelf onTransportConnected];
+            }
+        }];
     };
 
     _usbTransport.onInputConnectionLost = ^{
-        SessionManager *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        [strongSelf handleTransportEvent:TRANSPORT_EVT_DISCONNECTED];
+        SessionManager *outer = weakSelf;
+        if (!outer) return;
+        [outer onSession:"usb-input-lost" type:0 block:^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf->_awaitingMedia = NO;
+            [strongSelf handleTransportEvent:TRANSPORT_EVT_DISCONNECTED];
+        }];
     };
 
     /* USB NCM interface monitoring */
     _usbTransport.onInterfaceChanged = ^(BOOL appeared, nw_interface_t _Nullable interface) {
-        SessionManager *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        if (appeared) {
-            [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
-        } else {
-            [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_DISAPPEARED];
-        }
+        SessionManager *outer = weakSelf;
+        if (!outer) return;
+        [outer onSession:appeared ? "usb-if-up" : "usb-if-down" type:0 block:^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            [strongSelf handleTransportEvent:appeared ? TRANSPORT_EVT_WIRED_APPEARED
+                                                      : TRANSPORT_EVT_WIRED_DISAPPEARED];
+        }];
     };
 
     /* InputPath ReleaseOnLoss: any input connection ending releases every held key/button. */
@@ -724,39 +758,41 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     _usbTransport.onInputReceived = ^(const void *data, size_t length) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return;
-        uint64_t t0 = keydrd_host_time_us();
-        [strongSelf handleReceivedInputEvent:data length:length];
-        lane_report("usb-T", "input", length ? ((const uint8_t *)data)[0] : 0, t0);
+        [strongSelf routeInputFromTransport:data length:length lane:"usb-T"];
     };
 
     /* Wireless connection monitoring */
     _wirelessTransport.onConnectionChanged = ^(BOOL connected, BOOL isAWDL) {
-        SessionManager *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        uint64_t t0 = keydrd_host_time_us();
-        if (connected) {
-            if (isAWDL) {
-                [strongSelf handleTransportEvent:TRANSPORT_EVT_AWDL_AVAILABLE];
+        SessionManager *outer = weakSelf;
+        if (!outer) return;
+        [outer onSession:connected ? "connection-up" : "connection-down" type:0 block:^{
+            SessionManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            if (connected) {
+                [strongSelf handleTransportEvent:isAWDL ? TRANSPORT_EVT_AWDL_AVAILABLE
+                                                        : TRANSPORT_EVT_WIFI_AVAILABLE];
             } else {
-                [strongSelf handleTransportEvent:TRANSPORT_EVT_WIFI_AVAILABLE];
+                strongSelf->_awaitingMedia = NO;
+                [strongSelf handleTransportEvent:isAWDL ? TRANSPORT_EVT_AWDL_UNAVAILABLE
+                                                        : TRANSPORT_EVT_WIFI_UNAVAILABLE];
             }
-        } else {
-            if (isAWDL) {
-                [strongSelf handleTransportEvent:TRANSPORT_EVT_AWDL_UNAVAILABLE];
-            } else {
-                [strongSelf handleTransportEvent:TRANSPORT_EVT_WIFI_UNAVAILABLE];
-            }
-        }
-        lane_report("wifi-T", connected ? "connection-up" : "connection-down", 0, t0);
+        }];
+    };
+
+    /* Registered once, never cleared. Forwards to S, where the fresh check decides. */
+    _wirelessTransport.onMediaChannelReady = ^{
+        SessionManager *outer = weakSelf;
+        if (!outer) return;
+        [outer onSession:"media-ready" type:0 block:^{
+            [weakSelf mediaChannelReadyOnSession];
+        }];
     };
 
     /* Wireless transport input receive callback */
     _wirelessTransport.onInputReceived = ^(const void *data, size_t length) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return;
-        uint64_t t0 = keydrd_host_time_us();
-        [strongSelf handleReceivedInputEvent:data length:length];
-        lane_report("wifi-T", "input", length ? ((const uint8_t *)data)[0] : 0, t0);
+        [strongSelf routeInputFromTransport:data length:length lane:"wifi-T"];
     };
 
     /* Start USB NCM first (primary transport).
@@ -795,6 +831,55 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         });
     } else {
         os_log(sLog, "Wired-only mode — WiFi/AWDL advertising disabled");
+    }
+}
+
+/* Run block on the session queue S, logging any wait or run of 2 ms or more. */
+- (void)onSession:(const char *)what type:(int)type block:(dispatch_block_t)block {
+    uint64_t enqUs = keydrd_host_time_us();
+    dispatch_async(_sessionQueue, ^{
+        lane_report("S-wait", what, type, enqUs);
+        uint64_t t0 = keydrd_host_time_us();
+        block();
+        lane_report("S", what, type, t0);
+    });
+}
+
+/* Called on a transport queue T for every framed message from the iPad. */
+- (void)routeInputFromTransport:(const void *)data length:(size_t)length lane:(const char *)lane {
+    if (length < sizeof(InputEventHeader)) return;
+    uint8_t type = ((const InputEventHeader *)data)->type;
+    uint64_t t0 = keydrd_host_time_us();
+    if (session_lane_is_realtime(type)) {
+        [self handleReceivedInputEvent:data length:length];
+        lane_report(lane, "input", type, t0);
+        return;
+    }
+    /* SilenceDeadline sees every message on T, not when S gets to it. */
+    [_inputInjector noteActivity];
+    /* The transport reuses its receive buffer after this returns: copy before the hop. */
+    NSData *copy = [NSData dataWithBytes:data length:length];
+    __weak SessionManager *weakSelf = self;
+    [self onSession:"input" type:type block:^{
+        SessionManager *s = weakSelf;
+        if (!s) return;
+        [s handleReceivedInputEvent:copy.bytes length:copy.length];
+    }];
+    lane_report(lane, "input-forward", type, t0);
+}
+
+/* On S. Forwarded media-ready: start capture only if this session still waits for it and
+ * the media channel is still ready now (SessionLanes Once + FreshCheck). */
+- (void)mediaChannelReadyOnSession {
+    BOOL ready = _wirelessTransport.mediaChannelReady;
+    BOOL wifi = _wirelessTransport.isConnected && !_usbTransport.isConnected;
+    if (_awaitingMedia && ready && wifi) {
+        _awaitingMedia = NO;
+        os_log(sLog, "Media channel ready -- starting capture now");
+        [self _beginCapture];
+    } else {
+        os_log(sLog, "Media channel ready ignored (awaitingMedia=%{public}d mediaReadyNow=%{public}d wifiOnly=%{public}d)",
+               _awaitingMedia, ready, wifi);
     }
 }
 
@@ -965,6 +1050,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
            _usbTransport.isConnected, _wirelessTransport.isConnected,
            _viewportReceived, _viewportWidth, _viewportHeight,
            _hevcEncoder.isActive);
+    _awaitingMedia = NO;
     _tcpMediaSendsInFlight = 0;
     _wifiTCPMediaSendsInFlight = 0;
     _wifiTCPLastCompletionUs = 0;
@@ -1001,16 +1087,13 @@ static const int32_t kUSBLZ4GateInFlight = 2;
      * HEVC frames are sent via UDP/DTLS — sending before the media
      * connection is established just drops frames silently. */
     if (_wirelessTransport.isConnected && !_usbTransport.isConnected) {
-        __weak SessionManager *weakSelf = self;
-        _wirelessTransport.onMediaChannelReady = ^{
-            SessionManager *strongSelf = weakSelf;
-            if (!strongSelf) return;
-            strongSelf->_wirelessTransport.onMediaChannelReady = nil; /* one-shot */
-            os_log(sLog, "DTLS media channel ready -- starting capture now");
-            uint64_t t0 = keydrd_host_time_us();
-            [strongSelf _beginCapture];
-            lane_report("wifi-T", "media-ready-capture", 0, t0);
-        };
+        if (_wirelessTransport.mediaChannelReady) {
+            os_log(sLog, "Media channel already ready -- starting capture now");
+            [self _beginCapture];
+        } else {
+            _awaitingMedia = YES;
+            os_log(sLog, "Capture deferred until media channel ready");
+        }
     } else if (_usbTransport.isConnected && !_hevcEncoder.isActive) {
         /* USB LZ4 mode: defer capture until viewport report arrives.
          * Starting now would capture at 3600x2338 (handshake res), then resize
@@ -3197,7 +3280,10 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         /* Check if transport is back */
         if (strongSelf.usbTransport.isConnected || strongSelf.wirelessTransport.isConnected) {
             os_log(sLog, "Transport reconnected on attempt %d", strongSelf.reconnectAttempt);
-            [strongSelf onTransportConnected];
+            [strongSelf onSession:"reconnect-timer" type:0 block:^{
+                SessionManager *s = weakSelf;
+                if (s && s.sessionState == SESSION_RECONNECTING) [s onTransportConnected];
+            }];
         } else {
             [strongSelf scheduleReconnect];
         }

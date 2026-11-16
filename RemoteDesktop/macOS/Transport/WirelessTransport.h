@@ -50,6 +50,11 @@ NS_ASSUME_NONNULL_BEGIN
  *  SessionManager should wait for this before starting capture. */
 @property (nonatomic, copy, nullable) void (^onMediaChannelReady)(void);
 
+/** True while the current media connection has reached ready and has not since failed,
+ *  been cancelled or been replaced. Safe to read from any queue (atomic). SessionManager
+ *  re-checks it on its session queue before starting capture (SessionLanes FreshCheck). */
+@property (nonatomic, readonly) BOOL mediaChannelReady;
+
 /** Callback fired when congestion feedback is received from the iPad.
  *  Parameters: lossRate (0.0-1.0), framesDelivered, framesLost. */
 @property (nonatomic, copy, nullable) void (^onCongestionStats)(float lossRate, int framesDelivered, int framesLost);
