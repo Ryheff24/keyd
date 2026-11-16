@@ -105,6 +105,13 @@ typedef void (^ScreenCaptureReauthCallback)(void);
  */
 - (void)updateCaptureResolution:(uint32_t)width height:(uint32_t)height;
 
+/*
+ * Make the next LZ4 frame a keyframe (tla/DeltaSync.tla KeyOnConnect): called when a USB
+ * connection (re)connects, since frames compressed before it never reach it in order.
+ * Runs on the compress queue, ahead of any later compress.
+ */
+- (void)requestLZ4Keyframe;
+
 @end
 
 NS_ASSUME_NONNULL_END

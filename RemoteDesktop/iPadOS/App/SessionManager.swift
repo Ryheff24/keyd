@@ -553,7 +553,7 @@ final class SessionManager {
         }
 
         wirelessTransport.onInputReceived = { [weak self] data in
-            self?.handleInputReceived(data)
+            self?.handleInputReceived(data, fromWireless: true)
         }
 
         // Start transports based on launch mode.
@@ -1096,7 +1096,9 @@ final class SessionManager {
 
     /// Handle input data received from Mac (handshakes, latency probes, control messages).
     /// Media frames primarily arrive via UDP chunks, but oversized frames fall back to TCP.
-    private func handleInputReceived(_ data: Data) {
+    private var wirelessLZ4Dropped = 0
+
+    private func handleInputReceived(_ data: Data, fromWireless: Bool = false) {
         // Check handshake FIRST — both handshake and media frame share KEYDRD_MAGIC,
         // but handshake has a more specific discriminator (magic + msgType at offset 2)
         if let handshake = SessionHandshakeMessage.parse(from: data) {
@@ -1111,6 +1113,15 @@ final class SessionManager {
         // sequencing path.
         if data.count >= MediaFrameHeader.size,
            let mediaHeader = MediaFrameHeader.parse(from: data) {
+            // tla/DeltaSync.tla DropOldLink: LZ4 frames are valid only on the USB connection.
+            // One that arrives over wireless was compressed before USB connected (seen
+            // 2026-11-16: the switch keyframe reached the iPad over AWDL after USB deltas and
+            // reset the reference to an older frame).
+            if fromWireless && !mediaHeader.isHEVC {
+                wirelessLZ4Dropped += 1
+                print("[CONSOLE] LZ4 over wireless dropped seq=\(mediaHeader.seq) key=\(mediaHeader.isKeyframe) bytes=\(data.count) total=\(wirelessLZ4Dropped)")
+                return
+            }
             FrameTimeline.shared.frameComplete(mediaHeader, bytes: data.count)
             if mediaHeader.isHEVC && mediaHeader.chunkTotal <= 1 &&
                 wirelessTransport.isConnected && !usbTransport.isConnected {

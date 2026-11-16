@@ -22,8 +22,16 @@
 (*     in-flight count can only fall between the gate check and the        *)
 (*     enqueue (completions only decrement).                               *)
 (*  T2 USB TCP is reliable and in order for one connection: a send that    *)
-(*     is enqueued reaches the iPad, in enqueue order. Connection loss and *)
-(*     reconnect start from a keyframe and are out of scope here.          *)
+(*     is enqueued reaches the iPad, in enqueue order.                     *)
+(*  T4 [O] 2026-11-16 01:23:20 (AWDL -> USB replug): a (re)connect breaks  *)
+(*     the stream.  Frames compressed before the USB connection was ready  *)
+(*     never reach the new connection in order: the switch's keyframe      *)
+(*     (seq 1803, 1.68 MB) went out on the wireless link and reached the   *)
+(*     iPad after USB deltas 1805-1814.  The first USB frame was a delta   *)
+(*     with no base (decode FAILED), and the picture stayed wrong until    *)
+(*     the periodic keyframe (seq 2400, 5.5 s later).  Modelled: Reconnect *)
+(*     moves the in-flight queue to `stale`, which may still reach the     *)
+(*     decoder at any later time, interleaved with new frames.             *)
 (*  T3 Frame content is abstracted to its capture index. Applying a delta  *)
 (*     to the wrong reference yields garbage (0 is never a valid frame     *)
 (*     after Init; garbage is -1) and garbage persists until a keyframe.   *)
@@ -33,7 +41,12 @@
 (*                      reference) while the in-flight queue is full.      *)
 (*  DropAfterCompress   as built: a compressed frame that finds the queue  *)
 (*                      full is dropped. FALSE = it is enqueued anyway.    *)
-(* Design: GateBeforeCompress = TRUE, DropAfterCompress = FALSE.           *)
+(*  KeyOnConnect        the first frame compressed after a (re)connect is  *)
+(*                      a keyframe (Mac).                                  *)
+(*  DropOldLink         the iPad decodes LZ4 frames only from the current  *)
+(*                      USB connection; stale ones are discarded.          *)
+(* Design: GateBeforeCompress, KeyOnConnect, DropOldLink = TRUE,           *)
+(* DropAfterCompress = FALSE.                                              *)
 (***************************************************************************)
 EXTENDS Integers, Sequences
 
@@ -42,16 +55,22 @@ CONSTANTS
     Cap,                  \* kMaxMediaSendsInFlightUSB
     KeyEvery,             \* keyframe when frame index mod KeyEvery = 0 (0 = never)
     GateBeforeCompress,
-    DropAfterCompress
+    DropAfterCompress,
+    MaxReconnects,        \* (re)connects in one behaviour
+    KeyOnConnect,
+    DropOldLink
 
 VARIABLES
     next,       \* next frame index the capture will deliver
     macRef,     \* frame the Mac's delta reference holds
     queue,      \* in-flight sends, FIFO: [key |-> BOOLEAN, base |-> Int, target |-> Int]
     ipadRef,    \* frame the iPad's reference holds (-1 = garbage)
-    corrupt     \* TRUE once the iPad has shown a frame that is not a captured frame
+    corrupt,    \* TRUE once the iPad has shown a frame that is not a captured frame
+    stale,      \* sends of earlier connections still on their way (any order w.r.t. new ones)
+    forceKey,   \* the Mac's next compressed frame is a keyframe
+    reconnects
 
-vars == <<next, macRef, queue, ipadRef, corrupt>>
+vars == <<next, macRef, queue, ipadRef, corrupt, stale, forceKey, reconnects>>
 
 Garbage == -1
 
@@ -60,6 +79,11 @@ TypeOK ==
     /\ macRef \in 0..MaxFrames
     /\ ipadRef \in 0..MaxFrames \cup {Garbage}
     /\ corrupt \in BOOLEAN
+    /\ forceKey \in BOOLEAN /\ reconnects \in 0..MaxReconnects
+    /\ \A i \in 1..Len(stale) :
+          /\ stale[i].key \in BOOLEAN
+          /\ stale[i].base \in 0..MaxFrames
+          /\ stale[i].target \in 1..MaxFrames
     /\ \A i \in 1..Len(queue) :
           /\ queue[i].key \in BOOLEAN
           /\ queue[i].base \in 0..MaxFrames
@@ -71,6 +95,7 @@ Init ==
     /\ queue = <<>>
     /\ ipadRef = 0
     /\ corrupt = FALSE
+    /\ stale = <<>> /\ forceKey = FALSE /\ reconnects = 0
 
 IsKey(n) == KeyEvery > 0 /\ n % KeyEvery = 0
 
@@ -80,32 +105,53 @@ SkipFrame ==
     /\ GateBeforeCompress
     /\ Len(queue) >= Cap
     /\ next' = next + 1
-    /\ UNCHANGED <<macRef, queue, ipadRef, corrupt>>
+    /\ UNCHANGED <<macRef, queue, ipadRef, corrupt, stale, forceKey, reconnects>>
 
 \* Compress frame `next` against macRef (or as a keyframe), advance the reference, offer it.
 Compress ==
     /\ next <= MaxFrames
     /\ ~(GateBeforeCompress /\ Len(queue) >= Cap)
-    /\ LET msg == [key |-> IsKey(next), base |-> macRef, target |-> next]
+    /\ LET msg == [key |-> IsKey(next) \/ forceKey, base |-> macRef, target |-> next]
        IN  IF Len(queue) < Cap \/ ~DropAfterCompress
            THEN queue' = Append(queue, msg)
            ELSE queue' = queue                 \* as built: dropped after compression
     /\ macRef' = next
     /\ next' = next + 1
-    /\ UNCHANGED <<ipadRef, corrupt>>
+    /\ forceKey' = FALSE
+    /\ UNCHANGED <<ipadRef, corrupt, stale, reconnects>>
+
+Decode(m) == IF m.key THEN m.target
+             ELSE IF ipadRef = m.base THEN m.target ELSE Garbage
 
 \* The iPad receives the head send (T2) and decodes it.
 Deliver ==
     /\ Len(queue) > 0
-    /\ LET m == Head(queue)
-           out == IF m.key THEN m.target
-                  ELSE IF ipadRef = m.base THEN m.target ELSE Garbage
+    /\ LET out == Decode(Head(queue))
        IN  /\ ipadRef' = out
            /\ corrupt' = (corrupt \/ out = Garbage)
     /\ queue' = Tail(queue)
-    /\ UNCHANGED <<next, macRef>>
+    /\ UNCHANGED <<next, macRef, stale, forceKey, reconnects>>
 
-Next == SkipFrame \/ Compress \/ Deliver
+\* The link changes (T4): what is in flight becomes stale; the Mac keeps its reference.
+Reconnect ==
+    /\ reconnects < MaxReconnects
+    /\ reconnects' = reconnects + 1
+    /\ stale' = stale \o queue /\ queue' = <<>>
+    /\ forceKey' = (forceKey \/ KeyOnConnect)
+    /\ UNCHANGED <<next, macRef, ipadRef, corrupt>>
+
+\* A send of an earlier connection reaches the iPad late (T4); with DropOldLink it is discarded.
+DeliverStale ==
+    /\ Len(stale) > 0
+    /\ LET out == Decode(Head(stale))
+       IN  IF DropOldLink
+           THEN UNCHANGED <<ipadRef, corrupt>>
+           ELSE /\ ipadRef' = out
+                /\ corrupt' = (corrupt \/ out = Garbage)
+    /\ stale' = Tail(stale)
+    /\ UNCHANGED <<next, macRef, queue, forceKey, reconnects>>
+
+Next == SkipFrame \/ Compress \/ Deliver \/ Reconnect \/ DeliverStale
 
 Spec == Init /\ [][Next]_vars
 
@@ -123,7 +169,8 @@ QueueBounded == Len(queue) <= Cap
 ChainFrom(r, q) ==
     \A i \in 1..Len(q) :
         q[i].key \/ q[i].base = (IF i = 1 THEN r ELSE q[i-1].target)
-QueueIsChain == ipadRef = Garbage \/ ChainFrom(ipadRef, queue)
+QueueIsChain == ipadRef = Garbage \/ forceKey \/ (queue # <<>> /\ Head(queue).key)
+                \/ ChainFrom(ipadRef, queue)
 
 \* Witness: frames do reach the iPad (a control config expects this "violated").
 NeverDelivered == ipadRef = 0

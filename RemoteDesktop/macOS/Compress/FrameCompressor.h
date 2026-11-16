@@ -42,6 +42,9 @@ typedef struct {
     uint8_t         *packed_buf;               /* pre-allocated stride-packing buffer (avoids malloc/frame) */
     size_t           frame_bytes;               /* raw frame size in bytes */
     size_t           last_keyframe_compressed;  /* compressed size of last keyframe */
+    int              force_keyframe;            /* next frame is a keyframe (tla/DeltaSync.tla
+                                                 * KeyOnConnect); set and cleared on the
+                                                 * compress queue */
     dispatch_queue_t compress_queue;            /* high-priority serial queue */
 
     /* Striped mode (stripe_count > 1, KEYDRD_FLAG_STRIPED, tla/StripeSync.tla). */

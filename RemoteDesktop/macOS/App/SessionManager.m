@@ -818,6 +818,9 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                 [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
             } else {
                 os_log(sLog, "USB NCM TCP input ready — sending handshake");
+                /* tla/DeltaSync.tla KeyOnConnect: frames compressed before this connection
+                 * (seen: the switch keyframe sent over AWDL) never reach it in order. */
+                [strongSelf->_capture requestLZ4Keyframe];
                 [strongSelf onTransportConnected];
             }
         }];

@@ -243,6 +243,15 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     }
 }
 
+- (void)requestLZ4Keyframe {
+    dispatch_queue_t q = _compressQueue;
+    if (!q) return;
+    dispatch_async(q, ^{
+        self->_compressor.force_keyframe = 1;
+        os_log(sc_log(), "LZ4 keyframe requested (initialized=%d)", self->_compressorInitialized);
+    });
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {

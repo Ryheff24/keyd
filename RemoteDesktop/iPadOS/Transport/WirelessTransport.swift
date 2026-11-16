@@ -324,6 +324,10 @@ final class WirelessTransport {
         params.includePeerToPeer = useAWDL
         let prohibited = useAWDL ? awdlDialProhibited() : []
         params.prohibitedInterfaces = useAWDL ? prohibited : nil
+        // OneLink: a peer-to-peer dial also races wired links (USB NCM en13, anri1: seen
+        // 2026-11-16 01:22, three candidates reached the Mac). awdl0 reports type wifi, so
+        // prohibiting every other type leaves AWDL (and infrastructure, prohibited by name).
+        params.prohibitedInterfaceTypes = useAWDL ? [.wiredEthernet, .other, .cellular, .loopback] : nil
         print("[CONSOLE] WirelessTransport: TCP params dial=\(useAWDL ? "awdl" : "infra") avoidAWDL=\(avoidAWDL) prohibited=\(prohibited.map { $0.name }) requiredInterface=\(String(describing: params.requiredInterfaceType))")
         return params
     }

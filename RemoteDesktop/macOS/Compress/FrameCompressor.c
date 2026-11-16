@@ -282,7 +282,12 @@ int compress_frame(FrameCompressorState *state,
 
     /* Determine keyframe vs delta */
     int is_keyframe = (state->seq == 0) ||
-                      (state->seq % state->keyframe_interval_frames == 0);
+                      (state->seq % state->keyframe_interval_frames == 0) ||
+                      state->force_keyframe;
+    if (state->force_keyframe) {
+        os_log(fc_log(), "LZ4 forced keyframe seq=%u (connect)", (unsigned)(state->seq & 0xFFFF));
+        state->force_keyframe = 0;
+    }
 
     int compressed = 0;
     uint8_t flags = 0;

@@ -363,7 +363,11 @@ DELTA_ROWS = DeltaSync:DeltaSync.cfg:pass \
 	DeltaSync:cfg/DS-asbuilt-chain.cfg:QueueIsChain \
 	DeltaSync:cfg/DS-ctl-no-gate.cfg:QueueBounded \
 	DeltaSync:cfg/DS-gate-and-drop.cfg:pass \
-	DeltaSync:cfg/DS-witness.cfg:NeverDelivered
+	DeltaSync:cfg/DS-witness.cfg:NeverDelivered \
+	DeltaSync:cfg/DS-reconnect.cfg:pass \
+	DeltaSync:cfg/DS-asbuilt-reconnect.cfg:NoCorruption \
+	DeltaSync:cfg/DS-ctl-key-on-connect.cfg:NoCorruption \
+	DeltaSync:cfg/DS-ctl-drop-old-link.cfg:NoCorruption
 
 delta: check-tools
 	$(call tlc_rows,$(DELTA_ROWS))
