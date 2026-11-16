@@ -21,7 +21,6 @@ static os_log_t wireless_log(void) {
 static const char *kMediaPortStr = "14567";
 static const char *kInputPortStr = "14568";
 static const uint64_t kDuplicateReplaceIdleThresholdNs = 2000000000ULL;
-static const uint64_t kPendingConnectionReplaceThresholdNs = 1500000000ULL;
 static const uint64_t kControlRecoveryPollIntervalNs = 750000000ULL;
 static const uint64_t kControlRecoveryHardDeadlineNs = 6000000000ULL;
 static const uint64_t kTransientMediaGapControlRecoveryGraceNs = 1500000000ULL;
@@ -62,7 +61,6 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     uint64_t _inputReadyAtTicks;          // when the current input connection reached ready
     uint64_t _lastInputActivityTicks;     // last time bytes were received on input connection
     uint64_t _controlPathRecoveryStartedAtTicks; // first observed active control-path loss tick
-    BOOL _allowReconnectTakeover;         // allow replacing lingering input socket after disconnect
     BOOL _advertisingRequested;           // true while caller expects Bonjour advertising to stay active
     dispatch_block_t _Nullable _controlPathRecoveryWorkItem; // delayed control replacement evaluator
     dispatch_source_t _Nullable _linkHeartbeatTimer;  // SilenceDetect heartbeat + deadline check
@@ -71,6 +69,13 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
     atomic_bool _mediaReady;               // SessionLanes FreshCheck: true only while the current media connection is ready
+    /* tla/Lifecycle.tla.  Every log line tagged "LC <Action>" names the model action it is. */
+    NSMutableArray *_pendingInputConnections; // AuthBeforeDisplace: accepted candidates, TLS not done
+    NSMutableArray *_pendingInputConnIds;     // their cids, same order
+    uint32_t _nextConnId;                     // cid of the next accepted candidate (logs only)
+    uint32_t _inputConnId;                    // cid of _inputConnection, 0 = none
+    atomic_uint _inputConnectionEpoch;        // RestartOnNewConn: bumps when a connection becomes current
+    atomic_bool _inputReady;                  // CountOnSend: the current input connection is ready
 }
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t bonjourListener;
@@ -101,6 +106,24 @@ static bool wireless_include_peer_to_peer(void) {
     return atomic_load(&_mediaReady);
 }
 
+- (uint32_t)inputConnectionEpoch {
+    return atomic_load(&_inputConnectionEpoch);
+}
+
+- (BOOL)hasReadyInputConnection {
+    return atomic_load(&_inputReady);
+}
+
+/* The current input connection is gone (any path): frames can no longer be queued on it. */
+- (void)clearCurrentInputConnectionWithReason:(const char *)reason {
+    if (_inputConnection || _inputConnId) {
+        os_log(wireless_log(), "LC MacCurrentCleared cid=%u reason=%{public}s", _inputConnId, reason);
+    }
+    atomic_store(&_inputReady, false);
+    _inputConnection = nil;
+    _inputConnId = 0;
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -122,6 +145,10 @@ static bool wireless_include_peer_to_peer(void) {
         _nextSendTime = 0;
         atomic_init(&_queuedMediaChunks, 0);
         atomic_init(&_sendGeneration, 1);
+        _pendingInputConnections = [NSMutableArray array];
+        _pendingInputConnIds = [NSMutableArray array];
+        atomic_init(&_inputConnectionEpoch, 0);
+        atomic_init(&_inputReady, false);
     }
     return self;
 }
@@ -429,9 +456,10 @@ static bool wireless_include_peer_to_peer(void) {
         dispatch_async(_transportQueue, ^{ [weakSelf beginReconnectWindow]; });
         return;
     }
-    _allowReconnectTakeover = YES;
+    /* tla/Lifecycle.tla AuthBeforeDisplace: no takeover window any more; a candidate replaces the
+     * current connection only at READY. Kept as a log point for callers. */
     os_log(wireless_log(),
-           "Reconnect window armed: allowReconnectTakeover=1 inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d",
+           "Reconnect window requested (no-op: candidates replace only after TLS) inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d",
            _inputConnection, _isConnected, _isAWDL);
 }
 
@@ -544,13 +572,13 @@ static bool wireless_include_peer_to_peer(void) {
     [self sendMediaFrameViaTCP:data length:len completion:nil];
 }
 
-- (void)sendMediaFrameViaTCP:(const void *)data
+- (BOOL)sendMediaFrameViaTCP:(const void *)data
                       length:(size_t)len
                   completion:(void (^ _Nullable)(BOOL success))completion {
     nw_connection_t conn = _inputConnection;
-    if (!conn) {
+    if (!conn || !atomic_load(&_inputReady)) {
         if (completion) completion(NO);
-        return;
+        return NO;
     }
 
     /* Copy the framed payload so nw_connection_send owns stable bytes until
@@ -561,7 +589,7 @@ static bool wireless_include_peer_to_peer(void) {
     uint8_t *framedBytes = malloc(framedLen);
     if (!framedBytes) {
         if (completion) completion(NO);
-        return;
+        return NO;
     }
 
     uint32_t netLen = htonl((uint32_t)len);
@@ -580,6 +608,7 @@ static bool wireless_include_peer_to_peer(void) {
             completion(YES);
         }
     });
+    return YES;
 }
 
 - (void)sendInputEvent:(const void *)data length:(size_t)len {
@@ -619,64 +648,38 @@ static bool wireless_include_peer_to_peer(void) {
 #pragma mark - Private: Connection Handling
 
 - (void)handleNewConnection:(nw_connection_t)connection {
+    uint32_t cid = ++_nextConnId;
     {
         nw_endpoint_t remote = nw_connection_copy_endpoint(connection);
         char *addr = (remote && nw_endpoint_get_type(remote) == nw_endpoint_type_address)
                          ? nw_endpoint_copy_address_string(remote) : NULL;
         uint16_t port = remote ? nw_endpoint_get_port(remote) : 0;
         /* PEER-ADDR: read by scratch ping probes to time-correlate Wi-Fi stalls. */
-        os_log(wireless_log(), "TLS wireless connection accepted from iPad PEER-ADDR=%{public}s port=%u",
-               addr ? addr : "unknown", port);
+        os_log(wireless_log(), "TLS wireless connection accepted from iPad PEER-ADDR=%{public}s port=%u cid=%u",
+               addr ? addr : "unknown", port, cid);
         free(addr);
     }
 
-    /* Ignore duplicate candidates while an existing session is still active.
-     * During reconnect/rotation, the old TCP socket can remain "connected" for
-     * a while after the iPad has moved on. Replace stale sockets once they have
-     * been idle long enough so reconnect can complete without waiting for TCP timeout. */
-    if (_inputConnection) {
-        uint64_t nowTicks = mach_absolute_time();
-        uint64_t idleNs = _lastInputActivityTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _lastInputActivityTicks) : 0;
-        uint64_t ageNs = _inputReadyAtTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _inputReadyAtTicks) : 0;
-        uint64_t pendingAgeNs = _inputAcceptedAtTicks > 0 ? keydrd_mach_delta_ns(nowTicks, _inputAcceptedAtTicks) : 0;
-        BOOL hasInputActivity = (_lastInputActivityTicks > 0);
-        BOOL staleByIdle = (_lastInputActivityTicks > 0) && (idleNs >= kDuplicateReplaceIdleThresholdNs);
-        BOOL staleByNoInput = (_lastInputActivityTicks == 0) &&
-                              (_inputReadyAtTicks > 0) &&
-                              (ageNs >= kDuplicateReplaceIdleThresholdNs);
-        BOOL stalePendingConnect = (!_isConnected) &&
-                                   (_inputReadyAtTicks == 0) &&
-                                   (_inputAcceptedAtTicks > 0) &&
-                                   (pendingAgeNs >= kPendingConnectionReplaceThresholdNs);
-        BOOL shouldReplace = _allowReconnectTakeover || staleByIdle || staleByNoInput || stalePendingConnect;
-
-        os_log(wireless_log(),
-               "Duplicate wireless candidate: existing inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d hasInputActivity=%{public}d idle=%.2fs age=%.2fs pendingAge=%.2fs allowReconnectTakeover=%{public}d staleByIdle=%{public}d staleByNoInput=%{public}d stalePendingConnect=%{public}d shouldReplace=%{public}d",
-               _inputConnection, _isConnected, _isAWDL,
-               hasInputActivity,
-               (double)idleNs / 1000000000.0, (double)ageNs / 1000000000.0, (double)pendingAgeNs / 1000000000.0,
-               _allowReconnectTakeover, staleByIdle, staleByNoInput, stalePendingConnect, shouldReplace);
-        if (shouldReplace) {
-            const char *reason = _allowReconnectTakeover ? "reconnect-window" :
-                (stalePendingConnect ? "pending-timeout" : (staleByIdle ? "idle-timeout" : "no-input-timeout"));
-            os_log(wireless_log(), "Replacing stale wireless input connection (%{public}s)", reason);
-            nw_connection_cancel(_inputConnection);
-            _inputConnection = nil;
-            _inputAcceptedAtTicks = 0;
-            _inputReadyAtTicks = 0;
-            _lastInputActivityTicks = 0;
-            _allowReconnectTakeover = NO;
-        } else {
-            os_log(wireless_log(), "Ignoring duplicate wireless candidate while an existing session is active");
-            nw_connection_cancel(connection);
-            return;
-        }
+    /* tla/Lifecycle.tla AuthBeforeDisplace. A new candidate never touches the current connection
+     * here: this runs before TLS, so the candidate may be anyone on the network (as built, an
+     * unauthenticated dial replaced the owner's connection inside the reconnect window or once it
+     * looked idle). It waits as pending and replaces the current connection only at READY, after
+     * the verify block has checked the pin. Pending candidates are capped; the oldest goes first. */
+    static const NSUInteger kMaxPendingInputConnections = 4;
+    if (_pendingInputConnections.count >= kMaxPendingInputConnections) {
+        nw_connection_t oldest = _pendingInputConnections.firstObject;
+        uint32_t oldestCid = [_pendingInputConnIds.firstObject unsignedIntValue];
+        [_pendingInputConnections removeObjectAtIndex:0];
+        [_pendingInputConnIds removeObjectAtIndex:0];
+        os_log(wireless_log(), "LC MacTlsFail cid=%u reason=pending-cap (cancelled before TLS)", oldestCid);
+        nw_connection_cancel(oldest);
     }
-    _inputConnection = connection;
-    _inputAcceptedAtTicks = mach_absolute_time();
+    [_pendingInputConnections addObject:connection];
+    [_pendingInputConnIds addObject:@(cid)];
     os_log(wireless_log(),
-           "Accepted wireless candidate as current input connection (inputConnection=%{public}p isConnected=%{public}d)",
-           _inputConnection, _isConnected);
+           "LC MacAccept cid=%u pending=%lu current=%u isConnected=%{public}d listener=%{public}d",
+           cid, (unsigned long)_pendingInputConnections.count, _inputConnId, _isConnected,
+           _bonjourListener != nil);
 
     nw_connection_set_queue(connection, _transportQueue);
 
@@ -687,15 +690,30 @@ static bool wireless_include_peer_to_peer(void) {
         WirelessTransport *self2 = weakSelf;
         if (!self2) return;
         BOOL isActiveConnection = (self2.inputConnection == connection);
+        NSUInteger pendingIndex = [self2->_pendingInputConnections indexOfObjectIdenticalTo:connection];
+        BOOL isPending = (pendingIndex != NSNotFound);
 
         switch (state) {
         case nw_connection_state_ready: {
-            if (!isActiveConnection) {
+            if (!isPending) {
                 os_log(wireless_log(),
-                       "Ignoring READY from stale wireless connection (activeInput=%{public}p staleConnection=%{public}p isConnected=%{public}d)",
-                       self2.inputConnection, connection, self2.isConnected);
+                       "LC MacStaleReady cid=%u current=%u (not pending: ignored)", cid, self2->_inputConnId);
                 break;
             }
+            /* Pin verified (TLS is done): this candidate becomes current and replaces the old one. */
+            [self2->_pendingInputConnections removeObjectAtIndex:pendingIndex];
+            [self2->_pendingInputConnIds removeObjectAtIndex:pendingIndex];
+            nw_connection_t replaced = self2->_inputConnection;
+            uint32_t replacedCid = self2->_inputConnId;
+            [self2 clearCurrentInputConnectionWithReason:"replaced-at-ready"];
+            if (replaced) {
+                [self2 stopLinkHeartbeatWithReason:"replaced"];
+                nw_connection_cancel(replaced);
+            }
+            self2->_inputConnection = connection;
+            self2->_inputConnId = cid;
+            self2->_inputAcceptedAtTicks = mach_absolute_time();
+            isActiveConnection = YES;
             /* Determine if connection is AWDL or Wi-Fi via interface type */
             nw_path_t path = nw_connection_copy_current_path(connection);
             BOOL detectedAWDL = NO;
@@ -721,11 +739,14 @@ static bool wireless_include_peer_to_peer(void) {
 
             self2.isAWDL = detectedAWDL;
             self2.isConnected = YES;
-            self2->_allowReconnectTakeover = NO;
             self2->_inputReadyAtTicks = mach_absolute_time();
             self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
             [self2 cancelControlPathRecoveryWithReason:"tcp-ready"];
+            atomic_store(&self2->_inputReady, true);
+            uint32_t epoch = atomic_fetch_add(&self2->_inputConnectionEpoch, 1) + 1;
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
+            os_log(wireless_log(), "LC MacReady cid=%u replaced=%u epoch=%u AWDL=%{public}d",
+                   cid, replacedCid, epoch, detectedAWDL);
             [self2 startLinkHeartbeatForConnection:connection];
 
             if (self2->_bonjourListener) {
@@ -753,8 +774,18 @@ static bool wireless_include_peer_to_peer(void) {
         }
         case nw_connection_state_failed:
         case nw_connection_state_cancelled:
+            if (isPending) {
+                /* Ended before READY: TLS failed (wrong pin, Outside) or the dial died. It never
+                 * carried input and was never current, so nothing else changes. */
+                [self2->_pendingInputConnections removeObjectAtIndex:pendingIndex];
+                [self2->_pendingInputConnIds removeObjectAtIndex:pendingIndex];
+                os_log(wireless_log(), "LC MacTlsFail cid=%u state=%{public}d error=%{public}@ current=%u",
+                       cid, (int)state, error ?: (nw_error_t)@"none", self2->_inputConnId);
+                break;
+            }
             if (self2.onInputStreamEnded) self2.onInputStreamEnded();
             if (!isActiveConnection) {
+                os_log(wireless_log(), "LC MacEnd cid=%u branch=stale current=%u", cid, self2->_inputConnId);
                 os_log(wireless_log(),
                        "Ignoring end-state from stale wireless connection (state=%{public}d error=%{public}@ activeInput=%{public}p staleConnection=%{public}p isConnected=%{public}d)",
                        (int)state,
@@ -772,7 +803,9 @@ static bool wireless_include_peer_to_peer(void) {
                 BOOL wasConnected = self2->_isConnected;
                 BOOL shouldDegradeAndRecover = hasMediaPath && wasConnected;
                 BOOL wasAWDL = self2->_isAWDL;
-                self2.inputConnection = nil;
+                os_log(wireless_log(), "LC MacEnd cid=%u branch=%{public}s",
+                       cid, shouldDegradeAndRecover ? "degraded" : "disconnect");
+                [self2 clearCurrentInputConnectionWithReason:"ended"];
                 self2->_inputAcceptedAtTicks = 0;
                 self2->_inputReadyAtTicks = 0;
                 self2->_lastInputActivityTicks = 0;
@@ -789,7 +822,6 @@ static bool wireless_include_peer_to_peer(void) {
                 }
 
                 self2.isConnected = NO;
-                self2->_allowReconnectTakeover = NO;
                 [self2 cancelControlPathRecoveryWithReason:"tcp-ended-no-media"];
                 if (!self2->_bonjourListener) {
                     os_log(wireless_log(),
@@ -1141,7 +1173,6 @@ static bool wireless_include_peer_to_peer(void) {
     if (_controlPathRecoveryStartedAtTicks == 0) {
         _controlPathRecoveryStartedAtTicks = mach_absolute_time();
     }
-    _allowReconnectTakeover = YES;
     if (_advertisingRequested && !_bonjourListener) {
         os_log(wireless_log(),
                "Control recovery: enabling Bonjour listener for control-path replacement discovery");
@@ -1199,7 +1230,6 @@ static bool wireless_include_peer_to_peer(void) {
         if (staleMedia) {
             nw_connection_cancel(staleMedia);
         }
-        self2->_allowReconnectTakeover = NO;
         self2->_inputAcceptedAtTicks = 0;
         self2->_inputReadyAtTicks = 0;
         self2->_lastInputActivityTicks = 0;
@@ -1285,9 +1315,9 @@ static bool wireless_include_peer_to_peer(void) {
     _mediaConnection = nil;
     if (staleMedia) nw_connection_cancel(staleMedia);
     nw_connection_t staleInput = _inputConnection;
-    _inputConnection = nil;
+    os_log(wireless_log(), "LC MacSilent cid=%u silentMs=%llu", _inputConnId, silentNs / 1000000ULL);
+    [self clearCurrentInputConnectionWithReason:"silent"];
     if (staleInput) nw_connection_cancel(staleInput);
-    _allowReconnectTakeover = NO;
     _inputAcceptedAtTicks = 0;
     _inputReadyAtTicks = 0;
     _lastInputActivityTicks = 0;
@@ -1318,9 +1348,13 @@ static bool wireless_include_peer_to_peer(void) {
     }
     if (_inputConnection) {
         nw_connection_cancel(_inputConnection);
-        _inputConnection = nil;
     }
-    _allowReconnectTakeover = NO;
+    [self clearCurrentInputConnectionWithReason:"teardown"];
+    for (nw_connection_t pending in _pendingInputConnections) {
+        nw_connection_cancel(pending);
+    }
+    [_pendingInputConnections removeAllObjects];
+    [_pendingInputConnIds removeAllObjects];
     _inputAcceptedAtTicks = 0;
     _inputReadyAtTicks = 0;
     _lastInputActivityTicks = 0;
@@ -1369,11 +1403,11 @@ static bool wireless_include_peer_to_peer(void) {
     }
 
     nw_connection_t staleInput = _inputConnection;
-    _inputConnection = nil;
+    os_log(wireless_log(), "LC MediaEnd branch=disconnect cid=%u reason=%{public}s", _inputConnId, reason);
+    [self clearCurrentInputConnectionWithReason:"media-path-loss"];
     if (staleInput) {
         nw_connection_cancel(staleInput);
     }
-    _allowReconnectTakeover = NO;
     _inputAcceptedAtTicks = 0;
     _inputReadyAtTicks = 0;
     _lastInputActivityTicks = 0;

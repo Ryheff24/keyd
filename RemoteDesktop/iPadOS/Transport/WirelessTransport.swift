@@ -569,6 +569,7 @@ final class WirelessTransport {
 
         let inputConn = NWConnection(to: endpoint, using: tcpParams)
         inputConnection = inputConn
+        print("[CONSOLE] LC IpadDial endpoint=\(endpoint.debugDescription)")
         scheduleConnectWatchdog(for: inputConn)
 
         inputConn.stateUpdateHandler = { [weak self] state in
@@ -586,6 +587,7 @@ final class WirelessTransport {
                 self.connectWatchdogWorkItem = nil
                 self.cancelControlPathRecovery(reason: "tcp-ready")
                 print("[CONSOLE] WirelessTransport: TLS TCP connection READY")
+                print("[CONSOLE] LC IpadReady local=\(String(describing: inputConn.currentPath?.localEndpoint)) remote=\(String(describing: inputConn.currentPath?.remoteEndpoint))")
                 self.log.info("TLS wireless TCP connection ready")
 
                 // Determine if AWDL or Wi-Fi via connection path interface type
@@ -616,6 +618,7 @@ final class WirelessTransport {
                 self.connectWatchdogWorkItem?.cancel()
                 self.connectWatchdogWorkItem = nil
                 print("[CONSOLE] WirelessTransport: TLS TCP connection FAILED: \(error)")
+                print("[CONSOLE] LC IpadLoss state=failed degraded=\(self.mediaConnection != nil && self.isConnected)")
                 self.log.error("TLS wireless TCP connection failed: \(error)")
                 self.inputConnection = nil
                 let hasMediaPath = (self.mediaConnection != nil)
@@ -648,6 +651,7 @@ final class WirelessTransport {
                 let wasAWDL = self.isAWDL
                 let wasConnected = self.isConnected
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED, clearing service latch (\(self.connectedServiceName ?? "nil"))")
+                print("[CONSOLE] LC IpadLoss state=cancelled degraded=\(self.mediaConnection != nil && wasConnected)")
                 self.inputConnection = nil
                 self.connectedServiceName = nil
                 let hasMediaPath = (self.mediaConnection != nil)

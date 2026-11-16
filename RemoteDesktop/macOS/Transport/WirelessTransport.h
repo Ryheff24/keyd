@@ -123,10 +123,19 @@ NS_ASSUME_NONNULL_BEGIN
  * Send a media frame over TCP (with 4-byte length prefix framing) and report
  * send completion. completion(success=YES) means Network.framework accepted
  * the payload; success=NO means send failed.
+ * Returns YES if the frame was queued on a ready current connection, NO if there was
+ * none (completion(NO) has then already run): tla/Lifecycle.tla CountOnSend.
  */
-- (void)sendMediaFrameViaTCP:(const void *)data
+- (BOOL)sendMediaFrameViaTCP:(const void *)data
                       length:(size_t)len
                   completion:(void (^ _Nullable)(BOOL success))completion;
+
+/** Bumps each time a new input connection becomes current (READY, TLS pin verified).
+ *  tla/Lifecycle.tla RestartOnNewConn: the session restarts on every new epoch. */
+@property (nonatomic, readonly) uint32_t inputConnectionEpoch;
+
+/** YES while the current input connection is ready (tla/Lifecycle.tla CountOnSend). */
+@property (nonatomic, readonly) BOOL hasReadyInputConnection;
 
 @end
 

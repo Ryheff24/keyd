@@ -128,6 +128,11 @@ while [[ $# -gt 0 ]]; do
     --awdl-only)
       # Diagnostic (tla/TransportConnections.tla AwdlPin): the iPad dials the Mac over AWDL only.
       AWDL_ONLY=true; shift ;;
+    --relaunch-ipad-after)
+      # tla/Lifecycle.tla takeover repro: SECONDS into the run, terminate and relaunch the iPad
+      # app with the same arguments (what the launch retry did in pid 98733). The tests then run
+      # on the new instance; the first instance's log is kept as IPAD_LOG.pre-relaunch.
+      RELAUNCH_IPAD_AFTER="$2"; shift 2 ;;
     --full-suite)
       FULL_SUITE=true; shift ;;
     --wired-only)
@@ -1204,6 +1209,23 @@ wait_and_parse_results() {
     NOW=$(date +%s)
     ELAPSED=$((NOW - START))
 
+    if [ -n "${RELAUNCH_IPAD_AFTER:-}" ] && [ "${IPAD_RELAUNCHED:-false}" != true ] && \
+       [ "$ELAPSED" -ge "$RELAUNCH_IPAD_AFTER" ]; then
+      IPAD_RELAUNCHED=true
+      log_progress "[CONSOLE] e2e-ipad-relaunch entry elapsedSec=$ELAPSED oldPid=$IPAD_PID (tla/Lifecycle.tla takeover repro)"
+      mv "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch"
+      # --keep-pairing: the new instance reconnects with its stored pairing (the Mac's pairing
+      # listener is closed by now, and a takeover is what this repro is for); a fresh test-mode
+      # launch would clear it and re-pair (connection refused, stuck awaitingPairing).
+      if ! launch_ipad_for_tests "${IPAD_LAUNCH_ARGS[@]}" --keep-pairing; then
+        log_progress "[CONSOLE] e2e-ipad-relaunch exit status=failed"
+        break
+      fi
+      log_progress "[CONSOLE] e2e-ipad-relaunch exit status=launched newPid=$IPAD_PID"
+      START=$(date +%s)
+      continue
+    fi
+
     if [ $ELAPSED -ge "$TIMEOUT" ]; then
       echo ""
       echo "TIMEOUT after ${TIMEOUT}s -- killing test"
@@ -1459,6 +1481,23 @@ set +e
 wait_and_parse_results ""
 RESULT=$?
 set -e
+
+# ---- Lifecycle trace validation (tla/Lifecycle.tla): every LC-tagged step must be one the
+# design allows, and no iPad instance may end stuck at connecting. Reported, and a divergence
+# fails the run. ----
+LIFECYCLE_IPAD_LOGS=()
+[ -f "$IPAD_LOG_FILE.pre-relaunch" ] && LIFECYCLE_IPAD_LOGS+=("$IPAD_LOG_FILE.pre-relaunch")
+LIFECYCLE_IPAD_LOGS+=("$IPAD_LOG_FILE")
+set +e
+python3 RemoteDesktop/scripts/lifecycle_trace.py "$MAC_LOG_FILE" "${LIFECYCLE_IPAD_LOGS[@]}" 2>&1 | tee -a "$LOG_FILE"
+LIFECYCLE_RESULT=${PIPESTATUS[0]}
+set -e
+if [ "$LIFECYCLE_RESULT" -ne 0 ]; then
+  log_progress "[CONSOLE] lifecycle-trace result=diverged"
+  RESULT=1
+else
+  log_progress "[CONSOLE] lifecycle-trace result=conforms"
+fi
 
 set +e
 run_reporting

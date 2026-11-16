@@ -443,6 +443,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 @implementation SessionManager {
     /* Wi-Fi ack gate (tla/WiFiSendLoop.tla AckGate), guarded by _wifiAckLock. */
     os_unfair_lock _wifiAckLock;
+    uint32_t _sessionWirelessEpoch;   // tla/Lifecycle.tla RestartOnNewConn: epoch the session was started on
     BOOL _wifiAckActive;          /* an ack arrived on this connection: gate on unacked frames */
     BOOL _wifiAckHasSent;
     uint16_t _wifiAckLastSentSeq;
@@ -1041,6 +1042,10 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         if (_wirelessTransport.isConnected) {
             BOOL awdl = _wirelessTransport.isAWDL;
             os_log(sLog, "Immediate wireless fallback — wireless still connected (AWDL=%d), switching directly", awdl);
+            /* The session continues on the wireless connection that is already current (Lifecycle
+             * v1 covers wireless only; USB fallback is version 2): adopt its epoch so it is not
+             * mistaken for a new connection. */
+            _sessionWirelessEpoch = _wirelessTransport.inputConnectionEpoch;
             [self handleTransportEvent:awdl ? TRANSPORT_EVT_AWDL_AVAILABLE : TRANSPORT_EVT_WIFI_AVAILABLE];
             return;
         }
@@ -1051,7 +1056,17 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         }
         [self startReconnection];
     } else if (_transportState != TRANSPORT_IDLE && _transportState != TRANSPORT_DISCONNECTED) {
-        if (_sessionState == SESSION_CONNECTING || _sessionState == SESSION_RECONNECTING) {
+        uint32_t wirelessEpoch = _wirelessTransport.inputConnectionEpoch;
+        if (_sessionState == SESSION_STREAMING &&
+            (_transportState == TRANSPORT_WIFI || _transportState == TRANSPORT_AWDL) &&
+            _wirelessTransport.isConnected && wirelessEpoch != _sessionWirelessEpoch) {
+            /* tla/Lifecycle.tla RestartOnNewConn: a new wireless connection became current while
+             * STREAMING (iPad relaunched, or replaced its connection). As built this branch was
+             * skipped: no handshake reached the new connection and the ack gate kept counting the
+             * old one, so the iPad sat in connecting (pid 98733). Restart the session on it. */
+            os_log(sLog, "LC Restart reason=new-connection epoch=%u sessionEpoch=%u", wirelessEpoch, _sessionWirelessEpoch);
+            [self onTransportConnected];
+        } else if (_sessionState == SESSION_CONNECTING || _sessionState == SESSION_RECONNECTING) {
             /* Only fire onTransportConnected if a transport actually has an active TCP connection.
              * USB NCM detects the interface before iPad connects — the handshake must wait
              * for onInputConnectionReady. WiFi fires onConnectionChanged only after TCP is ready. */
@@ -1191,6 +1206,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     _wifiTCPSchedulerWindowSendCount = 0;
     _wifiTCPSendGeneration += 1;
     [self wifiAckResetWithReason:"transport-connected"];
+    _sessionWirelessEpoch = _wirelessTransport.inputConnectionEpoch;
+    os_log(sLog, "LC Restart session=%u (handshake, gate reset, encoder restart)", _sessionWirelessEpoch);
     _wirelessLastEncodeSubmitUs = 0;
     [self resetWiFiAdaptiveControlState];
     [self stopWirelessPerformanceTimer];
@@ -1472,6 +1489,17 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                     /* No stall reset (tla/WiFiSendLoop.tla NoBlindReset): the count falls only when
                      * frames leave. With acks the gate counts frames the iPad has not received
                      * (AckGate); before the first ack, the kernel in-flight count. */
+                    /* tla/Lifecycle.tla CountOnSend: encode only while a ready current connection
+                     * exists (degraded control path or a candidate not yet READY): a frame that
+                     * cannot be queued must never enter the gate count. */
+                    if (!strongSelf->_wirelessTransport.hasReadyInputConnection) {
+                        static int lcNoControlHolds = 0;
+                        lcNoControlHolds++;
+                        if (lcNoControlHolds <= 5 || lcNoControlHolds % 100 == 0) {
+                            os_log(sLog, "LC MacEncodeHold reason=no-ready-connection count=%d", lcNoControlHolds);
+                        }
+                        return;
+                    }
                     int32_t ackUnacked = [strongSelf wifiAckUnackedFrames];
                     BOOL gateClosed = ackUnacked >= 0 ? (ackUnacked >= kWiFiAckGateFrames)
                                                       : (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi);
@@ -1889,7 +1917,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             __weak SessionManager *weakSelf = self;
             ftRec.inFlight = inFlight;
             ftRec.submitUs = keydrd_host_time_us();
-            [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
+            BOOL submitted = [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
                 uint64_t doneUs = keydrd_host_time_us();
                 FTMacRecord ftDone = ftRec;
                 ftDone.doneUs = doneUs;
@@ -1956,6 +1984,12 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                     OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSendDrops);
                 }
             }];
+            if (!submitted) {
+                /* tla/Lifecycle.tla CountOnSend: the current connection went away between the
+                 * pre-encode check and here, so nothing was queued: take the frame back out of
+                 * the gate count (as built it stayed counted and the gate shut for good). */
+                [self wifiAckUnnoteSentSeq:(uint16_t)seq];
+            }
             return;
         }
 
@@ -2615,6 +2649,18 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         os_log(sLog, "WiFi ack gate seq discontinuity: prevSent=%u seq=%u active=%d -> counting from seq",
                prevSent, seq, active);
     }
+}
+
+- (void)wifiAckUnnoteSentSeq:(uint16_t)seq {
+    os_unfair_lock_lock(&_wifiAckLock);
+    BOOL undone = _wifiAckHasSent && _wifiAckLastSentSeq == seq;
+    if (undone) {
+        _wifiAckLastSentSeq = (uint16_t)(seq - 1);
+    }
+    int32_t unacked = _wifiAckHasSent ? (int32_t)(uint16_t)(_wifiAckLastSentSeq - _wifiAckLastAckedSeq) : 0;
+    os_unfair_lock_unlock(&_wifiAckLock);
+    os_log(sLog, "LC MacEncodeUnsent seq=%u uncounted=%{public}d unacked=%d (no ready connection at send)",
+           seq, undone, unacked);
 }
 
 - (void)handleWiFiFrameAck:(const uint8_t *)data length:(size_t)length {

@@ -190,8 +190,19 @@ final class SessionManager {
             self?.resetPairingAndShowQR()
         }
 
+        // Test mode relaunch (run-e2e-tests.sh --relaunch-ipad-after): keep the stored pairing
+        // and reconnect like a real relaunch (tla/Lifecycle.tla Relaunch); the Mac's pairing
+        // listener is closed by then. Pairing tests are recorded SKIPPED, the runner's convention.
+        let keepPairing = ProcessInfo.processInfo.arguments.contains("--keep-pairing")
+        if isTestMode && keepPairing {
+            print("[CONSOLE] start(): TEST MODE --keep-pairing isPaired=\(qrPairing.isPaired) pairedHost=\(qrPairing.pairedHost ?? "nil")")
+            testRunner?.runAllTests()
+            testRunner?.reportTLSConnection(success: true, detail: "SKIPPED — --keep-pairing (relaunch reuses stored pairing)")
+            testRunner?.reportECDHExchange(success: true, detail: "SKIPPED — --keep-pairing (relaunch reuses stored pairing)")
+        }
+
         // Test mode: always fresh pair (Mac resets pairing in test mode too)
-        if isTestMode {
+        if isTestMode && !keepPairing {
             qrPairing.resetPairing()
             print("[CONSOLE] start(): TEST MODE -- cleared pairing, starting auto-pair via Bonjour")
             testRunner?.runAllTests()
@@ -825,6 +836,7 @@ final class SessionManager {
 
             // Transition to streaming on first frame
             if state == .connecting || state == .reconnecting {
+                print("[CONSOLE] LC IpadFrame from=\(state.rawValue) -> streaming (frame before handshake)")
                 DispatchQueue.main.async {
                     self.state = .streaming
                     self.reconnectAttempt = 0
@@ -930,6 +942,7 @@ final class SessionManager {
 
         // Transition to streaming on first frame
         if state == .connecting || state == .reconnecting {
+            print("[CONSOLE] LC IpadFrame from=\(state.rawValue) -> streaming (frame before handshake, HEVC/TCP)")
             DispatchQueue.main.async {
                 self.state = .streaming
                 self.reconnectAttempt = 0
@@ -1067,6 +1080,7 @@ final class SessionManager {
         // Start FPS update timer
         startFPSUpdateTimer()
 
+        print("[CONSOLE] LC IpadHandshake from=\(state.rawValue) -> streaming")
         state = .streaming
         DispatchQueue.main.async {
             print("[CONSOLE] Session handshake complete; forcing HUD visible")

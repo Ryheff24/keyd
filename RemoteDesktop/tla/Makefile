@@ -23,9 +23,58 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs life life-proofs
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs life life-proofs
+
+# Lifecycle (2026-11-16, PLAN step 6, connection and session layer, wireless): a relaunched
+# iPad stuck at connecting for 2 min 40 s (pid 98733). The transport models assumed one
+# connection per channel with no identity and no relaunch; here connections have ids, the iPad
+# relaunches and an Outside party dials. As built the new connection is taken while the session
+# stays STREAMING (no handshake, gate not reset, frames counted that never left), and an Outside
+# dial displaces the owner before TLS. Design: restart on every new current connection, count
+# only queued frames, displace only after the pin check.
+LIFE_ROWS = Lifecycle:Lifecycle.cfg:pass \
+	Lifecycle:cfg/LC-design-big.cfg:pass \
+	Lifecycle:cfg/LC-asbuilt.cfg:RestGood \
+	Lifecycle:cfg/LC-asbuilt-observed.cfg:NotObservedHang \
+	Lifecycle:cfg/LC-asbuilt-attack.cfg:OnlyOwnerDisplaces \
+	Lifecycle:cfg/LC-asbuilt-nohs.cfg:HandshakeBeforeFrames \
+	Lifecycle:cfg/LC-ctl-restart.cfg:SessionOnCurrent \
+	Lifecycle:cfg/LC-ctl-count.cfg:CountsOnlySent \
+	Lifecycle:cfg/LC-ctl-auth.cfg:OnlyOwnerDisplaces \
+	Lifecycle:cfg/LC-witness.cfg:NeverRecoversAfterRelaunch \
+	Lifecycle:cfg/LC-witness-attack.cfg:NeverGoodUnderAttack \
+	Lifecycle:cfg/LC-asbuilt-witness.cfg:NotObservedRecovery
+
+life: check-tools
+	$(call tlc_rows,$(LIFE_ROWS))
+
+# TLAPS: CountsOnlySent, SessionOnCurrent, HandshakeBeforeFrames, OnlyOwnerDisplaces (Inv) and
+# QuietGood for any bounds; TLC checks Rest <=> Quiet (RestIsQuiet), so QuietGood is RestGood.
+# Controls: Design without one switch must fail at exactly that mechanism's steps.
+LIFE_PROOF_CTLS = 'RestartOnNewConn:ReadyIsRestart.<1>5:MacReady' 'CountOnSend:SpecSafe.<1>2.<2>11:MacEncode' \
+	'AuthBeforeDisplace:QuietGood.<1>4 ReadyIsRestart.<1>QED SpecSafe.<1>2.<2>6:MacAccept'
+
+life-proofs:
+	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }
+	@path="$$PATH"; if ! ps -p $$$$ >/dev/null 2>&1; then mkdir -p "$(PSDIR)" && \
+	  printf '#!/bin/sh\necho "  PID  PPID   PID"\n' > "$(PSDIR)/ps" && chmod +x "$(PSDIR)/ps" && path="$(PSDIR):$$PATH"; fi; \
+	  out=$$(PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) LifecycleProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL LifecycleProofs: killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  if printf '%s\n' "$$out" | grep -q "All [0-9]* obligations proved"; then echo "OK   LifecycleProofs: $$(printf '%s\n' "$$out" | grep -o "All [0-9]* obligations proved")"; \
+	  else printf '%s\n' "$$out" | grep -B2 -A8 "ERROR\|failed" | head -40; echo "FAIL LifecycleProofs: not every obligation proved"; exit 2; fi; \
+	  for c in $(LIFE_PROOF_CTLS); do sw=$${c%%:*}; rest=$${c#*:}; want=$${rest%%:*}; act=$${rest##*:}; \
+	    dir="$(CTLDIR)/life-$$sw"; mkdir -p "$$dir" && \
+	    sed -e "s/^\(Design == .*\)$$sw \/\\\\ /\1/" -e "s/^\(Design == .*\) \/\\\\ $$sw$$/\1/" Lifecycle.tla > "$$dir/Lifecycle.tla" && \
+	    cp LifecycleProofs.tla "$$dir/" && \
+	    ! cmp -s Lifecycle.tla "$$dir/Lifecycle.tla" || { echo "FAIL control: could not drop $$sw"; exit 2; }; \
+	    out=$$(cd "$$dir" && PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) LifecycleProofs.tla 2>&1); \
+	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
+	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py LifecycleProofs.tla); \
+	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
+	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
 
 # PairingPersistence (2026-11-15): the iPad's 8 s connecting timeout deleted its credentials
 # whenever the Mac was unreachable (hardware 22:38). Design: keep credentials, restart discovery
