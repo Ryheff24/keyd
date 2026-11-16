@@ -35,6 +35,7 @@ OFFSET = re.compile(r"\[TEST\] PASS: clock-sync \(offset=(-?\d+)ms")
 TEST = re.compile(r"\[TEST\] (INFO|PASS|FAIL|START): ([\w-]+)")
 LINK_I = re.compile(r"frame-pipeline seq=\d+ transport=(\w+)")
 MAC_TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)")
+BG = re.compile(r"\[TEST\] INFO: background-cycle (entered|resumed) hostUs=(\d+)")
 FRAME_SIZE = re.compile(r"(?:frame|resolution)[^\n]*?frame=(\d+)x(\d+)")
 
 
@@ -53,6 +54,7 @@ def parse_ipad(path):
     keys = []
     links = []           # (approx iPad us, link)
     sizes = set()
+    away = []            # (entered us, resumed us): the app was deliberately backgrounded
     last_us = None
     for line in open(path, errors="replace"):
         m = FT_I.search(line)
@@ -71,6 +73,12 @@ def parse_ipad(path):
         m = OFFSET.search(line)
         if m:
             offset_ms = int(m.group(1))
+        m = BG.search(line)
+        if m:
+            if m.group(1) == "entered":
+                away.append([int(m.group(2)), None])
+            elif away and away[-1][1] is None:
+                away[-1][1] = int(m.group(2))
         m = TEST.search(line)
         if m and last_us is not None:
             phases.append((last_us, m.group(2)))
@@ -86,7 +94,7 @@ def parse_ipad(path):
                 keys.append((last_us, int(w.group(1)), r.group(1) if r else "?"))
         for fm in FRAME_SIZE.finditer(line):
             sizes.add((int(fm.group(1)), int(fm.group(2))))
-    return frames, phases, offset_ms, fails, keys, links, sizes
+    return frames, phases, offset_ms, fails, keys, links, sizes, [tuple(w) for w in away if w[1]]
 
 
 def parse_mac(path):
@@ -119,7 +127,7 @@ def main():
     ap.add_argument("--panel", default="2752x1786")
     a = ap.parse_args()
 
-    frames, phases, offset_ms, fails, keys, links, sizes = parse_ipad(a.ipad_log)
+    frames, phases, offset_ms, fails, keys, links, sizes, away = parse_ipad(a.ipad_log)
     enc, peers = parse_mac(a.mac_log)
     pres = sorted((r["target"], ts) for ts, r in frames.items() if r["target"])
     if len(pres) < 2:
@@ -135,12 +143,24 @@ def main():
     per_phase = [""] * nsec
     per_link = [""] * nsec
 
+    # Seconds the app was deliberately in the background (background-recovery phase) are not
+    # stalls; they are marked and left out of the fps gates. The time from resume to the first
+    # frame still counts: an interval spanning a background is measured from the resume.
+    per_away = [False] * nsec
+    for e, r in away:
+        for k in range(max(0, int((e - t0) // 1_000_000)), min(nsec, int((r - t0) // 1_000_000) + 1)):
+            per_away[k] = True
+
     intervals = []
     for i, (tgt, ts) in enumerate(pres):
         s = int((tgt - t0) // 1_000_000)
         per_fps[s] += 1
         if i:
-            d = (tgt - pres[i - 1][0]) / 1000.0
+            prev = pres[i - 1][0]
+            for e, r in away:
+                if prev < r <= tgt:
+                    prev = r
+            d = (tgt - prev) / 1000.0
             intervals.append(d)
             # charge an interval to every second it spans, so a long gap shows in each
             s0 = int((pres[i - 1][0] - t0) // 1_000_000)
@@ -179,23 +199,28 @@ def main():
     for s in range(nsec):
         cur = per_link[s] or cur
         per_link[s] = cur
+    for s in range(nsec):
+        if per_away[s]:
+            per_phase[s] = "app-backgrounded"
 
     gates = []
 
     def gate(name, ok, detail):
         gates.append((name, ok, detail))
 
-    worst = min(per_fps)
-    ws = per_fps.index(worst)
-    sorted_fps = sorted(per_fps)
+    on_fps = [f for f, aw in zip(per_fps, per_away) if not aw]
+    worst = min(on_fps)
+    ws = next(s for s in range(nsec) if not per_away[s] and per_fps[s] == worst)
+    sorted_fps = sorted(on_fps)
     print(f"STRICT whole run: {nsec} s, {len(pres)} presented frames, "
           f"{len(enc)} encoded (Mac), clock offset {'%d ms' % offset_ms if offset_ms is not None else 'none (g2g n/a)'}")
     print(f"  per-second presented fps: worst {worst} (s{ws}, phase={per_phase[ws] or '-'}, "
-          f"link={per_link[ws] or '-'})  p1 {pct(per_fps, 1)}  p5 {pct(per_fps, 5)}  "
-          f"p50 {pct(per_fps, 50)}  mean {len(pres) / nsec:.1f}")
-    print(f"  seconds below goal {a.goal_fps:.0f}: {sum(f < a.goal_fps for f in per_fps)}/{nsec}   "
-          f"below 60: {sum(f < 60 for f in per_fps)}   below 30: {sum(f < 30 for f in per_fps)}   "
-          f"zero: {sum(f == 0 for f in per_fps)}")
+          f"link={per_link[ws] or '-'})  p1 {pct(on_fps, 1)}  p5 {pct(on_fps, 5)}  "
+          f"p50 {pct(on_fps, 50)}  mean {len(pres) / len(on_fps):.1f}"
+          f"{'  (%d s app-backgrounded excluded)' % (nsec - len(on_fps)) if away else ''}")
+    print(f"  seconds below goal {a.goal_fps:.0f}: {sum(f < a.goal_fps for f in on_fps)}/{len(on_fps)}   "
+          f"below 60: {sum(f < 60 for f in on_fps)}   below 30: {sum(f < 30 for f in on_fps)}   "
+          f"zero: {sum(f == 0 for f in on_fps)}")
     print(f"  lowest seconds: {sorted_fps[:10]}")
     gate("worst-second fps", worst >= a.goal_fps, f"{worst} fps (goal {a.goal_fps:.0f})")
 

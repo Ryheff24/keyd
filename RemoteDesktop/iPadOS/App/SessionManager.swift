@@ -1592,6 +1592,7 @@ final class SessionManager {
         if current { flEnterAwaitLocked(reason: reason, nowUs: nowUs) }
         flLock.unlock()
         print("[CONSOLE] FL IpadFail seq=\(seq) reason=\(reason) gen=\(gen) current=\(current ? 1 : 0)")
+        testRunner?.noteFrameLoopFail(seq: seq, reason: reason)
         if current { flRequestKey(reason: reason, force: true) }
     }
 

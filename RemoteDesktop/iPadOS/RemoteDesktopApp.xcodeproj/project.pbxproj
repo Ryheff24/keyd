@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B3000001000000000000000A /* BackgroundCycleUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3000001000000000000000F /* BackgroundCycleUITests.swift */; };
 		B2000001000000000000000A /* RemoteDesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000000F /* RemoteDesktopApp.swift */; };
 		B2000002000000000000000A /* lz4.c in Sources */ = {isa = PBXBuildFile; fileRef = B2000002000000000000000F /* lz4.c */; };
 		B2000003000000000000000A /* delta.c in Sources */ = {isa = PBXBuildFile; fileRef = B2000003000000000000000F /* delta.c */; };
@@ -39,6 +40,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B3000001000000000000000F /* BackgroundCycleUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundCycleUITests.swift; sourceTree = "<group>"; };
+		B30000FF000000000000000F /* RemoteDesktopAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemoteDesktopAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B2000001000000000000000F /* RemoteDesktopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopApp.swift; sourceTree = "<group>"; };
 		B2000002000000000000000F /* lz4.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = lz4.c; path = ../Shared/lz4.c; sourceTree = "<group>"; };
 		B2000003000000000000000F /* delta.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = delta.c; path = ../Shared/delta.c; sourceTree = "<group>"; };
@@ -79,6 +82,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B30000F1000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B20000F1000000000000000B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -103,7 +113,16 @@
 				B20000E2000000000000000G /* Shared */,
 				B20000E3000000000000000G /* Frameworks */,
 				B20000E4000000000000000G /* Products */,
+				B30000E1000000000000000G /* UITests */,
 			);
+			sourceTree = "<group>";
+		};
+		B30000E1000000000000000G /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+				B3000001000000000000000F /* BackgroundCycleUITests.swift */,
+			);
+			path = UITests;
 			sourceTree = "<group>";
 		};
 		B20000E1000000000000000G /* . */ = {
@@ -151,6 +170,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000FF000000000000000F /* RemoteDesktopApp.app */,
+				B30000FF000000000000000F /* RemoteDesktopAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -230,6 +250,22 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		B30000FE000000000000000T /* RemoteDesktopAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B30000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopAppUITests" */;
+			buildPhases = (
+				B30000F0000000000000000B /* Sources */,
+				B30000F1000000000000000B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RemoteDesktopAppUITests;
+			productName = RemoteDesktopAppUITests;
+			productReference = B30000FF000000000000000F /* RemoteDesktopAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		B20000FE000000000000000T /* RemoteDesktopApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B20000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopApp" */;
@@ -270,6 +306,7 @@
 			projectRoot = "";
 			targets = (
 				B20000FE000000000000000T /* RemoteDesktopApp */,
+				B30000FE000000000000000T /* RemoteDesktopAppUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -285,6 +322,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		B30000F0000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B3000001000000000000000A /* BackgroundCycleUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B20000F0000000000000000B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -317,6 +362,32 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		B30000D3000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd.remote.app.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+		B30000D4000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = M2DUW2UUKH;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryheff.keyd.remote.app.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
 		B20000D1000000000000000D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -460,6 +531,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		B30000FC000000000000000C /* Build configuration list for PBXNativeTarget "RemoteDesktopAppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B30000D3000000000000000D /* Debug */,
+				B30000D4000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		B20000FB000000000000000C /* Build configuration list for PBXProject "RemoteDesktopApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

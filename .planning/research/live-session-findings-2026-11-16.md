@@ -31,6 +31,10 @@ READY clears the flag. There is no path back up to AWDL once on infra, so one ba
 means the rest of the session runs on the worse link. Cascade is meant to be USB > AWDL >
 infra (last resort).
 
+Also without any background: E2E 68e521e's first AWDL dial hit the 3 s connect watchdog
+(`dial=awdl -> next=infra`), and the whole main test (182 of 230 s) ran on `%en0` at 35.4 fps.
+The old suite passed `transport-wifi`; `e2e_strict.py` flags it. Same missing climb-back.
+
 ## 3. Stutter at each switch to HEVC: first keyframe fails to decode
 USB -> AWDL after a background: the first HEVC key (seq 11728) is refused by
 `VTDecompressionSessionDecodeFrame` (status goes to os_log only; not visible), FrameLoop
@@ -55,8 +59,9 @@ link name (USB / AWDL / infra).
 -> decode -> display before it shows. A local cursor drawn on the iPad (Mac sends cursor
 image + position, as Phase 3's cursor overlay planned) makes the pointer immediate on any link.
 
-## 6. Soft picture
-The Mac renders 3024x1964; the iPad panel is 2752x1786. SCStream rescales to the frame size
+## 6. Soft picture (every transport)
+The Mac renders 3024x1964; the iPad panel is 2752x1786. USB is soft too: 3024 -> 2752 rescale
+plus the bilinear sampler; Wi-Fi adds the 2496 encode cap and HEVC 4:2:0. SCStream rescales to the frame size
 (2752 on USB, 2496x1620 on Wi-Fi under the link cap), HEVC 4:2:0 blurs coloured text, and the
 iPad stretches 2496 -> 2752 with a bilinear sampler. Every step is a non-integer resample of
 text. Only a matched source size fixes it properly (a Mac display mode or virtual display at
@@ -73,6 +78,20 @@ path, a plug-in, a background, link pinning, or sharpness. It needs scenario tes
 honest numbers: time from cable attach to first USB frame; fps and link for 30 s after a
 background/foreground; link stays AWDL; pointer latency (input -> frame showing the move);
 text sharpness vs source (PSNR/SSIM on a text scene); HEVC first-key decode failures.
+
+## Strict whole-run baseline (`scripts/e2e_strict.py`, canonical capture video, Wi-Fi)
+Every second of the run, no exclusions, against the METRICS goals:
+
+| run | worst s | s < 60 fps | interval p99.9 | g2g p99.9 | capture->decode p99.9 | link | gates |
+|---|---|---|---|---|---|---|---|
+| 6e079b6 | 0 fps | 221/235 | 367 ms | 1137 ms | 1115 ms | awdl | 2/9 |
+| 20d1ea9 | 0 fps | 210/232 | 275 ms | 752 ms | 820 ms | awdl | 2/9 |
+| 68e521e | 0 fps | 229/230 | 442 ms | 1748 ms | 1655 ms | en0 182 s | 1/9 |
+
+The Mac encodes p50 46-58 frames/s: the source is emitted at 60 fps, so the 120 fps goal is
+unreachable by construction. The existing suite also passes weak checks: frame-reception on 4
+frames, resolution at 0.907x scale, latency-probe at 131 ms. FT-I (per-frame iPad timeline) was
+test-mode only; now always on, so manual sessions can be judged the same way.
 
 ## Ranked plan (each through the TLA+ gate where it crosses the iPad<->Mac boundary)
 1. Background -> stays on AWDL and climbs back (TransportConnections: an upgrade path from
