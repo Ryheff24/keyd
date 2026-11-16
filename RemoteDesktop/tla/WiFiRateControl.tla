@@ -18,9 +18,15 @@
 (*   (219 windows), although the link moved 36 Mb/s (p50) on big frames.  *)
 (*   598 of 980 delivery gaps >= 50 ms were link holds on small frames     *)
 (*   (scratch ft_cfe.txt): holds happen whatever the bitrate.              *)
+(* Rejected design [O] run ddfd000: bitrate following half an ack-measured *)
+(*   delivery rate (windowed max, iPad-clock spans).  After each link hold *)
+(*   queued frames arrive at radio burst speed, so samples read 40-460     *)
+(*   Mb/s on a ~36 Mb/s link; the bitrate sat at 20-30 Mbps, frames       *)
+(*   averaged 50-117 KB, fps fell 40 -> 29, g2g p95 143 -> 243 ms.  No     *)
+(*   capacity estimate is assumed here; the target is a fixed level T.     *)
 (*                                                                         *)
 (* Model: levels 0..N.  rate = bitrate level, cap = what the link carries, *)
-(* est = the Mac's estimate of cap, fps = "hi" (60) or "lo" (below 60).    *)
+(* T = the fixed target level (10 Mbps), fps = "hi" (60) or "lo".          *)
 (* One Window step = one 1 s evaluation.  `holds` = this window saw gate   *)
 (* holds; the link can hold in any window (H1), and a rate above capacity  *)
 (* always causes holds (H2).                                               *)
@@ -28,7 +34,8 @@
 (* Design switches:                                                        *)
 (*   IgnoreHolds: under the ack gate, gate holds are pacing, not           *)
 (*                congestion.  The bitrate moves one step a window toward  *)
-(*                Target(est), half the estimated capacity.                *)
+(*                the fixed target T; overload above capacity is absorbed  *)
+(*                by the gate skipping captures, not by this loop.         *)
 (*   KeepFps:     under the ack gate the frame rate stays at 60; the gate  *)
 (*                skips captures the link cannot take.                     *)
 (*                                                                         *)
@@ -36,31 +43,27 @@
 (*  H1 [O] Link holds occur in any window, independent of the bitrate.     *)
 (*  H2 [I] A bitrate above capacity causes holds in that window.           *)
 (*  H3 [I] Capacity changes at most MaxCapChanges times.                   *)
-(*  H4 [I] Big frames keep coming, so the ack-delivery estimate refreshes  *)
-(*         to the current capacity infinitely often (WF Sample).  On an    *)
-(*         idle desktop the estimate holds, and so does the rate.          *)
 (***************************************************************************)
 EXTENDS Naturals
 
-CONSTANTS N, MaxCapChanges, IgnoreHolds, KeepFps
+CONSTANTS N, T, MaxCapChanges, IgnoreHolds, KeepFps
 
 Levels == 0..N
-Target(e) == e \div 2
 
-VARIABLES rate, fps, cap, est, holds, capChanges
+VARIABLES rate, fps, cap, holds, capChanges
 
-vars == <<rate, fps, cap, est, holds, capChanges>>
+vars == <<rate, fps, cap, holds, capChanges>>
 
 Design == IgnoreHolds /\ KeepFps /\ TRUE
 
 TypeOK ==
     /\ rate \in Levels /\ fps \in {"hi", "lo"}
-    /\ cap \in Levels /\ est \in Levels
+    /\ cap \in Levels
     /\ holds \in BOOLEAN /\ capChanges \in 0..MaxCapChanges
 
 Init ==
     /\ rate \in Levels /\ fps = "hi"
-    /\ cap \in Levels /\ est \in Levels
+    /\ cap \in Levels
     /\ holds = FALSE /\ capChanges = 0
 
 Toward(r, t) == IF r < t THEN r + 1 ELSE IF r > t THEN r - 1 ELSE r
@@ -69,28 +72,22 @@ Toward(r, t) == IF r < t THEN r + 1 ELSE IF r > t THEN r - 1 ELSE r
 Window ==
     /\ holds' \in IF rate > cap THEN {TRUE} ELSE BOOLEAN
     /\ IF IgnoreHolds
-         THEN rate' = Toward(rate, Target(est))
+         THEN rate' = Toward(rate, T)
          ELSE rate' = IF holds' THEN (IF rate > 0 THEN rate - 1 ELSE 0)
                                 ELSE (IF rate < N THEN rate + 1 ELSE N)
     /\ fps' = IF KeepFps THEN "hi" ELSE IF holds' THEN "lo" ELSE "hi"
-    /\ UNCHANGED <<cap, est, capChanges>>
-
-\* Acks of a big frame measure the link (H4).
-Sample ==
-    /\ est # cap
-    /\ est' = cap
-    /\ UNCHANGED <<rate, fps, cap, holds, capChanges>>
+    /\ UNCHANGED <<cap, capChanges>>
 
 CapChange ==
     /\ capChanges < MaxCapChanges
     /\ cap' \in Levels /\ capChanges' = capChanges + 1
-    /\ UNCHANGED <<rate, fps, est, holds>>
+    /\ UNCHANGED <<rate, fps, holds>>
 
-Next == Window \/ Sample \/ CapChange
+Next == Window \/ CapChange
 
 Spec == Init /\ [][Next]_vars
 
-FairSpec == Spec /\ WF_vars(Window) /\ WF_vars(Sample)
+FairSpec == Spec /\ WF_vars(Window)
 
 ------------------------------------------------------------------------------
 (* Properties *)
@@ -99,10 +96,9 @@ FairSpec == Spec /\ WF_vars(Window) /\ WF_vars(Sample)
 \* holds).
 FpsKept == fps = "hi"
 
-\* Once capacity settles, the bitrate settles at half of it: never latched at
-\* the floor by holds, never left above what the link carries.
-Settles == <>[](rate = Target(cap))
+\* The bitrate settles at its target: never latched at the floor by holds.
+Settles == <>[](rate = T)
 
-\* Witness: the bitrate settles above the floor while the link holds.
-NeverSettledThroughHolds == ~(rate = Target(cap) /\ rate > 0 /\ holds)
+\* Witness: the bitrate sits at its target above the floor while the link holds.
+NeverSettledThroughHolds == ~(rate = T /\ rate > 0 /\ holds)
 =============================================================================

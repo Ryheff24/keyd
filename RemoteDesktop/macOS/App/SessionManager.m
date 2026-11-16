@@ -111,13 +111,14 @@ static const int32_t kMaxMediaSendsInFlightWiFi = 3;
  * so the in-flight count above never sees the socket queue. Once the iPad acknowledges frames
  * (KEYDRD_INPUT_FRAME_ACK), a capture is encoded only while sent-but-unacked frames < this. */
 static const int32_t kWiFiAckGateFrames = 3;
-/* Ack-driven rate (tla/WiFiRateControl.tla). Under the ack gate, gate holds are pacing, not
- * congestion: the bitrate follows half the delivery rate the acks measure (windowed max over
- * kWiFiAckCapWindows seconds, frames of at least kWiFiAckSampleMinBytes acked on a busy link,
- * timed on the iPad's clock so uplink ack bunching cannot inflate it), and the frame rate stays
- * at kWirelessAdaptiveMaxFPS. */
+/* Rate under the ack gate (tla/WiFiRateControl.tla). Gate holds are pacing, not congestion: the
+ * frame rate stays at kWirelessAdaptiveMaxFPS and the bitrate steps toward the fixed
+ * kWirelessHEVCBitrate; the gate skips captures the link cannot take. A bitrate following
+ * ack-measured delivery was tried (run ddfd000) and rejected: after a link hold queued frames
+ * arrive at radio burst speed, samples read 40-460 Mb/s, and 20-30 Mbps frames cost fps. The
+ * delivery samples (frames of at least kWiFiAckSampleMinBytes, iPad-clock spans) stay as a log
+ * diagnostic only. */
 static const uint32_t kWiFiAckSampleMinBytes = 24 * 1024;
-#define kWiFiAckCapWindows 3
 static const int32_t kWiFiAckRateStepUp = 2000000;
 /* Completion latency above this indicates kernel/network backlog in Wi-Fi TCP path. */
 static const uint64_t kWirelessTCPSlowCompletionThresholdMs = 25;
@@ -435,8 +436,6 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     uint32_t _wifiAckBytes[256];  /* frame bytes by seq & 0xFF, for delivery-rate samples */
     uint64_t _wifiAckLastAckMacUs;   /* Mac time the previous accepted ack arrived */
     uint64_t _wifiAckLastIpadUs;     /* iPad time stamped on the previous accepted ack */
-    uint64_t _wifiAckCapWindowBps[kWiFiAckCapWindows]; /* per-window max delivery rate */
-    int _wifiAckCapWindowIdx;
     int32_t _wifiPerfAckRateSamples;
     uint64_t _wifiPerfAckDeliveryMaxBps;
     /* per 1 s perf window, under _wifiAckLock */
@@ -2202,43 +2201,33 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 }
 
 /* tla/WiFiRateControl.tla design: called once a second while the ack gate is active, before
- * the perf window resets. Gate holds do not count (IgnoreHolds); FPS stays at max (KeepFps). */
+ * the perf window resets. Gate holds do not count (IgnoreHolds): the bitrate steps toward the
+ * fixed target T = kWirelessHEVCBitrate. FPS stays at max (KeepFps). */
 - (void)evaluateWiFiAckRateControlNowUs:(uint64_t)nowUs {
     os_unfair_lock_lock(&_wifiAckLock);
-    _wifiAckCapWindowIdx = (_wifiAckCapWindowIdx + 1) % kWiFiAckCapWindows;
-    _wifiAckCapWindowBps[_wifiAckCapWindowIdx] = _wifiPerfAckDeliveryMaxBps;
-    uint64_t estBps = 0;
-    for (int i = 0; i < kWiFiAckCapWindows; i++) {
-        if (_wifiAckCapWindowBps[i] > estBps) estBps = _wifiAckCapWindowBps[i];
-    }
+    uint64_t deliveryMaxBps = _wifiPerfAckDeliveryMaxBps; /* diagnostic only */
     os_unfair_lock_unlock(&_wifiAckLock);
 
     int32_t prevBitrate = _wifiAdaptiveTargetBitrate;
     int32_t targetBitrate = prevBitrate;
-    const char *branch = "hold-no-samples";
-    if (estBps > 0) {
-        uint64_t half = estBps / 2;
-        int32_t want = (int32_t)MAX((uint64_t)kWirelessAdaptiveMinBitrate,
-                                    MIN((uint64_t)kWirelessAdaptiveMaxBitrate, half));
-        if (want > prevBitrate) {
-            targetBitrate = MIN(want, prevBitrate + kWiFiAckRateStepUp);
-            branch = "up";
-        } else if (want < prevBitrate) {
-            targetBitrate = MAX(want, prevBitrate - kWirelessAdaptiveMaxDownshiftBitrateDelta);
-            branch = "down";
-        } else {
-            branch = "at-target";
-        }
+    const char *branch = "at-target";
+    if (prevBitrate < kWirelessHEVCBitrate) {
+        targetBitrate = MIN(kWirelessHEVCBitrate, prevBitrate + kWiFiAckRateStepUp);
+        branch = "up";
+    } else if (prevBitrate > kWirelessHEVCBitrate) {
+        targetBitrate = MAX(kWirelessHEVCBitrate, prevBitrate - kWirelessAdaptiveMaxDownshiftBitrateDelta);
+        branch = "down";
     }
     _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
     _wifiAdaptiveTargetBitrate = targetBitrate;
     _wifiAdaptiveHealthyStreak = 0;
     _wifiAdaptiveMildCongestionStreak = 0;
     _wifiAdaptiveSevereCongestionStreak = 0;
-    os_log(sLog, "WiFi ack rate: branch=%{public}s est=%.1fMbps target=%.1fMbps prev=%.1fMbps fps=%d applied=%dfps/%.1fMbps",
-           branch, (double)estBps / 1e6, (double)targetBitrate / 1e6, (double)prevBitrate / 1e6,
-           kWirelessAdaptiveMaxFPS, _wifiAdaptiveAppliedFPS, (double)_wifiAdaptiveAppliedBitrate / 1e6);
-    [self applyWiFiAdaptiveRateTargetsIfNeededWithReason:@"ack-capacity" nowUs:nowUs];
+    os_log(sLog, "WiFi ack rate: branch=%{public}s target=%.1fMbps prev=%.1fMbps fps=%d applied=%dfps/%.1fMbps deliveryMax=%.1fMbps",
+           branch, (double)targetBitrate / 1e6, (double)prevBitrate / 1e6,
+           kWirelessAdaptiveMaxFPS, _wifiAdaptiveAppliedFPS, (double)_wifiAdaptiveAppliedBitrate / 1e6,
+           (double)deliveryMaxBps / 1e6);
+    [self applyWiFiAdaptiveRateTargetsIfNeededWithReason:@"ack-gate" nowUs:nowUs];
 }
 
 - (void)evaluateWiFiAdaptiveRateControl {
@@ -2542,7 +2531,6 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     _wifiAckLastAckedSeq = _wifiAckLastSentSeq;
     _wifiAckLastAckMacUs = 0;
     _wifiAckLastIpadUs = 0;
-    memset(_wifiAckCapWindowBps, 0, sizeof _wifiAckCapWindowBps);
     os_unfair_lock_unlock(&_wifiAckLock);
     os_log(sLog, "WiFi ack gate reset: reason=%{public}s wasActive=%d unacked=%d",
            reason ?: "unknown", wasActive, unacked);
@@ -2666,7 +2654,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     int32_t maxUpshiftBitrateDelta = kWirelessAdaptiveMaxUpshiftBitrateDelta;
     if ([reason isEqualToString:@"recovery-upshift-fast"]) {
         maxUpshiftFPSDelta = kWirelessAdaptiveFastMaxUpshiftFPSDelta;
-    } else if ([reason isEqualToString:@"ack-capacity"]) {
+    } else if ([reason isEqualToString:@"ack-gate"]) {
         /* tla/WiFiRateControl.tla KeepFps: straight back to max; bitrate steps are chosen by
          * evaluateWiFiAckRateControlNowUs. */
         maxUpshiftFPSDelta = kWirelessAdaptiveMaxFPS;

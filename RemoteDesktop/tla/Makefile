@@ -129,8 +129,8 @@ sendloop-proofs:
 
 # WiFiRateControl (2026-11-16): under the ack gate every gate hold counted as a pre-encode drop,
 # so the adaptive loop saw severe congestion every second and latched 30 fps capture / 5 Mbps for
-# the whole of run cfe6597. Design: gate holds are pacing (bitrate follows half the capacity acks
-# measure), the frame rate stays at 60.
+# the whole of run cfe6597. Design: gate holds are pacing (bitrate steps toward a fixed 10 Mbps;
+# an ack-measured capacity target was rejected after run ddfd000), the frame rate stays at 60.
 WRC_ROWS = WiFiRateControl:WiFiRateControl.cfg:pass \
 	WiFiRateControl:cfg/WRC-design-big.cfg:pass \
 	WiFiRateControl:cfg/WRC-asbuilt.cfg:FpsKept \
