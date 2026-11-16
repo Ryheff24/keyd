@@ -253,9 +253,7 @@ final class WirelessTransport {
         tcpOptions.noDelay = true
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         WirelessTransport.applyInterfacePolicy(params)
-        // Media arrives on this connection: interactive video (WMM AC_VI) for it and its ACKs.
-        params.serviceClass = .interactiveVideo
-        print("[CONSOLE] WirelessTransport: TCP params serviceClass=interactiveVideo includePeerToPeer=\(params.includePeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
+        print("[CONSOLE] WirelessTransport: TCP params includePeerToPeer=\(params.includePeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
         return params
     }
 
@@ -284,7 +282,6 @@ final class WirelessTransport {
 
         let params = NWParameters(dtls: dtlsOptions, udp: .init())
         WirelessTransport.applyInterfacePolicy(params)
-        params.serviceClass = .interactiveVideo
         return params
     }
 

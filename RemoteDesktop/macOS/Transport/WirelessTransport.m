@@ -242,10 +242,6 @@ static bool wireless_include_peer_to_peer(void) {
             nw_tcp_options_set_no_delay(tcp_options, true);
         });
 
-    /* Media rides this TCP connection on Wi-Fi: mark it interactive video (WMM AC_VI)
-     * so the AP and both radios schedule it ahead of best-effort traffic. */
-    nw_parameters_set_service_class(tcpParams, nw_service_class_interactive_video);
-    os_log(wireless_log(), "Wi-Fi TCP params: serviceClass=interactive-video noDelay=1");
     return tcpParams;
 }
 
@@ -287,7 +283,6 @@ static bool wireless_include_peer_to_peer(void) {
         },
         NW_PARAMETERS_DEFAULT_CONFIGURATION);
 
-    nw_parameters_set_service_class(udpParams, nw_service_class_interactive_video);
     return udpParams;
 }
 
