@@ -132,6 +132,13 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
     /* Session properties for low-latency HEVC encoding */
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
+    /* VTCompressionProperties.h low-latency recipe: RealTime + ExpectedFrameRate +
+     * PrioritizeEncodingSpeedOverQuality. ENC-SPLIT on AWDL (run 4cc1c70): encode avg ~15 ms
+     * of the 16.7 ms frame interval, ~20% of frames over 16 ms. */
+    OSStatus speedStatus = VTSessionSetProperty(_session, kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+                                                kCFBooleanTrue);
+    os_log(hevc_log(), "HEVC session %dx%d@%d: PrioritizeEncodingSpeedOverQuality status=%d",
+           width, height, fps, (int)speedStatus);
     VTSessionSetProperty(_session, kVTCompressionPropertyKey_ProfileLevel,
                          kVTProfileLevel_HEVC_Main_AutoLevel);
 
