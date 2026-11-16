@@ -2021,6 +2021,7 @@ final class DeviceTestRunner {
             let timestamps = self.sustainedStreamFrameTimestamps
             let frameCount = max(renderedDelta, timestamps.count)
             let avgFPS = elapsed > 0 ? Double(frameCount) / elapsed : 0
+            self.sustainedStreamAvgFPS = avgFPS
 
             var intervals: [Double] = []
             if timestamps.count >= 2 {
@@ -2454,6 +2455,8 @@ final class DeviceTestRunner {
     private var bgFLFailAtResume = 0
     private var bgDecodeFailStart = 0
     private var frameLoopFailures = 0
+    /// Average presented fps of the sustained-stream phase: the reference rate after a resume.
+    private var sustainedStreamAvgFPS: Double = 0
 
     private func currentLinkName() -> String {
         guard let sm = sessionManager else { return "none" }
@@ -2541,7 +2544,10 @@ final class DeviceTestRunner {
         // Pre-background rate: the last 5 s before Home (or what there is since the request).
         let preStart = max(bgRequestedAt, entered - 5.0)
         let preSpan = max(entered - preStart, 0.001)
-        let preFPS = Double(stamps.filter { $0 >= preStart && $0 < entered }.count) / preSpan
+        let preWindowFPS = Double(stamps.filter { $0 >= preStart && $0 < entered }.count) / preSpan
+        // Reference rate: the higher of the 5 s before Home and the sustained-stream average, so a
+        // quiet moment before Home cannot make the after-resume checks easy.
+        let preFPS = max(preWindowFPS, sustainedStreamAvgFPS)
 
         let after = stamps.filter { $0 >= resumed && $0 < resumed + window }
         let firstFrameMs: Double? = after.first.map { ($0 - resumed) * 1000.0 }
@@ -2581,7 +2587,7 @@ final class DeviceTestRunner {
 
         var issues: [String] = []
         // Precondition: a live stream when Home was pressed; otherwise nothing below means recovery.
-        if bgStateBefore != SessionManager.State.streaming.rawValue || preFPS < 5 {
+        if bgStateBefore != SessionManager.State.streaming.rawValue || preWindowFPS < 5 {
             issues.append("PRECONDITION not streaming at Home (state=\(bgStateBefore), pre \(String(format: "%.1f", preFPS))fps)")
         }
         if bgLinkBefore == "wifi" || infraSeconds > 0 {
@@ -2603,7 +2609,7 @@ final class DeviceTestRunner {
         }
         if flFails > 0 { issues.append("decode refusals after resume \(flFails) (FL IpadFail)") }
 
-        var detail = "state@home=\(bgStateBefore) away=\(String(format: "%.1f", resumed - entered))s link[before/final]=\(bgLinkBefore)/\(finalLink) linkSeconds=\(linkSeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")) firstFrame=\(firstFrameMs.map { "\(Int($0))ms" } ?? "none") (goal <=\(Int(Self.backgroundFirstFrameGoalMs))ms) recover90=\(recoverMs.map { "\(Int($0))ms" } ?? "never") (goal <=\(Int(Self.backgroundRecoverGoalMs))ms) fps[pre/steady]=\(String(format: "%.1f", preFPS))/\(String(format: "%.1f", steadyFPS)) (goal steady >=90% pre) worst1s=\(perSecond.min() ?? 0) maxGap=\(Int(maxGapMs))ms perSecond=\(perSecond.map(String.init).joined(separator: ",")) flFail[afterResume/whileAway]=\(flFails)/\(flFailsAway) decodeFail=\(decodeFails) stateDrops=\(bgStateDrops)"
+        var detail = "state@home=\(bgStateBefore) away=\(String(format: "%.1f", resumed - entered))s link[before/final]=\(bgLinkBefore)/\(finalLink) linkSeconds=\(linkSeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")) firstFrame=\(firstFrameMs.map { "\(Int($0))ms" } ?? "none") (goal <=\(Int(Self.backgroundFirstFrameGoalMs))ms) recover90=\(recoverMs.map { "\(Int($0))ms" } ?? "never") (goal <=\(Int(Self.backgroundRecoverGoalMs))ms) fps[ref(pre5s,sustained)/steady]=\(String(format: "%.1f", preFPS))(\(String(format: "%.1f", preWindowFPS)),\(String(format: "%.1f", sustainedStreamAvgFPS)))/\(String(format: "%.1f", steadyFPS)) (goal steady >=90% pre) worst1s=\(perSecond.min() ?? 0) maxGap=\(Int(maxGapMs))ms perSecond=\(perSecond.map(String.init).joined(separator: ",")) flFail[afterResume/whileAway]=\(flFails)/\(flFailsAway) decodeFail=\(decodeFails) stateDrops=\(bgStateDrops)"
         if !issues.isEmpty { detail += " [ISSUES: \(issues.joined(separator: ", "))]" }
         recordResult(name: "background-recovery", passed: issues.isEmpty, detail: detail)
         runSecurityTests()
