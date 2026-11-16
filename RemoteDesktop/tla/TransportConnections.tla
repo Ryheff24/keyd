@@ -46,6 +46,15 @@
 (*   RedialOnLoss:  after any loss the iPad restarts discovery (new        *)
 (*                  browser, fresh results) and dials again.               *)
 (*                                                                         *)
+(* Test-mode switch (not part of Design):                                  *)
+(*   AwdlPin:       E2E diagnostic `--awdl-only`: a dial offers AWDL only. *)
+(*                  Run 251f328 showed the iPad's infrastructure receive   *)
+(*                  holds two ~100 ms windows every 512 TU even with our   *)
+(*                  peer-to-peer off; the pin measures whether the AWDL    *)
+(*                  link flows in those windows.  It gives up the Wi-Fi    *)
+(*                  fallback, so it recovers only while AWDL is usable     *)
+(*                  (RecoversPinned); Recovers fails under it by design.   *)
+(*                                                                         *)
 (* Assumptions:                                                            *)
 (*  W1 [O] One dial may yield candidates on every usable link, reaching    *)
 (*         the Mac in any order; both sides end up on the same one         *)
@@ -71,7 +80,8 @@ CONSTANTS
     MaxFlaps,       \* link down/up events
     D,              \* silence deadline, in ticks
     MaxAge,         \* bound on a silence's age (as built it grows past D)
-    InfraFirst, ExactLabel, SilenceDetect, RedialOnLoss
+    InfraFirst, ExactLabel, SilenceDetect, RedialOnLoss,
+    AwdlPin         \* test mode only, see header
 
 Links == {"wifi", "awdl"}
 None == "none"
@@ -116,7 +126,8 @@ Held == ipadHolds \/ macHolds
 
 \* What one dial offers.
 Candidates ==
-    IF InfraFirst
+    IF AwdlPin THEN (IF up["awdl"] THEN {"awdl"} ELSE {})
+    ELSE IF InfraFirst
        THEN IF up["wifi"] THEN {"wifi"} ELSE IF up["awdl"] THEN {"awdl"} ELSE {}
        ELSE {l \in Links : up[l]}
 
@@ -234,6 +245,10 @@ Inv == TypeOK /\ PreferInfra /\ LabelExact /\ DetectDeadline
 \* a live connection.
 Recovers ==
     (<>[](up["wifi"] \/ up["awdl"])) => <>[](ipadHolds /\ macHolds /\ live)
+
+\* Under the AwdlPin test mode: once AWDL stays usable, both sides stream.
+RecoversPinned ==
+    (<>[]up["awdl"]) => <>[](ipadHolds /\ macHolds /\ live)
 
 \* Witness: a connection does stream.
 NeverStreams == ~(ipadHolds /\ macHolds /\ live)

@@ -125,6 +125,9 @@ while [[ $# -gt 0 ]]; do
     --no-peer-to-peer)
       # Diagnostic: both apps stop including peer-to-peer (AWDL) interfaces.
       NO_PEER_TO_PEER=true; shift ;;
+    --awdl-only)
+      # Diagnostic (tla/TransportConnections.tla AwdlPin): the iPad dials the Mac over AWDL only.
+      AWDL_ONLY=true; shift ;;
     --full-suite)
       FULL_SUITE=true; shift ;;
     --wired-only)
@@ -1166,6 +1169,9 @@ if [ "$SKIP_TRANSPORT_ROTATION" = true ]; then
 fi
 if [ "${NO_PEER_TO_PEER:-false}" = true ]; then
   IPAD_LAUNCH_ARGS+=(--no-peer-to-peer)
+fi
+if [ "${AWDL_ONLY:-false}" = true ]; then
+  IPAD_LAUNCH_ARGS+=(--awdl-only)
 fi
 if [ "$WIRED_ONLY" = true ]; then
   IPAD_LAUNCH_ARGS+=(--wired-only)

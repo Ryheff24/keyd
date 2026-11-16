@@ -33,8 +33,24 @@ final class WirelessTransport {
         return on
     }()
 
+    /// Test mode `--awdl-only` (harness `--awdl-only`, diagnostic): dial the Mac over AWDL only:
+    /// peer-to-peer on, every non-peer-to-peer interface the Bonjour result lists prohibited
+    /// (results list only en0 even with peer-to-peer browsing) (AwdlPin in
+    /// tla/TransportConnections.tla). Measures whether AWDL flows in the windows where the
+    /// infrastructure link holds (run 251f328: two ~100 ms holds every 512 TU). Normal use and
+    /// every other test mode are unchanged.
+    static let pinAWDL: Bool = {
+        let args = ProcessInfo.processInfo.arguments
+        let on = args.contains("--test-mode") && args.contains("--awdl-only")
+        print("[CONSOLE] WirelessTransport: pinAWDL=\(on)")
+        return on
+    }()
+
+    /// Infrastructure interfaces of the Bonjour result being dialled, prohibited under pinAWDL.
+    private var pinProhibitedInterfaces: [NWInterface] = []
+
     private static func applyInterfacePolicy(_ params: NWParameters) {
-        params.includePeerToPeer = includePeerToPeer
+        params.includePeerToPeer = includePeerToPeer || pinAWDL
         if requireWiFiInterface { params.requiredInterfaceType = .wifi }
     }
 
@@ -273,6 +289,11 @@ final class WirelessTransport {
         // The E2E Wi-Fi mode (requireWiFiInterface) never dials peer-to-peer.
         params.includePeerToPeer = WirelessTransport.includePeerToPeer && dialPeerToPeer
             && !WirelessTransport.requireWiFiInterface
+        if WirelessTransport.pinAWDL {
+            params.includePeerToPeer = true
+            params.prohibitedInterfaces = pinProhibitedInterfaces
+            print("[CONSOLE] WirelessTransport: AWDL pin dial prohibited=\(pinProhibitedInterfaces.map { $0.name })")
+        }
         print("[CONSOLE] WirelessTransport: TCP params includePeerToPeer=\(params.includePeerToPeer) dialPeerToPeer=\(dialPeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
         return params
     }
@@ -363,8 +384,13 @@ final class WirelessTransport {
             for change in changes {
                 switch change {
                 case .added(let result):
-                    print("[CONSOLE] Bonjour service FOUND: \(result.endpoint.debugDescription)")
+                    print("[CONSOLE] Bonjour service FOUND: \(result.endpoint.debugDescription) interfaces=\(result.interfaces.map { "\($0.name)/\($0.type)" })")
                     self.log.info("Bonjour service found: \(result.endpoint.debugDescription)")
+
+                    if WirelessTransport.pinAWDL && !self.isConnected && self.connectedServiceName == nil {
+                        self.pinProhibitedInterfaces = result.interfaces.filter { !WirelessTransport.isPeerToPeerInterface($0) }
+                        print("[CONSOLE] Bonjour: AWDL pin prohibits \(self.pinProhibitedInterfaces.map { $0.name })")
+                    }
 
                     // Guard against re-entry: NWBrowser fires .added for every
                     // interface (Wi-Fi, AWDL) the same service appears on.

@@ -8,7 +8,7 @@
 EXTENDS TransportConnections, TLAPS
 
 ASSUME Bounds == MaxSilence \in Nat /\ MaxFlaps \in Nat /\ D \in Nat /\ MaxAge \in Nat
-ASSUME Switches == InfraFirst \in BOOLEAN /\ ExactLabel \in BOOLEAN
+ASSUME Switches == AwdlPin \in BOOLEAN /\ InfraFirst \in BOOLEAN /\ ExactLabel \in BOOLEAN
                    /\ SilenceDetect \in BOOLEAN /\ RedialOnLoss \in BOOLEAN
 
 \* Inductive: with InfraFirst a dial offers at most one link.

@@ -44,6 +44,8 @@ PERSIST_ROWS = PairingPersistence:PairingPersistence.cfg:pass \
 # on loss. Each as-built row shows one defect; each control reports exactly its property.
 CONN_ROWS = TransportConnections:TransportConnections.cfg:pass \
 	TransportConnections:cfg/TC-design-big.cfg:pass \
+	TransportConnections:cfg/TC-awdl-pin.cfg:pass \
+	TransportConnections:cfg/TC-awdl-pin-recover.cfg:Temporal \
 	TransportConnections:cfg/TC-asbuilt.cfg:PreferInfra \
 	TransportConnections:cfg/TC-asbuilt-label.cfg:LabelExact \
 	TransportConnections:cfg/TC-asbuilt-silence.cfg:DetectDeadline \
