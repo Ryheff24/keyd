@@ -35,6 +35,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /** Callback fired when raw input event data arrives over TCP. */
 @property (nonatomic, copy, nullable) void (^onInputReceived)(const void *data, size_t length);
+/** Any iPad input connection (current or stale) reached failed/cancelled: EOF, error, framing
+ *  error or replacement. Fired on the transport queue. InputPath ReleaseOnLoss hook. */
+@property (nonatomic, copy, nullable) void (^onInputStreamEnded)(void);
+
 
 /**
  * Callback fired when a wireless connection is established or lost.

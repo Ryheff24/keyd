@@ -1084,6 +1084,12 @@ static void deleteStoredSECertificate(void) {
 
 #pragma mark - Keychain Helpers
 
+/* Pairing state (shared secret, pinned iPad certificate fingerprint) lives in the
+ * data-protection keychain under the agent's access group, like the Secure Enclave key: no
+ * per-binary ACL prompts, and a binary without the entitlement gets errSecMissingEntitlement
+ * at once instead of a dialog. (Moved from the legacy login keychain 2026-11-15; pairing made
+ * before that is not migrated: the iPad pairs once more.) */
+
 - (void)saveToKeychain:(NSData *)data account:(NSString *)account {
     NSDictionary *query = @{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
@@ -1091,9 +1097,13 @@ static void deleteStoredSECertificate(void) {
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecValueData: data,
         (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
-    SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+    OSStatus st = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+    if (st != errSecSuccess) {
+        os_log_error(pairing_log(), "Keychain save %{public}@ failed status=%d", account, (int)st);
+    }
 }
 
 - (nullable NSData *)loadFromKeychain:(NSString *)account {
@@ -1103,7 +1113,7 @@ static void deleteStoredSECertificate(void) {
         (__bridge id)kSecAttrAccount: account,
         (__bridge id)kSecReturnData: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
-
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     CFTypeRef result = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -1116,7 +1126,7 @@ static void deleteStoredSECertificate(void) {
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: account,
-
+        (__bridge id)kSecUseDataProtectionKeychain: @YES,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
 }

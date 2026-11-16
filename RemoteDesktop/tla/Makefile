@@ -261,6 +261,9 @@ INPUT_ROWS = InputPath:InputPath.cfg:pass \
 	InputPath:cfg/IP-ctl-no-release-on-loss.cfg:HeldNeedsLink \
 	InputPath:cfg/IP-ctl-no-resync.cfg:NoStuckKey \
 	InputPath:cfg/IP-ctl-no-stop-release.cfg:StopReleasesAll \
+	InputPath:cfg/IP-ctl-no-cancel-sync.cfg:NoStuckKey \
+	InputPath:cfg/IP-live.cfg:pass \
+	InputPath:cfg/IP-ctl-no-deadline.cfg:Temporal \
 	InputPath:cfg/IP-witness.cfg:NeverHeld
 
 input: check-tools

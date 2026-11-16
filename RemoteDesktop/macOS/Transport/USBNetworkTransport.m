@@ -1061,6 +1061,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
             } else if (state == nw_connection_state_failed || state == nw_connection_state_cancelled) {
                 os_log(transport_log(), "TLS input connection ended (state=%d error=%@)",
                        (int)state, connError ? nw_error_copy_cf_error(connError) : NULL);
+                if (self3.onInputStreamEnded) self3.onInputStreamEnded();
                 if (self3.inputConnection == connection) {
                     self3.inputConnection = nil;
                     self3.isConnected = NO;

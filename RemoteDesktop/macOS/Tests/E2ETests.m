@@ -1078,6 +1078,7 @@ static void e2eReceiveMin(nw_connection_t conn, size_t minLen, size_t maxLen,
             (__bridge id)kSecAttrService: service,
             (__bridge id)kSecAttrAccount: account,
             (__bridge id)kSecReturnAttributes: @YES,
+            (__bridge id)kSecUseDataProtectionKeychain: @YES,
         };
 
         CFTypeRef result = NULL;

@@ -48,6 +48,10 @@ NS_ASSUME_NONNULL_BEGIN
 /** Callback fired when the TCP input connection is lost (iPad disconnected).
  *  SessionManager uses this to trigger transport FSM disconnect event. */
 @property (nonatomic, copy, nullable) void (^onInputConnectionLost)(void);
+/** Any iPad input connection (current or stale) reached failed/cancelled: EOF, error, framing
+ *  error or replacement. Fired on the transport queue. InputPath ReleaseOnLoss hook. */
+@property (nonatomic, copy, nullable) void (^onInputStreamEnded)(void);
+
 
 /**
  * Start monitoring for USB NCM interfaces.

@@ -701,6 +701,7 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
         }
         case nw_connection_state_failed:
         case nw_connection_state_cancelled:
+            if (self2.onInputStreamEnded) self2.onInputStreamEnded();
             if (!isActiveConnection) {
                 os_log(wireless_log(),
                        "Ignoring end-state from stale wireless connection (state=%{public}d error=%{public}@ activeInput=%{public}p staleConnection=%{public}p isConnected=%{public}d)",

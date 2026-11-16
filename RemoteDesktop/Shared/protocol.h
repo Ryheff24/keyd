@@ -41,6 +41,8 @@ _Static_assert(sizeof(MediaFrameHeader) == 25,
 #define KEYDRD_INPUT_CLICK                0x02
 #define KEYDRD_INPUT_SCROLL               0x03
 #define KEYDRD_INPUT_KEY                  0x10
+#define KEYDRD_INPUT_HELD                 0x11  /* iPad -> Mac: what the iPad holds now (release-only resync) */
+#define KEYDRD_INPUT_TEXT                 0x12  /* iPad -> Mac: on-screen keyboard text (UTF-16) */
 #define KEYDRD_INPUT_MODE_CHANGE          0x20
 #define KEYDRD_INPUT_RES_MATCH_REQUEST    0x21  /* iPad -> Mac: match iPad resolution */
 #define KEYDRD_INPUT_RES_MATCH_RESPONSE   0x22  /* Mac -> iPad: resolution match result */
@@ -141,3 +143,79 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(ViewportReportPayload) == 8,
                "ViewportReportPayload must be exactly 8 bytes");
+
+/* ==== Pointer and keyboard input (iPad -> Mac), tla/InputPath.tla ====
+ * Wire: InputEventHeader (type, ts_us = iPad host time at the UIKit event) + InputSeq + body,
+ * framed by the 4-byte length prefix (framing.h). Sent immediately, one event per message.
+ *
+ * Mac rules (InputPath design):
+ *  - SeqGuard: a message of the current session is applied only if seq > last applied seq;
+ *    a message of another session starts that session's count.
+ *  - HELD: the Mac releases every key/button it holds that is not listed; it never presses.
+ *    The iPad sends HELD first on every new connection, on every switch of link, and with an
+ *    empty set when it loses its own held state (resign active, presses/touches cancelled).
+ *  - Release-all when any input connection ends, after KEYDRD_INPUT_SILENCE_MS without a
+ *    message while anything is held (the iPad sends KEEPALIVE every KEYDRD_INPUT_HEARTBEAT_MS
+ *    while it holds anything), and when the agent stops.
+ * Pointer coordinates are normalized over the streamed display: 0 = left/top edge,
+ * 65535 = right/bottom edge. */
+#define KEYDRD_INPUT_SILENCE_MS    1000u
+#define KEYDRD_INPUT_HEARTBEAT_MS   250u
+
+#define KEYDRD_BUTTON_LEFT   (1u << 0)
+#define KEYDRD_BUTTON_RIGHT  (1u << 1)
+#define KEYDRD_BUTTON_OTHER  (1u << 2)
+
+typedef struct __attribute__((packed)) {
+    uint64_t session;        /* random per iPad app launch */
+    uint64_t seq;            /* 1, 2, 3, ... per message within the session */
+} InputSeq;
+_Static_assert(sizeof(InputSeq) == 16, "InputSeq must be exactly 16 bytes");
+
+/* type = MOUSE_MOVE: the pointer moved (a drag if buttons != 0). */
+typedef struct __attribute__((packed)) {
+    uint16_t x, y;           /* normalized 0..65535 */
+} PointerMovePayload;
+_Static_assert(sizeof(PointerMovePayload) == 4, "PointerMovePayload must be exactly 4 bytes");
+
+/* type = CLICK: one button goes down or up at (x, y). The Mac counts double clicks. */
+typedef struct __attribute__((packed)) {
+    uint16_t x, y;
+    uint8_t  button;         /* KEYDRD_BUTTON_* (one bit) */
+    uint8_t  down;           /* 1 = down, 0 = up */
+} PointerButtonPayload;
+_Static_assert(sizeof(PointerButtonPayload) == 6, "PointerButtonPayload must be exactly 6 bytes");
+
+/* type = SCROLL: pixel deltas, content follows the fingers (+dy = content moves down). */
+#define KEYDRD_SCROLL_PHASE_NONE     0
+#define KEYDRD_SCROLL_PHASE_BEGAN    1
+#define KEYDRD_SCROLL_PHASE_CHANGED  2
+#define KEYDRD_SCROLL_PHASE_ENDED    3
+#define KEYDRD_SCROLL_PHASE_CANCELLED 4
+typedef struct __attribute__((packed)) {
+    uint16_t x, y;           /* pointer position */
+    int32_t  dx, dy;         /* pixels, in units of 1/16 px */
+    uint8_t  phase;          /* KEYDRD_SCROLL_PHASE_* */
+} ScrollPayload;
+_Static_assert(sizeof(ScrollPayload) == 13, "ScrollPayload must be exactly 13 bytes");
+
+/* type = KEY: a hardware key goes down or up. usage = USB HID usage, page 7 (UIKeyboardHIDUsage). */
+typedef struct __attribute__((packed)) {
+    uint16_t usage;
+    uint8_t  down;
+} KeyPayload;
+_Static_assert(sizeof(KeyPayload) == 3, "KeyPayload must be exactly 3 bytes");
+
+/* type = HELD: buttons + count, then count uint16 HID usages (little-endian). */
+#define KEYDRD_HELD_MAX_KEYS 32
+typedef struct __attribute__((packed)) {
+    uint8_t  buttons;        /* KEYDRD_BUTTON_* held now */
+    uint8_t  count;          /* number of usages that follow (<= KEYDRD_HELD_MAX_KEYS) */
+} HeldPayload;
+_Static_assert(sizeof(HeldPayload) == 2, "HeldPayload must be exactly 2 bytes");
+
+/* type = TEXT: count UTF-16 code units follow (little-endian); typed as a unit, nothing held. */
+typedef struct __attribute__((packed)) {
+    uint16_t count;
+} TextPayload;
+_Static_assert(sizeof(TextPayload) == 2, "TextPayload must be exactly 2 bytes");

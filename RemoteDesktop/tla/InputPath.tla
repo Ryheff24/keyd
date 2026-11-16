@@ -17,7 +17,12 @@
 (*   (ReleaseOnLoss).  On every new connection and every switch of link   *)
 (*   the iPad first sends HELD = the set it holds now; the Mac releases    *)
 (*   what is not in it and never presses from it (Resync, release-only).   *)
-(*   Agent stop releases everything (StopRelease).                         *)
+(*   Agent stop releases everything (StopRelease).  When the iPad loses   *)
+(*   its own held state with the link still up (resign active, presses or *)
+(*   touches cancelled, a system shortcut eats the key-up) it sends        *)
+(*   HELD = {} (CancelSync).  While anything is held the iPad sends a      *)
+(*   heartbeat every T/2 and the Mac releases everything after T of        *)
+(*   silence (SilenceDeadline), bounding a stuck key on a half-open link.  *)
 (*   Accepted costs: a press racing a HELD may be lost (release-only), and *)
 (*   any link loss on the Mac releases keys held through the other link.   *)
 (*                                                                         *)
@@ -34,12 +39,14 @@
 (*  I5 [T] An iPad relaunch (process start + TLS handshake, >= 1 s) takes  *)
 (*         longer than the Mac reading bytes a closed socket already sent: *)
 (*         sessions do not interleave on the Mac.                          *)
+(*  I6 [T] Heartbeat period < T: the deadline never fires while a link the *)
+(*         Mac reads from is alive, and fires once every such link is dead. *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS
     Keys, Links, MaxSeq, MaxSession,
-    SeqGuard, ReleaseOnLoss, Resync, StopRelease
+    SeqGuard, ReleaseOnLoss, Resync, StopRelease, CancelSync, SilenceDeadline
 
 Msg == [ses : 1..MaxSession, seq : 1..MaxSeq, kind : {"down", "up", "held"},
         key : Keys \cup {"none"}, held : SUBSET Keys]
@@ -79,6 +86,24 @@ Release(k) ==
        THEN iSeq' = iSeq + 1 /\ Send(NewMsg("up", k, {}))
        ELSE UNCHANGED <<iSeq, chan>>
     /\ UNCHANGED <<iSes, cur, up, ipadSees, macSees, mHeld, mSes, mLast, stopped, outOfOrder>>
+
+\* The iPad loses its held state with no key-up (resign active, pressesCancelled,
+\* touchesCancelled, a system shortcut).  CancelSync: it tells the Mac with HELD = {}.
+Cancel ==
+    /\ ~stopped /\ Room /\ iHeld # {}
+    /\ iHeld' = {}
+    /\ IF CancelSync /\ CanSend
+       THEN iSeq' = iSeq + 1 /\ Send(NewMsg("held", "none", {}))
+       ELSE UNCHANGED <<iSeq, chan>>
+    /\ UNCHANGED <<iSes, cur, up, ipadSees, macSees, mHeld, mSes, mLast, stopped, outOfOrder>>
+
+\* SilenceDeadline (I6): every link the Mac still reads from is dead, so the heartbeat
+\* stops and after T the Mac releases everything.
+Expire ==
+    /\ SilenceDeadline /\ ~stopped /\ mHeld # {}
+    /\ \A l \in Links : macSees[l] => ~up[l] /\ chan[l] = <<>>
+    /\ mHeld' = {}
+    /\ UNCHANGED <<iHeld, iSes, iSeq, cur, up, ipadSees, macSees, chan, mSes, mLast, stopped, outOfOrder>>
 
 \* Link l dies; its in-flight messages are lost (I1).
 Drop(l) ==
@@ -154,9 +179,12 @@ Stop ==
 Next ==
     \/ \E k \in Keys : Press(k) \/ Release(k)
     \/ \E l \in Links : Drop(l) \/ IpadSeeDrop(l) \/ MacSeeDrop(l) \/ Connect(l) \/ Switch(l) \/ Deliver(l)
-    \/ Relaunch \/ Stop
+    \/ Cancel \/ Expire \/ Relaunch \/ Stop
 
 Spec == Init /\ [][Next]_vars
+
+\* Liveness rows: the Mac's deadline is the only fair action (nothing else is promised).
+FairSpec == Spec /\ WF_vars(Expire)
 
 -----------------------------------------------------------------------------
 TypeOK ==
@@ -176,6 +204,11 @@ NoStuckKey == Quiet => mHeld \subseteq iHeld
 \* Once the Mac knows every input link has ended it holds nothing: unplugging
 \* cannot leave a key down or auto-repeating.
 HeldNeedsLink == mHeld # {} => \E l \in Links : macSees[l]
+
+\* Every link is dead and the Mac still holds a key: it lets go, even if it never
+\* notices the loss (half-open TCP).  Checked under FairSpec.
+AllDead == \A l \in Links : ~up[l]
+DeadLinkReleases == (AllDead /\ mHeld # {}) ~> (mHeld = {} \/ ~AllDead)
 
 \* Within one session the Mac applies messages in the order the iPad sent them.
 InOrder == ~outOfOrder
