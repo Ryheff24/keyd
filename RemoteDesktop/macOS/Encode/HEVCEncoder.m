@@ -53,6 +53,7 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
     uint16_t _seq;
     atomic_int _pendingFrameCount;
     atomic_bool _forceNextKeyframe;
+    atomic_uint _droppedOutputCount;
     int _skipLogCount;
     int _saturationHitStreak;
     int _saturationSkipStreak;
@@ -206,6 +207,10 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
         _session = NULL;
     }
     os_log_info(hevc_log(), "HEVC encoder stopped");
+}
+
+- (uint32_t)droppedOutputCount {
+    return atomic_load(&_droppedOutputCount);
 }
 
 - (void)requestKeyframe {
@@ -585,7 +590,14 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
         /* Informational callback (no output) — not an error */
         return;
     }
-    if (!encoder || !encoder.isActive || !encoder.onEncodedFrame) return;
+    if (!encoder || !encoder.isActive) return;  /* stopped: the restart's keyframe resyncs */
+    if (!encoder.onEncodedFrame) {
+        /* tla/FrameLoop.tla KeyOnBreak: an encoded frame that never reaches the wire is a loss.
+         * The session reads this count at its send gate and holds deltas until a keyframe. */
+        unsigned n = atomic_fetch_add(&encoder->_droppedOutputCount, 1) + 1;
+        os_log(hevc_log(), "FL MacLoss reason=encoder-output-dropped count=%u", n);
+        return;
+    }
 
     /* Pipeline latency probe: how long from capture to encode-complete? */
     if (captureTimestampUs > 0) {

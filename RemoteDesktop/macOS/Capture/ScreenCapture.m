@@ -186,6 +186,11 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     dispatch_queue_t _captureQueue;   /* high-priority serial — SCStream output */
     dispatch_queue_t _compressQueue;  /* high-priority serial — compression */
 
+    /* tla/FrameLoop.tla IdleKey: the last complete frame, retained (only on _captureQueue) so a
+     * keyframe can be produced while the screen is static and SCStream sends only idle frames. */
+    CMSampleBufferRef _lastCompleteSample;
+    CMTime _lastDeliveredPTS;  /* PTS of the last frame handed to the encoder (re-emits too) */
+
     /* Frame watchdog */
     dispatch_source_t _watchdogTimer;
     NSTimeInterval _lastFrameTime;
@@ -365,7 +370,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     config.pixelFormat = kCVPixelFormatType_32BGRA;  /* RD-CAP-06: BGRA throughout */
     uint32_t targetFPS = MAX((uint32_t)1, self.captureFPS > 0 ? self.captureFPS : (uint32_t)kSyntheticFPS);
     config.minimumFrameInterval = CMTimeMake(1, (int32_t)targetFPS);
-    config.queueDepth = 3;
+    config.queueDepth = 4;  /* +1: IdleKey holds the last complete frame */
     config.showsCursor = YES;
     /* Determine capture resolution.
      * If captureWidth/Height are set (from iPad viewport report), use those —
@@ -478,6 +483,12 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     }
 
     [self _drainCompressionPipeline];
+    dispatch_async(_captureQueue, ^{  /* async: never deadlock if called on the capture queue */
+        if (self->_lastCompleteSample) {
+            CFRelease(self->_lastCompleteSample);
+            self->_lastCompleteSample = NULL;
+        }
+    });
 
     /* Destroy compressor */
     if (_compressorInitialized) {
@@ -537,6 +548,15 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
 }
 
 - (void)updateCaptureResolution:(uint32_t)width height:(uint32_t)height {
+    /* IdleKey: a retained frame of the old size must not be re-emitted into the new encoder or
+     * compressor (the compressor refuses it, the encoder would scale it). */
+    dispatch_async(_captureQueue, ^{
+        if (self->_lastCompleteSample) {
+            CFRelease(self->_lastCompleteSample);
+            self->_lastCompleteSample = NULL;
+            os_log(sc_log(), "FL MacIdleKey dropped retained frame (capture resolution change)");
+        }
+    });
     if (!_isCapturing || !_stream) {
         os_log(sc_log(), "updateCaptureResolution: not capturing, storing %ux%u for next start",
                width, height);
@@ -588,7 +608,7 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     config.pixelFormat = kCVPixelFormatType_32BGRA;
     uint32_t targetFPS = MAX((uint32_t)1, self.captureFPS > 0 ? self.captureFPS : (uint32_t)kSyntheticFPS);
     config.minimumFrameInterval = CMTimeMake(1, (int32_t)targetFPS);
-    config.queueDepth = 3;
+    config.queueDepth = 4;  /* +1: IdleKey holds the last complete frame */
     config.showsCursor = YES;
 
     os_log(sc_log(), "Updating capture resolution to %ux%u @%ufps (live reconfigure)", width, height, targetFPS);
@@ -1355,6 +1375,31 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
         }
     }
 
+    /* IdleKey: keep the newest complete frame for reemitLastFrame. */
+    if (_lastCompleteSample != sampleBuffer) {
+        CFRetain(sampleBuffer);
+        if (_lastCompleteSample) CFRelease(_lastCompleteSample);
+        _lastCompleteSample = sampleBuffer;
+    }
+    [self _deliverCompleteSampleBuffer:sampleBuffer reemit:NO];
+}
+
+- (void)reemitLastFrame {
+    dispatch_async(_captureQueue, ^{
+        CMSampleBufferRef last = self->_lastCompleteSample;
+        if (!last || !self->_isCapturing) {
+            os_log(sc_log(), "FL MacIdleKey reemit=none (hasFrame=%d capturing=%d)",
+                   last != NULL, self->_isCapturing);
+            return;
+        }
+        CFRetain(last);
+        [self _deliverCompleteSampleBuffer:last reemit:YES];
+        CFRelease(last);
+    });
+}
+
+/* A complete frame (status checked), live or re-emitted (IdleKey). Runs on _captureQueue. */
+- (void)_deliverCompleteSampleBuffer:(CMSampleBufferRef)sampleBuffer reemit:(BOOL)reemit {
     /* Log first few complete frames */
     static int totalFrameCount = 0;
     if (totalFrameCount < 5) {
@@ -1363,8 +1408,8 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
     }
     totalFrameCount++;
 
-    /* Update watchdog timestamp */
-    _lastFrameTime = [NSDate timeIntervalSinceReferenceDate];
+    /* Update watchdog timestamp (a re-emit is not a sign the stream is alive) */
+    if (!reemit) _lastFrameTime = [NSDate timeIntervalSinceReferenceDate];
 
     /* Get pixel buffer and IOSurface */
     CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
@@ -1401,7 +1446,13 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
             os_log(sc_log(), "onPixelBuffer: delivering frame %d to HEVC encoder", hevcFrameCount);
         }
         hevcFrameCount++;
+        /* A re-emit gets the last PTS + 1 ms: encoder timestamps stay increasing for both
+         * sources (SCStream PTS is host time; the synthetic source counts frames, 1/fps apart). */
         CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+        if (reemit && CMTIME_IS_VALID(_lastDeliveredPTS)) {
+            pts = CMTimeAdd(_lastDeliveredPTS, CMTimeMake(1, 1000));
+        }
+        _lastDeliveredPTS = pts;
         self.onPixelBuffer(pixelBuffer, pts, captureTimestampUs);
         CFRelease(sampleBuffer);
         return;

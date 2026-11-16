@@ -112,6 +112,12 @@ typedef void (^ScreenCaptureReauthCallback)(void);
  */
 - (void)requestLZ4Keyframe;
 
+/**
+ * tla/FrameLoop.tla IdleKey: deliver the last complete frame again (fresh timestamps) through the
+ * active path (HEVC or LZ4), so a requested keyframe goes out while the screen is static.
+ */
+- (void)reemitLastFrame;
+
 @end
 
 NS_ASSUME_NONNULL_END

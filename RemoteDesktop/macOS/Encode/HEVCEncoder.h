@@ -59,6 +59,9 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 /// Request that the next submitted frame be encoded as a keyframe.
 - (void)requestKeyframe;
 
+/** tla/FrameLoop.tla KeyOnBreak: encoded frames dropped before onEncodedFrame (a loss). */
+@property (nonatomic, readonly) uint32_t droppedOutputCount;
+
 /// Update active streaming rate targets without recreating the encoder session.
 /// @param fps     Expected frame rate hint (capture cadence target).
 /// @param bitrate Average bitrate in bits per second (bitrate mode only).

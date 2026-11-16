@@ -134,6 +134,15 @@ NS_ASSUME_NONNULL_BEGIN
  *  tla/Lifecycle.tla RestartOnNewConn: the session restarts on every new epoch. */
 @property (nonatomic, readonly) uint32_t inputConnectionEpoch;
 
+/** tla/FrameLoop.tla HsConn: send only on the ready connection that epoch names; NO (and, for
+ *  media, completion(NO)) if it is no longer current, so a handshake and the frames after it
+ *  share one connection. */
+- (BOOL)sendInputEvent:(const void *)data length:(size_t)len onEpoch:(uint32_t)epoch;
+- (BOOL)sendMediaFrameViaTCP:(const void *)data
+                      length:(size_t)len
+                     onEpoch:(uint32_t)epoch
+                  completion:(void (^ _Nullable)(BOOL success))completion;
+
 /** YES while the current input connection is ready (tla/Lifecycle.tla CountOnSend). */
 @property (nonatomic, readonly) BOOL hasReadyInputConnection;
 

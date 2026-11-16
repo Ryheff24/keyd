@@ -4,6 +4,7 @@
 #import "framing.h"
 #import "crypto.h"
 #import <os/log.h>
+#import <os/lock.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <ifaddrs.h>
@@ -136,7 +137,44 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
 @property (nonatomic, assign, nullable) DNSServiceRef usbAdvertRef;
 @end
 
-@implementation USBNetworkTransport
+@implementation USBNetworkTransport {
+    /* tla/FrameLoop.tla HsConn: _inputConnection and its epoch change together under this lock,
+     * so a sender that saw epoch e sends only on the connection that epoch names. */
+    os_unfair_lock _connLock;
+    uint32_t _inputConnectionEpoch;
+}
+
+@synthesize inputConnection = _inputConnection;
+
+- (nullable nw_connection_t)inputConnection {
+    os_unfair_lock_lock(&_connLock);
+    nw_connection_t c = _inputConnection;
+    os_unfair_lock_unlock(&_connLock);
+    return c;
+}
+
+- (void)setInputConnection:(nw_connection_t)connection {
+    os_unfair_lock_lock(&_connLock);
+    if (_inputConnection != connection) {
+        _inputConnection = connection;
+        _inputConnectionEpoch++;
+    }
+    os_unfair_lock_unlock(&_connLock);
+}
+
+- (uint32_t)inputConnectionEpoch {
+    os_unfair_lock_lock(&_connLock);
+    uint32_t e = _inputConnection ? _inputConnectionEpoch : 0;
+    os_unfair_lock_unlock(&_connLock);
+    return e;
+}
+
+- (nullable nw_connection_t)inputConnectionForEpoch:(uint32_t)epoch {
+    os_unfair_lock_lock(&_connLock);
+    nw_connection_t c = (epoch != 0 && epoch == _inputConnectionEpoch) ? _inputConnection : nil;
+    os_unfair_lock_unlock(&_connLock);
+    return c;
+}
 
 - (NSString *)localIPAddress {
     return _detectedLocalIP;
@@ -149,6 +187,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
                                               DISPATCH_QUEUE_SERIAL);
         _transportQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.usb.transport",
                                                 DISPATCH_QUEUE_SERIAL);
+        _connLock = OS_UNFAIR_LOCK_INIT;
     }
     return self;
 }
@@ -533,7 +572,17 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
 }
 
 - (void)sendInputEvent:(const void *)data length:(size_t)len {
-    nw_connection_t conn = _inputConnection;
+    [self _sendInputEvent:data length:len connection:self.inputConnection];
+}
+
+- (BOOL)sendInputEvent:(const void *)data length:(size_t)len onEpoch:(uint32_t)epoch {
+    nw_connection_t conn = [self inputConnectionForEpoch:epoch];
+    if (!conn) return NO;
+    [self _sendInputEvent:data length:len connection:conn];
+    return YES;
+}
+
+- (void)_sendInputEvent:(const void *)data length:(size_t)len connection:(nullable nw_connection_t)conn {
     if (!conn) return;
     if (len > UINT32_MAX) {
         os_log_error(transport_log(),
@@ -616,7 +665,23 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
 }
 
 - (void)sendMediaViaTCP:(const void *)data length:(size_t)len completion:(void (^)(BOOL success))completion {
-    nw_connection_t conn = _inputConnection;
+    [self _sendMediaViaTCP:data length:len connection:self.inputConnection completion:completion];
+}
+
+- (BOOL)sendMediaViaTCP:(const void *)data length:(size_t)len onEpoch:(uint32_t)epoch
+             completion:(void (^)(BOOL success))completion {
+    nw_connection_t conn = [self inputConnectionForEpoch:epoch];
+    if (!conn) {
+        os_log(transport_log(), "USB media send skipped: connection epoch %u is not current", epoch);
+        if (completion) completion(NO);
+        return NO;
+    }
+    [self _sendMediaViaTCP:data length:len connection:conn completion:completion];
+    return YES;
+}
+
+- (void)_sendMediaViaTCP:(const void *)data length:(size_t)len connection:(nullable nw_connection_t)conn
+              completion:(void (^)(BOOL success))completion {
     if (!conn) {
         os_log_error(transport_log(), "USB media send skipped: no TCP input connection");
         if (completion) completion(NO);
@@ -778,6 +843,32 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
                          payload:(const void *)payload
                    payloadLength:(size_t)payloadLen
                       completion:(void (^)(BOOL success))completion {
+    [self _sendMediaFrameWithHeader:header payload:payload payloadLength:payloadLen
+                         connection:self.inputConnection completion:completion];
+}
+
+- (BOOL)sendMediaFrameWithHeader:(const MediaFrameHeader *)header
+                         payload:(const void *)payload
+                   payloadLength:(size_t)payloadLen
+                         onEpoch:(uint32_t)epoch
+                      completion:(void (^)(BOOL success))completion {
+    nw_connection_t conn = [self inputConnectionForEpoch:epoch];
+    if (!conn) {
+        os_log(transport_log(), "USB media split-send skipped: connection epoch %u is not current (seq=%u)",
+               epoch, header ? header->seq : 0);
+        if (completion) completion(NO);
+        return NO;
+    }
+    [self _sendMediaFrameWithHeader:header payload:payload payloadLength:payloadLen
+                         connection:conn completion:completion];
+    return YES;
+}
+
+- (void)_sendMediaFrameWithHeader:(const MediaFrameHeader *)header
+                          payload:(const void *)payload
+                    payloadLength:(size_t)payloadLen
+                       connection:(nullable nw_connection_t)conn
+                       completion:(void (^)(BOOL success))completion {
     if (!header || (!payload && payloadLen > 0)) {
         os_log_error(transport_log(),
                      "USB media split-send skipped: invalid args header=%{public}s payload=%{public}s payloadLen=%zu",
@@ -786,7 +877,6 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
         return;
     }
 
-    nw_connection_t conn = _inputConnection;
     if (!conn) {
         os_log_error(transport_log(), "USB media split-send skipped: no TCP input connection (seq=%u)", header->seq);
         if (completion) completion(NO);
@@ -1235,9 +1325,10 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
         nw_connection_cancel(_mediaConnection);
         _mediaConnection = nil;
     }
-    if (_inputConnection) {
-        nw_connection_cancel(_inputConnection);
-        _inputConnection = nil;
+    nw_connection_t input = self.inputConnection;
+    if (input) {
+        nw_connection_cancel(input);
+        self.inputConnection = nil;
     }
 }
 

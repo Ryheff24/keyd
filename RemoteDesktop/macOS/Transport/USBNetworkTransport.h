@@ -107,6 +107,22 @@ NS_ASSUME_NONNULL_BEGIN
                    payloadLength:(size_t)payloadLen
                       completion:(void (^)(BOOL success))completion;
 
+/**
+ * tla/FrameLoop.tla HsConn: identity of the current TCP input connection (0 = none). It changes
+ * whenever the connection pointer does (accept, end, teardown). The onEpoch: sends go out only on
+ * the connection that epoch names and return NO (completion(NO) for media) otherwise, so a
+ * handshake and the frames after it share one connection.
+ */
+@property (nonatomic, readonly) uint32_t inputConnectionEpoch;
+- (BOOL)sendInputEvent:(const void *)data length:(size_t)len onEpoch:(uint32_t)epoch;
+- (BOOL)sendMediaViaTCP:(const void *)data length:(size_t)len onEpoch:(uint32_t)epoch
+             completion:(void (^)(BOOL success))completion;
+- (BOOL)sendMediaFrameWithHeader:(const MediaFrameHeader *)header
+                         payload:(const void *)payload
+                   payloadLength:(size_t)payloadLen
+                         onEpoch:(uint32_t)epoch
+                      completion:(void (^)(BOOL success))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

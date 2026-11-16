@@ -28,6 +28,10 @@ final class USBNetworkTransport {
     /// Callback fired when raw input event data arrives over TCP.
     var onInputReceived: ((Data) -> Void)?
 
+    /// tla/FrameLoop.tla HsConn: as onInputReceived, with the serial of the connection the
+    /// message arrived on. When set, it is called instead of onInputReceived.
+    var onInputReceivedFrom: ((Data, UInt64) -> Void)?
+
     /// Callback fired when the USB NCM interface appears or disappears.
     var onInterfaceChanged: ((_ appeared: Bool, _ interface: NWInterface?) -> Void)?
 
@@ -46,7 +50,27 @@ final class USBNetworkTransport {
     private let transportQueue = DispatchQueue(label: "com.ryheff.keyd.remote.app.usb.transport")
 
     private var mediaConnection: NWConnection?
-    private var inputConnection: NWConnection?
+    private var inputConnection: NWConnection? {
+        didSet {
+            // tla/FrameLoop.tla HsConn: each new input connection gets a serial. Messages carry
+            // the serial of the connection they arrived on; onSerial: sends go out only on it.
+            guard inputConnection !== oldValue else { return }
+            connLock.lock()
+            if inputConnection != nil { inputConnectionSerialStorage &+= 1 }
+            lockedInputConnection = inputConnection
+            connLock.unlock()
+        }
+    }
+    private let connLock = NSLock()
+    private var tcpBufferSerial: UInt64 = 0  // serial whose bytes tcpBuffer holds
+    private var inputConnectionSerialStorage: UInt64 = 0
+    private var lockedInputConnection: NWConnection?
+
+    /// Serial of the current input connection (0 before the first).
+    var inputConnectionSerial: UInt64 {
+        connLock.lock(); defer { connLock.unlock() }
+        return lockedInputConnection == nil ? 0 : inputConnectionSerialStorage
+    }
 
     /// TCP reassembly buffer for length-prefixed messages.
     private var tcpBuffer = Data()
@@ -546,6 +570,25 @@ final class USBNetworkTransport {
         }
     }
 
+    /// tla/FrameLoop.tla VpOnHsConn / KeyRetry: send only on the connection `serial` names.
+    @discardableResult
+    func sendInputEvent(_ data: Data, onSerial serial: UInt64) -> Bool {
+        connLock.lock()
+        let connection = (serial != 0 && serial == inputConnectionSerialStorage) ? lockedInputConnection : nil
+        connLock.unlock()
+        guard let connection else { return false }
+        var framed = Data(capacity: data.count + 4)
+        var len = UInt32(data.count).bigEndian
+        withUnsafeBytes(of: &len) { framed.append(contentsOf: $0) }
+        framed.append(data)
+        connection.send(content: framed, completion: .contentProcessed { [weak self] error in
+            if let error = error {
+                self?.log.error("Input send (serial) error: \(error)")
+            }
+        })
+        return true
+    }
+
     /// Send an input event over TCP to the Mac.
     func sendInputEvent(_ data: Data) {
         guard let connection = inputConnection else { return }
@@ -923,7 +966,23 @@ final class USBNetworkTransport {
         connection.receive(minimumIncompleteLength: 1, maximumLength: Self.tcpReceiveMaxLength) {
             [weak self] content, _, isComplete, error in
             guard let self = self else { return }
+            // tla/FrameLoop.tla HsConn: a callback from a replaced connection must not feed the
+            // shared reassembly buffer (its bytes would be framed as the new connection's).
+            guard self.inputConnection === connection else {
+                print("[CONSOLE] USBTransport: stale TCP receive callback dropped (bytes=\(content?.count ?? 0) isComplete=\(isComplete) error=\(String(describing: error)))")
+                return
+            }
 
+            let rxSerial = self.inputConnectionSerial
+            if rxSerial != self.tcpBufferSerial {
+                // First bytes of a new connection: drop any partial message of the old one.
+                if self.tcpBuffer.count > self.tcpBufferReadOffset {
+                    print("[CONSOLE] FL transport buffer reset for new connection serial=\(rxSerial) prev=\(self.tcpBufferSerial) leftover=\(self.tcpBuffer.count - self.tcpBufferReadOffset)B")
+                }
+                self.tcpBuffer.removeAll(keepingCapacity: true)
+                self.tcpBufferReadOffset = 0
+                self.tcpBufferSerial = rxSerial
+            }
             if let data = content, !data.isEmpty {
                 let beforeCount = self.tcpBuffer.count
                 self.reserveTCPBufferIfNeeded(incomingBytes: data.count, currentCount: beforeCount)
@@ -940,7 +999,7 @@ final class USBNetworkTransport {
                         self.log.info("USB TCP recv append=\(data.count, privacy: .public)B buffer=\(afterCount, privacy: .public)B readOffset=\(self.tcpBufferReadOffset, privacy: .public) sample=\(self.tcpRecvAppendLogCount, privacy: .public)")
                     }
                 }
-                self.drainUSBTCPBuffer()
+                self.drainUSBTCPBuffer(serial: rxSerial)
             }
 
             if let error = error {
@@ -980,7 +1039,7 @@ final class USBNetworkTransport {
     }
 
     /// Extract complete length-prefixed messages from the USB TCP reassembly buffer.
-    private func drainUSBTCPBuffer() {
+    private func drainUSBTCPBuffer(serial: UInt64 = 0) {
         tcpDrainInvocationCount += 1
         let drainStart = CFAbsoluteTimeGetCurrent()
         let startBufferCount = tcpBuffer.count
@@ -1028,7 +1087,11 @@ final class USBNetworkTransport {
             tcpBufferReadOffset = msgEnd
             deliveredThisDrain += 1
             tcpMessagesDelivered += 1
-            onInputReceived?(message)
+            if let from = onInputReceivedFrom {
+                from(message, serial)
+            } else {
+                onInputReceived?(message)
+            }
         }
 
         // Compact only when consumed bytes dominate unread bytes to avoid frequent O(n) memmove churn.

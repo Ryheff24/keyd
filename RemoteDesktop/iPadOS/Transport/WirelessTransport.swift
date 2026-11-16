@@ -89,6 +89,10 @@ final class WirelessTransport {
     /// Callback fired when raw input event data arrives over TCP.
     var onInputReceived: ((Data) -> Void)?
 
+    /// tla/FrameLoop.tla HsConn: as onInputReceived, with the serial of the connection the
+    /// message arrived on. When set, it is called instead of onInputReceived.
+    var onInputReceivedFrom: ((Data, UInt64) -> Void)?
+
     /// Callback fired when a wireless connection is established or lost.
     var onConnectionChanged: ((_ connected: Bool, _ isAWDL: Bool) -> Void)?
 
@@ -104,7 +108,27 @@ final class WirelessTransport {
     private var controlRecoveryStartedAt: DispatchTime?
 
     private var mediaConnection: NWConnection?
-    private var inputConnection: NWConnection?
+    private var inputConnection: NWConnection? {
+        didSet {
+            // tla/FrameLoop.tla HsConn: each new input connection gets a serial. Messages carry
+            // the serial of the connection they arrived on; onSerial: sends go out only on it.
+            guard inputConnection !== oldValue else { return }
+            connLock.lock()
+            if inputConnection != nil { inputConnectionSerialStorage &+= 1 }
+            lockedInputConnection = inputConnection
+            connLock.unlock()
+        }
+    }
+    private let connLock = NSLock()
+    private var tcpBufferSerial: UInt64 = 0  // serial whose bytes tcpBuffer holds
+    private var inputConnectionSerialStorage: UInt64 = 0
+    private var lockedInputConnection: NWConnection?
+
+    /// Serial of the current input connection (0 before the first).
+    var inputConnectionSerial: UInt64 {
+        connLock.lock(); defer { connLock.unlock() }
+        return lockedInputConnection == nil ? 0 : inputConnectionSerialStorage
+    }
 
     /// TCP reassembly buffer for length-prefixed messages.
     /// Mac prepends 4-byte big-endian length before each message.
@@ -505,6 +529,25 @@ final class WirelessTransport {
         browser?.cancel()
         browser = nil
         tearDownConnections(reason: "stopBrowsing")
+    }
+
+    /// tla/FrameLoop.tla VpOnHsConn / KeyRetry: send only on the connection `serial` names.
+    @discardableResult
+    func sendInputEvent(_ data: Data, onSerial serial: UInt64) -> Bool {
+        connLock.lock()
+        let connection = (serial != 0 && serial == inputConnectionSerialStorage) ? lockedInputConnection : nil
+        connLock.unlock()
+        guard let connection else { return false }
+        var framed = Data(capacity: data.count + 4)
+        var len = UInt32(data.count).bigEndian
+        withUnsafeBytes(of: &len) { framed.append(contentsOf: $0) }
+        framed.append(data)
+        connection.send(content: framed, completion: .contentProcessed { [weak self] error in
+            if let error = error {
+                self?.log.error("Input send (serial) error: \(error)")
+            }
+        })
+        return true
     }
 
     /// Send an input event over TCP to the Mac.
@@ -939,6 +982,16 @@ final class WirelessTransport {
                 return
             }
 
+            let rxSerial = self.inputConnectionSerial
+            if rxSerial != self.tcpBufferSerial {
+                // First bytes of a new connection: drop any partial message of the old one.
+                if self.tcpBuffer.count > self.tcpBufferReadOffset {
+                    print("[CONSOLE] FL transport buffer reset for new connection serial=\(rxSerial) prev=\(self.tcpBufferSerial) leftover=\(self.tcpBuffer.count - self.tcpBufferReadOffset)B")
+                }
+                self.tcpBuffer.removeAll(keepingCapacity: true)
+                self.tcpBufferReadOffset = 0
+                self.tcpBufferSerial = rxSerial
+            }
             if let data = content, !data.isEmpty {
                 self.lastControlRxUptimeNs = DispatchTime.now().uptimeNanoseconds
                 FrameTimeline.shared.tcpReceive(atUs: rxUs, bytes: data.count)
@@ -952,7 +1005,7 @@ final class WirelessTransport {
                         print("[CONSOLE] WirelessTransport: tcp-recv append=\(data.count)B buffer=\(afterCount)B readOffset=\(self.tcpBufferReadOffset) sample=\(self.tcpAppendLogCount)")
                     }
                 }
-                self.drainTCPBuffer()
+                self.drainTCPBuffer(serial: rxSerial)
             }
 
             if let error = error {
@@ -983,7 +1036,7 @@ final class WirelessTransport {
 
     /// Extract complete length-prefixed messages from the TCP reassembly buffer.
     /// Format: [4 bytes big-endian length][payload of that length]
-    private func drainTCPBuffer() {
+    private func drainTCPBuffer(serial: UInt64 = 0) {
         tcpDrainInvocationCount += 1
         let drainStart = CFAbsoluteTimeGetCurrent()
         let startCount = tcpBuffer.count
@@ -1038,7 +1091,11 @@ final class WirelessTransport {
                 continue
             }
             FrameTimeline.shared.tcpMessageDelivered(moreBuffered: tcpBuffer.count > tcpBufferReadOffset)
-            onInputReceived?(message)
+            if let from = onInputReceivedFrom {
+                from(message, serial)
+            } else {
+                onInputReceived?(message)
+            }
         }
 
         // Compact only when enough bytes were consumed to justify O(n) copy.

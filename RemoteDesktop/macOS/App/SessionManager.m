@@ -462,6 +462,33 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     int32_t _wifiPerfAckRttSamples;
     uint64_t _wifiPerfAckRttTotalUs;
     uint64_t _wifiPerfAckRttMaxUs;
+
+    /* tla/FrameLoop.tla (Design). Every log line tagged "FL <Action>" names the model step it is.
+     * One send gate, under _flLock, at each transport submit (USB x2, Wi-Fi), held together with
+     * the submit so the gate's decision and the wire order agree (the model's Send is atomic):
+     *   HsConn:     a frame for a route (transport, connection epoch) that has not had this
+     *               session's handshake gets one first, tagged with a fresh epoch, on that very
+     *               connection; the iPad takes media only from the connection of the newest epoch.
+     *   KeyOnBreak: after a handshake, a loss, a codec change or an iPad request, deltas are held
+     *               (never sent) until a keyframe goes out.
+     *   IdleKey:    while a key is owed and the source is idle, the last frame is re-emitted.
+     *   EpochMonotone: epochs only grow, across agent relaunches too (wall clock, persisted). */
+    os_unfair_lock _flLock;
+    BOOL _flHsCached;                 /* sendSessionHandshake built the handshake below */
+    SessionHandshakeMessage _flHs;
+    uint64_t _flRouteKey;             /* (route << 32) | connection epoch the last handshake went on */
+    uint32_t _flEpoch;                /* epoch of the last handshake sent */
+    BOOL _flNeedKey;                  /* KeyOnBreak: hold deltas until a keyframe is sent */
+    const char *_flNeedReason;
+    uint64_t _flNeedSinceUs;
+    uint64_t _flLastKeyReqUs;
+    uint64_t _flLastReemitUs;
+    uint64_t _flLastFrameUs;          /* last frame offered to the gate (source not idle) */
+    uint32_t _flHeld;                 /* deltas held since the key became owed */
+    int _flLastCodec;                 /* -1 none yet, 0 LZ4, 1 HEVC */
+    uint32_t _flEncDropSeen;
+    int32_t _flLossPending;           /* losses noted lock-free (completions may run inside the gate) */
+    dispatch_source_t _flIdleTimer;
 }
 
 - (instancetype)initWithTestMode:(BOOL)testMode
@@ -485,6 +512,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     self = [super init];
     if (self) {
         sLog = os_log_create("com.ryheff.keyd.remote.agent", "SessionManager");
+        _flLock = OS_UNFAIR_LOCK_INIT;  /* tla/FrameLoop.tla send gate */
+        _flLastCodec = -1;
         _testMode = testMode;
         _automationMode = automationMode;
         _wiredOnly = wiredOnly;
@@ -1370,11 +1399,28 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         .capabilities = KEYDRD_CAP_LZ4 | KEYDRD_CAP_HEVC | KEYDRD_CAP_ECO_AVAILABLE,
         .max_fps = 120,
         .agent_version = 1,
-        .reserved = 0
+        .reserved = 0   /* FrameLoop epoch, set per send */
     };
 
-    /* Send handshake over active transport's TCP channel */
-    [self sendInputEventToiPad:&handshake length:sizeof(handshake)];
+    /* tla/FrameLoop.tla HsConn: every session handshake carries a fresh epoch, goes on the
+     * connection media will use, and owes a keyframe. If no connection is current, the next
+     * frame's gate sends it (route key cleared). */
+    uint64_t flNowUs = keydrd_host_time_us();
+    os_unfair_lock_lock(&_flLock);
+    _flHs = handshake;
+    _flHsCached = YES;
+    uint32_t flConn = 0;
+    FLRoute flRoute = [self flCurrentRouteEpoch:&flConn];
+    if (![self flSendHandshakeLockedOnRoute:flRoute epoch:flConn reason:"session" nowUs:flNowUs]) {
+        _flRouteKey = 0;
+        [self flNeedKeyLocked:"handshake-unsent" nowUs:flNowUs];
+        os_log(sLog, "FL MacHsDeferred route=%{public}s conn=%u (sent by the next frame's gate)",
+               fl_route_name(flRoute), flConn);
+    }
+    _flLastKeyReqUs = flNowUs;
+    os_unfair_lock_unlock(&_flLock);
+    [self flRequestKeyframe:"handshake"];
+    [self flStartIdleTimerIfNeeded];
 
     os_log(sLog, "Sent session handshake: %ux%u @%.1fx, aspect=%.4f",
            _captureWidth, _captureHeight, _captureScale, handshake.aspect_ratio);
@@ -1408,10 +1454,17 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     /* LZ4 compressed frame callback (wired/USB mode) */
     _capture.onFrame = ^(CompressOutput *output) {
         SessionManager *strongSelf = weakSelf;
-        if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
+        if (!strongSelf) return;
+        if (strongSelf.sessionState != SESSION_STREAMING) {
+            /* Compressed (the LZ4 reference moved) but never sent: KeyOnBreak loss. */
+            [strongSelf flNoteLoss:"lz4-not-streaming" seq:output->header.seq];
+            return;
+        }
 
         if (strongSelf->_hevcEncoder.isActive) {
-            /* HEVC mode: frames sent via onEncodedFrame callback instead */
+            /* HEVC mode: frames sent via onEncodedFrame callback instead. Not a loss for the
+             * FrameLoop gate: this LZ4 chain is abandoned, and resuming LZ4 is a codec change,
+             * which owes a keyframe at the gate. */
             return;
         }
 
@@ -1579,7 +1632,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     /* HEVC encoder output callback */
     _hevcEncoder.onEncodedFrame = ^(const void *data, size_t len, MediaFrameHeader header) {
         SessionManager *strongSelf = weakSelf;
-        if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
+        if (!strongSelf) return;
+        if (strongSelf.sessionState != SESSION_STREAMING) {
+            [strongSelf flNoteLoss:"hevc-not-streaming" seq:header.seq];  /* encoded, never sent */
+            return;
+        }
 
         static int hevcSentCount = 0;
         if (hevcSentCount < 3) {
@@ -1622,6 +1679,206 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
 #pragma mark - Transport Send Helpers
 
+#pragma mark - FrameLoop send gate (tla/FrameLoop.tla)
+
+typedef NS_ENUM(uint32_t, FLRoute) { FLRouteNone = 0, FLRouteUSB = 1, FLRouteWiFi = 2 };
+
+static const char *fl_route_name(uint32_t r) {
+    return r == FLRouteUSB ? "usb" : (r == FLRouteWiFi ? "wifi" : "none");
+}
+
+static NSString * const kFLLastEpochDefaultsKey = @"FLLastHandshakeEpoch";
+
+/* EpochMonotone: larger than the previous epoch, than the last one persisted (an earlier agent
+ * run) and than 16 per wall-clock second since 2023-11-14 (in case the defaults were lost).
+ * Assumption (FrameLoop.tla F6): the wall clock does not step back across relaunches by more
+ * than the persisted value covers. Wraps in 2032. */
+- (uint32_t)flNextEpochLocked {
+    uint64_t t = (uint64_t)time(NULL);
+    uint64_t clockEpoch = t > 1700000000ULL ? (t - 1700000000ULL) * 16ULL : 0;
+    uint64_t persisted = (uint64_t)[[NSUserDefaults standardUserDefaults] integerForKey:kFLLastEpochDefaultsKey];
+    uint64_t e = (uint64_t)_flEpoch + 1;
+    if (persisted + 1 > e) e = persisted + 1;
+    if (clockEpoch > e) e = clockEpoch;
+    if (e > UINT32_MAX) e = UINT32_MAX;
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)e forKey:kFLLastEpochDefaultsKey];
+    return (uint32_t)e;
+}
+
+/* Where media goes now, the same choice sendInputEventToiPad and the submit sites make. */
+- (FLRoute)flCurrentRouteEpoch:(uint32_t *)outEpoch {
+    if (_usbTransport.isConnected) {
+        *outEpoch = _usbTransport.inputConnectionEpoch;
+        return FLRouteUSB;
+    }
+    if (_wirelessTransport.isConnected && _wirelessTransport.hasReadyInputConnection) {
+        *outEpoch = _wirelessTransport.inputConnectionEpoch;
+        return FLRouteWiFi;
+    }
+    *outEpoch = 0;
+    return FLRouteNone;
+}
+
+/* A frame that will never reach the iPad (any send failure, any post-encode drop): the next
+ * frame must be a keyframe. Lock-free: transport completions can run synchronously inside the
+ * gate; the gate absorbs the count before its next decision. */
+- (void)flNoteLoss:(const char *)reason seq:(uint32_t)seq {
+    int32_t n = OSAtomicIncrement32Barrier(&_flLossPending);
+    static int32_t lossLogs = 0;
+    int32_t c = OSAtomicIncrement32Barrier(&lossLogs);
+    if (c <= 50 || c % 100 == 0) {
+        os_log(sLog, "FL MacLoss reason=%{public}s seq=%u pending=%d total=%d", reason, seq, n, c);
+    }
+}
+
+- (void)flNeedKeyLocked:(const char *)reason nowUs:(uint64_t)nowUs {
+    if (_flNeedKey) return;
+    _flNeedKey = YES;
+    _flNeedReason = reason;
+    _flNeedSinceUs = nowUs;
+    _flHeld = 0;
+    _flLastKeyReqUs = 0;  /* request at once */
+    os_log(sLog, "FL MacNeedKey reason=%{public}s ep=%u route=%{public}s",
+           reason, _flEpoch, fl_route_name((uint32_t)(_flRouteKey >> 32)));
+}
+
+/* Both codecs: the inactive one ignores it (HEVC) or starts with a key anyway (LZ4 resume). */
+- (void)flRequestKeyframe:(const char *)reason {
+    [_hevcEncoder requestKeyframe];
+    [_capture requestLZ4Keyframe];
+    static int32_t reqLogs = 0;
+    int32_t c = OSAtomicIncrement32Barrier(&reqLogs);
+    if (c <= 50 || c % 50 == 0) {
+        os_log(sLog, "FL MacKeyReq reason=%{public}s hevcActive=%{public}d count=%d",
+               reason, _hevcEncoder.isActive, c);
+    }
+}
+
+/* HsConn: this session's handshake, with a fresh epoch, on the connection `epoch` names.
+ * NO if that connection is no longer current (nothing sent). */
+- (BOOL)flSendHandshakeLockedOnRoute:(FLRoute)route epoch:(uint32_t)connEpoch
+                               reason:(const char *)reason nowUs:(uint64_t)nowUs {
+    if (!_flHsCached || route == FLRouteNone || connEpoch == 0) return NO;
+    SessionHandshakeMessage hs = _flHs;
+    uint32_t ep = [self flNextEpochLocked];
+    hs.reserved = ep;
+    BOOL sent = (route == FLRouteUSB)
+        ? [_usbTransport sendInputEvent:&hs length:sizeof(hs) onEpoch:connEpoch]
+        : [_wirelessTransport sendInputEvent:&hs length:sizeof(hs) onEpoch:connEpoch];
+    if (!sent) {
+        os_log(sLog, "FL MacHsUnsent route=%{public}s conn=%u reason=%{public}s (connection no longer current)",
+               fl_route_name(route), connEpoch, reason);
+        return NO;
+    }
+    uint64_t oldKey = _flRouteKey;
+    _flEpoch = ep;
+    _flRouteKey = ((uint64_t)route << 32) | connEpoch;
+    os_log(sLog, "FL MacHs ep=%u route=%{public}s conn=%u prevRoute=%{public}s prevConn=%u reason=%{public}s %ux%u",
+           ep, fl_route_name(route), connEpoch, fl_route_name((uint32_t)(oldKey >> 32)),
+           (uint32_t)(oldKey & 0xFFFFFFFFu), reason, hs.display_width, hs.display_height);
+    _flNeedKey = NO;  /* re-arm so the log names the handshake */
+    [self flNeedKeyLocked:"handshake" nowUs:nowUs];
+    return YES;
+}
+
+/* The gate (under _flLock, held through the submit). YES: submit this frame on (route, epoch)
+ * now. NO: drop it (it was never sent; for deltas the key is owed). *requestKey: ask the
+ * encoders for a keyframe after unlocking. */
+- (BOOL)flAdmitLocked:(const MediaFrameHeader *)h route:(FLRoute)route epoch:(uint32_t)connEpoch
+           requestKey:(BOOL *)requestKey {
+    uint64_t nowUs = keydrd_host_time_us();
+    BOOL isKey = (h->flags & KEYDRD_FLAG_KEYFRAME) != 0;
+    int codec = (h->flags & KEYDRD_FLAG_HEVC) ? 1 : 0;
+    _flLastFrameUs = nowUs;
+
+    int32_t losses = __atomic_exchange_n(&_flLossPending, 0, __ATOMIC_ACQ_REL);
+    if (losses > 0) [self flNeedKeyLocked:"loss" nowUs:nowUs];
+    uint32_t encDrops = _hevcEncoder.droppedOutputCount;
+    if (encDrops != _flEncDropSeen) {
+        _flEncDropSeen = encDrops;
+        [self flNeedKeyLocked:"encoder-drop" nowUs:nowUs];
+    }
+
+    BOOL admit = YES;
+    const char *hold = NULL;
+    if (!_flHsCached || route == FLRouteNone || connEpoch == 0) {
+        hold = !_flHsCached ? "no-handshake" : "no-connection";
+        [self flNeedKeyLocked:hold nowUs:nowUs];
+        admit = NO;
+    } else if ((((uint64_t)route << 32) | connEpoch) != _flRouteKey &&
+               ![self flSendHandshakeLockedOnRoute:route epoch:connEpoch reason:"route" nowUs:nowUs]) {
+        hold = "handshake-unsent";
+        [self flNeedKeyLocked:hold nowUs:nowUs];
+        admit = NO;
+    }
+    if (admit) {
+        if (codec != _flLastCodec) {
+            if (_flLastCodec >= 0) [self flNeedKeyLocked:"codec" nowUs:nowUs];
+            _flLastCodec = codec;
+        }
+        if (_flNeedKey && !isKey) {
+            hold = "delta";
+            admit = NO;
+        }
+    }
+
+    if (!admit) {
+        _flHeld++;
+        if (_flHeld <= 3 || _flHeld % 60 == 0) {
+            os_log(sLog, "FL MacHoldDelta seq=%u key=%{public}d codec=%{public}s hold=%{public}s need=%{public}s held=%u sinceMs=%llu ep=%u",
+                   h->seq, isKey, codec ? "hevc" : "lz4", hold, _flNeedReason ?: "-", _flHeld,
+                   (nowUs - _flNeedSinceUs) / 1000, _flEpoch);
+        }
+    } else if (isKey && _flNeedKey) {
+        os_log(sLog, "FL MacKey seq=%u codec=%{public}s ep=%u route=%{public}s need=%{public}s held=%u waitMs=%llu",
+               h->seq, codec ? "hevc" : "lz4", _flEpoch, fl_route_name(route), _flNeedReason ?: "-",
+               _flHeld, (nowUs - _flNeedSinceUs) / 1000);
+        _flNeedKey = NO;
+        _flNeedReason = NULL;
+        _flHeld = 0;
+    }
+    if (_flNeedKey && nowUs - _flLastKeyReqUs >= 100000) {
+        _flLastKeyReqUs = nowUs;
+        *requestKey = YES;
+    }
+    return admit;
+}
+
+/* IdleKey: while a key is owed and no frame has reached the gate for a while (static screen:
+ * SCStream sends only idle frames), re-deliver the last frame through the active path. */
+- (void)flStartIdleTimerIfNeeded {
+    if (_flIdleTimer) return;
+    _flIdleTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                          dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
+    dispatch_source_set_timer(_flIdleTimer, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+                              100 * NSEC_PER_MSEC, 10 * NSEC_PER_MSEC);
+    __weak SessionManager *weakSelf = self;
+    dispatch_source_set_event_handler(_flIdleTimer, ^{
+        SessionManager *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.sessionState != SESSION_STREAMING) return;
+        uint64_t nowUs = keydrd_host_time_us();
+        BOOL reemit = NO;
+        uint64_t sinceMs = 0, idleMs = 0;
+        os_unfair_lock_lock(&strongSelf->_flLock);
+        if (strongSelf->_flNeedKey && strongSelf->_flHsCached &&
+            nowUs - strongSelf->_flNeedSinceUs >= 150000 &&
+            nowUs - strongSelf->_flLastFrameUs >= 100000 &&
+            nowUs - strongSelf->_flLastReemitUs >= 150000) {
+            strongSelf->_flLastReemitUs = nowUs;
+            strongSelf->_flLastKeyReqUs = nowUs;
+            sinceMs = (nowUs - strongSelf->_flNeedSinceUs) / 1000;
+            idleMs = (nowUs - strongSelf->_flLastFrameUs) / 1000;
+            reemit = YES;
+        }
+        os_unfair_lock_unlock(&strongSelf->_flLock);
+        if (!reemit) return;
+        os_log(sLog, "FL MacIdleKey sinceMs=%llu idleMs=%llu", sinceMs, idleMs);
+        [strongSelf flRequestKeyframe:"idle"];
+        [strongSelf->_capture reemitLastFrame];
+    });
+    dispatch_resume(_flIdleTimer);
+}
+
 - (void)sendMediaFrameToiPad:(const void *)data length:(size_t)len {
     if (len < sizeof(MediaFrameHeader)) return;
 
@@ -1643,6 +1900,14 @@ static const int32_t kUSBLZ4GateInFlight = 2;
          * in the kernel buffer, drop this frame — the next frame will carry
          * fresher content anyway. This prevents multi-second queue buildup
          * that causes stale-timestamp latency inflation. */
+        os_unfair_lock_lock(&_flLock);
+        uint32_t flConn = _usbTransport.inputConnectionEpoch;
+        BOOL flRequestKey = NO;
+        if (![self flAdmitLocked:originalHeader route:FLRouteUSB epoch:flConn requestKey:&flRequestKey]) {
+            os_unfair_lock_unlock(&_flLock);
+            if (flRequestKey) [self flRequestKeyframe:"hold"];
+            return;
+        }
         int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
         if (inFlight <= 5 || inFlight % 10 == 0) {
             os_log(sLog, "USB send queued: seq=%u inFlight=%d bytes=%zu", originalHeader->seq, inFlight, len);
@@ -1660,7 +1925,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
         __weak SessionManager *weakSelf = self;
         const uint32_t sentSeq = originalHeader->seq; /* copy: header memory is gone by completion */
-        [_usbTransport sendMediaViaTCP:data length:len completion:^(BOOL success) {
+        [_usbTransport sendMediaViaTCP:data length:len onEpoch:flConn completion:^(BOOL success) {
             SessionManager *strongSelf = weakSelf;
             if (strongSelf) {
                 int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
@@ -1668,8 +1933,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                     os_log(sLog, "USB send completion: seq=%u success=%{public}s inFlightNow=%d",
                            sentSeq, success ? "yes" : "no", left);
                 }
+                if (!success) [strongSelf flNoteLoss:"usb-send" seq:sentSeq];
             }
         }];
+        os_unfair_lock_unlock(&_flLock);
+        if (flRequestKey) [self flRequestKeyframe:"pending"];
     } else if (_wirelessTransport.isConnected) {
         if (kWirelessUseTCPMedia) {
             /* WiFi media is now kept on the established TLS/TCP stream.
@@ -1901,6 +2169,17 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                 schedulerObservedGapUs = 0;
             }
             self.wifiTCPSchedulerLastSubmitUs = enqueueUs;
+            /* FrameLoop gate after the scheduler sleeps, held through the submit. A delta held
+             * here is never sent, so it never enters the ack gate count (the WiFiSendLoop
+             * NoPostDrop exception: a frame the iPad would discard is not worth sending). */
+            os_unfair_lock_lock(&_flLock);
+            uint32_t flConn = _wirelessTransport.inputConnectionEpoch;
+            BOOL flRequestKey = NO;
+            if (![self flAdmitLocked:originalHeader route:FLRouteWiFi epoch:flConn requestKey:&flRequestKey]) {
+                os_unfair_lock_unlock(&_flLock);
+                if (flRequestKey) [self flRequestKeyframe:"hold"];
+                return;
+            }
             int32_t inFlight = OSAtomicIncrement32Barrier(&_wifiTCPMediaSendsInFlight);
             if (inFlight > _wifiPerfTCPInFlightPeak) {
                 _wifiPerfTCPInFlightPeak = inFlight;
@@ -1917,7 +2196,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             __weak SessionManager *weakSelf = self;
             ftRec.inFlight = inFlight;
             ftRec.submitUs = keydrd_host_time_us();
-            BOOL submitted = [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
+            BOOL submitted = [_wirelessTransport sendMediaFrameViaTCP:data length:len onEpoch:flConn completion:^(BOOL success) {
                 uint64_t doneUs = keydrd_host_time_us();
                 FTMacRecord ftDone = ftRec;
                 ftDone.doneUs = doneUs;
@@ -1942,6 +2221,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                     }
                     if (!success) {
                         OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSendDrops);
+                        [strongSelf flNoteLoss:"wifi-send-stale" seq:seq];
                     }
                     return;
                 }
@@ -1982,8 +2262,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                 }
                 if (!success) {
                     OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfTCPSendDrops);
+                    [strongSelf flNoteLoss:"wifi-send" seq:seq];
                 }
             }];
+            os_unfair_lock_unlock(&_flLock);
+            if (flRequestKey) [self flRequestKeyframe:"pending"];
             if (!submitted) {
                 /* tla/Lifecycle.tla CountOnSend: the current connection went away between the
                  * pre-encode check and here, so nothing was queued: take the frame back out of
@@ -2035,6 +2318,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                     originalHeader, ^(const void *chunk, size_t chunkLen) {
             [transport sendMediaFrame:chunk length:chunkLen];
         });
+    } else {
+        [self flNoteLoss:"no-transport" seq:originalHeader->seq];
     }
 }
 
@@ -2049,6 +2334,14 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
     size_t totalLen = sizeof(MediaFrameHeader) + payloadLen;
     if (_usbTransport.isConnected) {
+        os_unfair_lock_lock(&_flLock);
+        uint32_t flConn = _usbTransport.inputConnectionEpoch;
+        BOOL flRequestKey = NO;
+        if (![self flAdmitLocked:header route:FLRouteUSB epoch:flConn requestKey:&flRequestKey]) {
+            os_unfair_lock_unlock(&_flLock);
+            if (flRequestKey) [self flRequestKeyframe:"hold"];
+            return;
+        }
         int32_t inFlight = OSAtomicIncrement32Barrier(&_tcpMediaSendsInFlight);
         if (inFlight <= 5 || inFlight % 10 == 0) {
             os_log(sLog, "USB split-send queued: seq=%u inFlight=%d bytes=%zu payload=%zu",
@@ -2066,7 +2359,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
         __weak SessionManager *weakSelf = self;
         const uint32_t sentSeq = header->seq; /* copy: header memory is gone by completion */
-        [_usbTransport sendMediaFrameWithHeader:header payload:payload payloadLength:payloadLen completion:^(BOOL success) {
+        [_usbTransport sendMediaFrameWithHeader:header payload:payload payloadLength:payloadLen
+                                        onEpoch:flConn completion:^(BOOL success) {
             SessionManager *strongSelf = weakSelf;
             if (strongSelf) {
                 int32_t left = OSAtomicDecrement32Barrier(&strongSelf->_tcpMediaSendsInFlight);
@@ -2074,8 +2368,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                     os_log(sLog, "USB split-send completion: seq=%u success=%{public}s inFlightNow=%d",
                            sentSeq, success ? "yes" : "no", left);
                 }
+                if (!success) [strongSelf flNoteLoss:"usb-send" seq:sentSeq];
             }
         }];
+        os_unfair_lock_unlock(&_flLock);
+        if (flRequestKey) [self flRequestKeyframe:"pending"];
         return;
     }
 
@@ -3390,8 +3687,15 @@ static const size_t kBWProbeChunkBytes = 64 * 1024;
             break;
         }
         case KEYDRD_MODE_CHANGE_REQUEST_KEYFRAME: {
-            os_log(sLog, "Immediate HEVC keyframe requested by iPad recovery path");
-            [_hevcEncoder requestKeyframe];
+            /* tla/FrameLoop.tla KeyRetry: the iPad awaits a key (handshake, gap or decode
+             * failure). Owe one on both codecs; IdleKey re-emits if the screen is static. */
+            uint64_t flNowUs = keydrd_host_time_us();
+            os_unfair_lock_lock(&_flLock);
+            [self flNeedKeyLocked:"ipad-request" nowUs:flNowUs];
+            _flLastKeyReqUs = flNowUs;
+            os_unfair_lock_unlock(&_flLock);
+            os_log(sLog, "FL MacIpadKeyReq hevcActive=%{public}d", _hevcEncoder.isActive);
+            [self flRequestKeyframe:"ipad-request"];
             break;
         }
         default:

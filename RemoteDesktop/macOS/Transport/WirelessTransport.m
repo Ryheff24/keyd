@@ -6,6 +6,7 @@
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <stdatomic.h>
+#import <os/lock.h>
 #include <mach/mach_time.h>
 
 static os_log_t wireless_log(void) {
@@ -76,6 +77,9 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     uint32_t _inputConnId;                    // cid of _inputConnection, 0 = none
     atomic_uint _inputConnectionEpoch;        // RestartOnNewConn: bumps when a connection becomes current
     atomic_bool _inputReady;                  // CountOnSend: the current input connection is ready
+    /* tla/FrameLoop.tla HsConn: _inputConnection and _inputConnectionEpoch change together under
+     * this lock (writes are on the transport queue); epoch-checked senders read both under it. */
+    os_unfair_lock _connLock;
 }
 @property (nonatomic) dispatch_queue_t transportQueue;
 @property (nonatomic, nullable) nw_listener_t bonjourListener;
@@ -120,7 +124,9 @@ static bool wireless_include_peer_to_peer(void) {
         os_log(wireless_log(), "LC MacCurrentCleared cid=%u reason=%{public}s", _inputConnId, reason);
     }
     atomic_store(&_inputReady, false);
+    os_unfair_lock_lock(&_connLock);
     _inputConnection = nil;
+    os_unfair_lock_unlock(&_connLock);
     _inputConnId = 0;
 }
 
@@ -148,6 +154,7 @@ static bool wireless_include_peer_to_peer(void) {
         _pendingInputConnections = [NSMutableArray array];
         _pendingInputConnIds = [NSMutableArray array];
         atomic_init(&_inputConnectionEpoch, 0);
+        _connLock = OS_UNFAIR_LOCK_INIT;
         atomic_init(&_inputReady, false);
     }
     return self;
@@ -572,10 +579,31 @@ static bool wireless_include_peer_to_peer(void) {
     [self sendMediaFrameViaTCP:data length:len completion:nil];
 }
 
+- (nullable nw_connection_t)inputConnectionForEpoch:(uint32_t)epoch {
+    os_unfair_lock_lock(&_connLock);
+    nw_connection_t c = (epoch != 0 && epoch == atomic_load(&_inputConnectionEpoch)) ? _inputConnection : nil;
+    os_unfair_lock_unlock(&_connLock);
+    return c;
+}
+
 - (BOOL)sendMediaFrameViaTCP:(const void *)data
                       length:(size_t)len
                   completion:(void (^ _Nullable)(BOOL success))completion {
-    nw_connection_t conn = _inputConnection;
+    return [self _sendMediaFrameViaTCP:data length:len connection:_inputConnection completion:completion];
+}
+
+- (BOOL)sendMediaFrameViaTCP:(const void *)data
+                      length:(size_t)len
+                     onEpoch:(uint32_t)epoch
+                  completion:(void (^ _Nullable)(BOOL success))completion {
+    return [self _sendMediaFrameViaTCP:data length:len connection:[self inputConnectionForEpoch:epoch]
+                            completion:completion];
+}
+
+- (BOOL)_sendMediaFrameViaTCP:(const void *)data
+                       length:(size_t)len
+                   connection:(nullable nw_connection_t)conn
+                   completion:(void (^ _Nullable)(BOOL success))completion {
     if (!conn || !atomic_load(&_inputReady)) {
         if (completion) completion(NO);
         return NO;
@@ -612,7 +640,17 @@ static bool wireless_include_peer_to_peer(void) {
 }
 
 - (void)sendInputEvent:(const void *)data length:(size_t)len {
-    nw_connection_t conn = _inputConnection;
+    [self _sendInputEvent:data length:len connection:_inputConnection];
+}
+
+- (BOOL)sendInputEvent:(const void *)data length:(size_t)len onEpoch:(uint32_t)epoch {
+    nw_connection_t conn = [self inputConnectionForEpoch:epoch];
+    if (!conn || !atomic_load(&_inputReady)) return NO;
+    [self _sendInputEvent:data length:len connection:conn];
+    return YES;
+}
+
+- (void)_sendInputEvent:(const void *)data length:(size_t)len connection:(nullable nw_connection_t)conn {
     if (!conn) {
         os_log_error(wireless_log(), "sendInputEvent: no input connection (len=%zu)", len);
         return;
@@ -710,7 +748,10 @@ static bool wireless_include_peer_to_peer(void) {
                 [self2 stopLinkHeartbeatWithReason:"replaced"];
                 nw_connection_cancel(replaced);
             }
+            os_unfair_lock_lock(&self2->_connLock);
             self2->_inputConnection = connection;
+            uint32_t epoch = atomic_fetch_add(&self2->_inputConnectionEpoch, 1) + 1;
+            os_unfair_lock_unlock(&self2->_connLock);
             self2->_inputConnId = cid;
             self2->_inputAcceptedAtTicks = mach_absolute_time();
             isActiveConnection = YES;
@@ -743,7 +784,6 @@ static bool wireless_include_peer_to_peer(void) {
             self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
             [self2 cancelControlPathRecoveryWithReason:"tcp-ready"];
             atomic_store(&self2->_inputReady, true);
-            uint32_t epoch = atomic_fetch_add(&self2->_inputConnectionEpoch, 1) + 1;
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
             os_log(wireless_log(), "LC MacReady cid=%u replaced=%u epoch=%u AWDL=%{public}d",
                    cid, replacedCid, epoch, detectedAWDL);

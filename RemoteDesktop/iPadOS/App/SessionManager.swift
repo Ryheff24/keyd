@@ -101,6 +101,31 @@ final class SessionManager {
     private var latencyProbeTimer: Timer?
     private static let latencyProbeInterval: TimeInterval = 1.0
     private var lastKeyframeRequestUs: UInt64 = 0
+
+    // MARK: FrameLoop state (tla/FrameLoop.tla Design). Lines tagged "FL <Action>" name model steps.
+    /// The connection a message arrived on: transport and that transport's connection serial.
+    struct FLLink: Equatable, CustomStringConvertible {
+        let usb: Bool
+        let serial: UInt64
+        var description: String { "\(usb ? "usb" : "wifi")#\(serial)" }
+    }
+    private let flLock = NSLock()
+    /// HsConn: media is taken only from the connection of the newest accepted handshake.
+    private var flHsLink: FLLink?
+    private var flHsEpoch: UInt32 = 0
+    /// KeyOnBreak/AwaitOnFail: no delta is decoded until a keyframe is (after a handshake or a
+    /// decode failure). flGen bumps on each break; HEVC outputs of an older generation are dropped.
+    private var flAwaiting = true
+    private var flAwaitReason = "start"
+    private var flAwaitSinceUs: UInt64 = 0
+    private var flGen: UInt64 = 0
+    private var flHevcGen = [UInt64](repeating: 0, count: 256)
+    private var flLastKeyReqUs: UInt64 = 0
+    private var flKeyRetryTimer: DispatchSourceTimer?
+    private var flForeignDrops = 0
+    private var flAwaitDrops = 0
+    private var flStaleOutputs = 0
+    private var lastHandshakeDisplay: (w: Int, h: Int)?
     private static let keyframeRequestCooldownUs: UInt64 = 500_000
     /// Wi-Fi frame acks sent (transport queue only).
     private var framesAcked = 0
@@ -137,6 +162,11 @@ final class SessionManager {
     init() {
         Self.log.info("[SessionManager] init called, initial state=\(self.state.rawValue)")
         Self.log.info("[SessionManager] qrPairing.isPaired=\(self.qrPairing.isPaired)")
+        hevcDecoder.onDecodeError = { [weak self] header, status in
+            guard let self else { return }
+            self.flDecodeFailed(gen: self.flGenForHEVC(seq: header.seq), seq: header.seq,
+                                reason: "hevc-async-error-\(status)")
+        }
         hevcDecoder.onDecodedFrame = { [weak self] pixelBuffer, header, payloadLength, decodeSubmitUs, callbackUs in
             self?.scheduleDecodedHEVCFrame(pixelBuffer,
                                            header: header,
@@ -338,6 +368,7 @@ final class SessionManager {
         print("[CONSOLE] resetPairingAndShowQR: clearing pairing and returning to QR")
         Self.log.info("User requested pairing reset")
         udpReassembler.resetForNewStreamSession(reason: "reset-pairing")
+        flResetLinks(reason: "reset-pairing")
         reconnectTimer?.invalidate()
         fpsUpdateTimer?.invalidate()
         latencyProbeTimer?.invalidate()
@@ -387,6 +418,7 @@ final class SessionManager {
     func disconnectSession() {
         Self.log.info("Disconnecting session")
         udpReassembler.resetForNewStreamSession(reason: "disconnect-session")
+        flResetLinks(reason: "disconnect-session")
         state = .disconnected
         reconnectTimer?.invalidate()
         fpsUpdateTimer?.invalidate()
@@ -405,6 +437,7 @@ final class SessionManager {
     func disconnectAllTransports() {
         Self.log.info("Disconnecting all transports for transport rotation")
         udpReassembler.resetForNewStreamSession(reason: "disconnect-all-transports")
+        flResetLinks(reason: "disconnect-all-transports")
         usbTransport.stopMonitoring()
         wirelessTransport.stopBrowsing()
         latencyProbeTimer?.invalidate()
@@ -499,13 +532,20 @@ final class SessionManager {
     }
 
     /// Send viewport dimensions to Mac so it captures/encodes at the right resolution.
-    private func sendViewportReport(width: Int, height: Int) {
+    private func sendViewportReport(width: Int, height: Int, link: FLLink? = nil) {
         let header = InputEventHeader(type: InputEventType.viewportReport.rawValue,
                                       tsUs: currentTimestampUs())
         var data = header.serialize()
         let payload = ViewportReportPayload(viewportWidth: UInt32(width),
                                             viewportHeight: UInt32(height))
         data.append(payload.serialize())
+        // tla/FrameLoop.tla VpOnHsConn: on the handshake's connection, which the Mac streams on
+        // (USB-first could pick a connection the Mac is not using yet, and the viewport is lost).
+        if let link {
+            let sent = flSend(data, on: link)
+            print("[CONSOLE] FL IpadVp link=\(link) sent=\(sent ? 1 : 0) \(width)x\(height)")
+            if sent { return }
+        }
         sendInputEventToMac(data)
     }
 
@@ -517,9 +557,9 @@ final class SessionManager {
             self?.handleReceivedFrame(data)
         }
         udpReassembler.onRecoveryNeeded = { [weak self] in
-            DispatchQueue.main.async {
-                self?.requestImmediateKeyframe()
-            }
+            // The reassembler holds deltas itself until a keyframe; ask the Mac for one on the
+            // handshake's connection (KeyRetry), whatever the transport.
+            self?.flRequestKey(reason: "reassembler-gap", force: true)
         }
 
         // Set up USB NCM transport callbacks.
@@ -542,8 +582,8 @@ final class SessionManager {
         // handleInputReceived detects MediaFrameHeader and routes to handleReceivedFrame.
         usbTransport.onMediaReceived = nil
 
-        usbTransport.onInputReceived = { [weak self] data in
-            self?.handleInputReceived(data)
+        usbTransport.onInputReceivedFrom = { [weak self] data, serial in
+            self?.handleInputReceived(data, link: FLLink(usb: true, serial: serial))
         }
 
         // Set up wireless transport callbacks
@@ -563,8 +603,8 @@ final class SessionManager {
             self?.udpReassembler.processChunk(data, sourceIsOrdered: false, sourceLabel: "wireless-udp")
         }
 
-        wirelessTransport.onInputReceived = { [weak self] data in
-            self?.handleInputReceived(data, fromWireless: true)
+        wirelessTransport.onInputReceivedFrom = { [weak self] data, serial in
+            self?.handleInputReceived(data, fromWireless: true, link: FLLink(usb: false, serial: serial))
         }
 
         // Start transports based on launch mode.
@@ -749,6 +789,10 @@ final class SessionManager {
             print("[CONSOLE] handleReceivedFrame: seq=\(header.seq) flags=0x\(String(header.flags, radix: 16)) payload=\(payloadLength) isHEVC=\(header.isHEVC) isKey=\(header.isKeyframe)")
         }
 
+        // tla/FrameLoop.tla KeyOnBreak/AwaitOnFail: after a handshake or a failed decode, no
+        // delta is decoded until a keyframe is.
+        guard let flFrameGen = flAdmitForDecode(header) else { return }
+
         // Route to decoder based on flags
         let decodeStart = CACurrentMediaTime()
         if header.isHEVC {
@@ -774,6 +818,7 @@ final class SessionManager {
                 }
                 return
             case .failed:
+                flDecodeFailed(gen: flFrameGen, seq: header.seq, reason: "hevc-submit-failed")
                 testRunner?.noteHEVCDecodeFailure(seq: header.seq)
                 if frameRecvCount <= 5 {
                     print("[CONSOLE] handleReceivedFrame: HEVC decode FAILED for seq=\(header.seq)")
@@ -784,6 +829,7 @@ final class SessionManager {
             // LZ4 decode path (wired mode)
             guard let decompressor = lz4Decompressor else {
                 Self.log.error("LZ4 decompressor not initialized (no handshake yet)")
+                flDecodeFailed(gen: flFrameGen, seq: header.seq, reason: "lz4-no-decompressor")
                 return
             }
 
@@ -793,6 +839,7 @@ final class SessionManager {
                 if frameRecvCount <= 20 || frameRecvCount % 500 == 0 {
                     print("[CONSOLE] LZ4: skipping frame, frameBytes=\(frameBytes) bufCap=\(decompressor.frameBytes) macDims=\(macDisplayWidth)x\(macDisplayHeight)")
                 }
+                flDecodeFailed(gen: flFrameGen, seq: header.seq, reason: "lz4-size-mismatch")
                 return
             }
 
@@ -804,6 +851,7 @@ final class SessionManager {
                 if frameRecvCount <= 20 || frameRecvCount % 500 == 0 {
                     print("[CONSOLE] LZ4: decompress returned nil, frameBytes=\(frameBytes) payload=\(payloadLength) seq=\(header.seq)")
                 }
+                flDecodeFailed(gen: flFrameGen, seq: header.seq, reason: "lz4-decompress-nil")
                 return
             }
 
@@ -853,6 +901,15 @@ final class SessionManager {
                                           source: String,
                                           decodeSubmitUs: UInt64,
                                           decodeDoneUs: UInt64) {
+        // AwaitOnFail: a decode error (or a new handshake) since this frame was submitted means
+        // its picture rests on a broken chain; drop it.
+        guard flIsCurrentHEVCOutput(seq: header.seq) else {
+            flStaleOutputs += 1
+            if flStaleOutputs <= 10 || flStaleOutputs % 120 == 0 {
+                print("[CONSOLE] FL IpadStaleOutput seq=\(header.seq) source=\(source) count=\(flStaleOutputs)")
+            }
+            return
+        }
         FrameTimeline.shared.decoded(tsUs: header.tsUs, submitUs: decodeSubmitUs, doneUs: decodeDoneUs)
         let scheduleUs = keydrdHostTimeUs()
         hevcHandoffQueue.async { [weak self] in
@@ -1021,19 +1078,29 @@ final class SessionManager {
 
     /// Handle session handshake from Mac.
     /// Configures viewport, decompressor, and HUD before first frame.
-    private func handleSessionHandshake(_ handshake: SessionHandshakeMessage) {
+    private func handleSessionHandshake(_ handshake: SessionHandshakeMessage, link: FLLink) {
         Self.log.info("Session handshake: \(handshake.displayWidth)x\(handshake.displayHeight)@\(handshake.scaleFactor)x, maxFps=\(handshake.maxFps)")
 
-        macDisplayWidth = Int(handshake.displayWidth)
-        macDisplayHeight = Int(handshake.displayHeight)
+        let hsW = Int(handshake.displayWidth), hsH = Int(handshake.displayHeight)
         macScaleFactor = handshake.scaleFactor
+        // A repeat handshake for the same Mac display (a route change, a session restart) keeps
+        // the frame geometry the Mac last set with a geometry update: the keyframe the handshake
+        // owes may arrive before the next geometry update, and must decode at the current size.
+        if let last = lastHandshakeDisplay, last.w == hsW, last.h == hsH, lz4Decompressor != nil {
+            print("[CONSOLE] FL IpadHsGeometry kept=\(macDisplayWidth)x\(macDisplayHeight) display=\(hsW)x\(hsH)")
+        } else {
+            macDisplayWidth = hsW
+            macDisplayHeight = hsH
 
-        // Initialize LZ4 decompressor with frame size
-        let frameBytes = macDisplayWidth * macDisplayHeight * 4
-        lz4Decompressor = LZ4Decompressor(frameBytes: frameBytes)
+            // Initialize LZ4 decompressor with frame size
+            let frameBytes = macDisplayWidth * macDisplayHeight * 4
+            lz4Decompressor = LZ4Decompressor(frameBytes: frameBytes)
 
-        // Configure renderer viewport
-        metalRenderer.setMacDisplaySize(width: macDisplayWidth, height: macDisplayHeight)
+            // Configure renderer viewport
+            metalRenderer.setMacDisplaySize(width: macDisplayWidth, height: macDisplayHeight)
+            print("[CONSOLE] FL IpadHsGeometry set=\(hsW)x\(hsH)")
+        }
+        lastHandshakeDisplay = (hsW, hsH)
 
         // Compute viewport pixel dimensions and tell Mac to capture/encode at this size.
         // This avoids encoding pixels the iPad can't display (e.g. 3600x2338 → 2752x1787).
@@ -1044,18 +1111,18 @@ final class SessionManager {
         let screenH = min(iPadPixelWidth, iPadPixelHeight)
 
         let (vpW, vpH) = Self.computeViewportPixels(
-            macWidth: macDisplayWidth, macHeight: macDisplayHeight,
+            macWidth: hsW, macHeight: hsH,
             screenWidth: screenW, screenHeight: screenH
         )
         // Store for E2E test verification
         viewportWidth = vpW
         viewportHeight = vpH
 
-        sendViewportReport(width: vpW, height: vpH)
+        sendViewportReport(width: vpW, height: vpH, link: link)
 
         // Input: geometry for pointer mapping, then HELD on this new connection (InputPath Connect).
         let sender = inputSender
-        let w = macDisplayWidth, h = macDisplayHeight
+        let w = hsW, h = hsH  // the Mac display (only its aspect ratio maps touches)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             sender.send = { [weak self] data in self?.sendInputEventReturningLink(data) }
@@ -1112,12 +1179,17 @@ final class SessionManager {
     /// Media frames primarily arrive via UDP chunks, but oversized frames fall back to TCP.
     private var wirelessLZ4Dropped = 0
 
-    private func handleInputReceived(_ data: Data, fromWireless: Bool = false) {
+    private func handleInputReceived(_ data: Data, fromWireless: Bool = false, link: FLLink) {
         // Check handshake FIRST — both handshake and media frame share KEYDRD_MAGIC,
         // but handshake has a more specific discriminator (magic + msgType at offset 2)
         if let handshake = SessionHandshakeMessage.parse(from: data) {
-            print("[CONSOLE] handleInputReceived: parsed as SESSION HANDSHAKE \(handshake.displayWidth)x\(handshake.displayHeight)")
-            handleSessionHandshake(handshake)
+            print("[CONSOLE] handleInputReceived: parsed as SESSION HANDSHAKE \(handshake.displayWidth)x\(handshake.displayHeight) link=\(link)")
+            // tla/FrameLoop.tla HsConn + EpochMonotone: only a handshake with a newer epoch counts
+            // (a late one from a replaced connection, or a relaunched Mac's lower epoch, would
+            // otherwise move media back to a dead or stale connection).
+            guard flAcceptHandshake(epoch: handshake.reserved, link: link) else { return }
+            udpReassembler.resetForNewStreamSession(reason: "fl-handshake")
+            handleSessionHandshake(handshake, link: link)
             return
         }
 
@@ -1140,6 +1212,15 @@ final class SessionManager {
             if mediaHeader.isHEVC && mediaHeader.chunkTotal <= 1 &&
                 wirelessTransport.isConnected && !usbTransport.isConnected {
                 sendFrameAck(seq: mediaHeader.seq)
+            }
+            // tla/FrameLoop.tla HsConn: media only from the handshake's connection. (The ack
+            // above stays ahead of this filter: it measures the network, not the picture.)
+            guard flIsHsLink(link) else {
+                flForeignDrops += 1
+                if flForeignDrops <= 10 || flForeignDrops % 120 == 0 {
+                    print("[CONSOLE] FL IpadForeign seq=\(mediaHeader.seq) key=\(mediaHeader.isKeyframe) link=\(link) hsLink=\(flHsLinkDescription) count=\(flForeignDrops)")
+                }
+                return
             }
             if mediaHeader.chunkTotal > 1 || mediaHeader.isHEVC {
                 if mediaHeader.chunkTotal > 1 && !mediaHeader.isHEVC {
@@ -1415,6 +1496,160 @@ final class SessionManager {
         if framesAcked <= 5 || framesAcked % 600 == 0 {
             print("[CONSOLE] SessionManager: frame ack sent seq=\(seq) count=\(framesAcked)")
         }
+    }
+
+    // MARK: - FrameLoop (tla/FrameLoop.tla Design)
+
+    /// HsConn + EpochMonotone: accept a handshake only with a newer epoch than any before; it
+    /// moves media to its connection and owes a keyframe.
+    private func flAcceptHandshake(epoch: UInt32, link: FLLink) -> Bool {
+        let nowUs = keydrdHostTimeUs()
+        flLock.lock()
+        let prevEpoch = flHsEpoch
+        let prevLink = flHsLink
+        let accept = epoch > flHsEpoch
+        if accept {
+            flHsEpoch = epoch
+            flHsLink = link
+            flEnterAwaitLocked(reason: "handshake", nowUs: nowUs)
+        }
+        flLock.unlock()
+        print("[CONSOLE] FL IpadHs ep=\(epoch) link=\(link) accepted=\(accept ? 1 : 0) prevEp=\(prevEpoch) prevLink=\(prevLink?.description ?? "none")")
+        if accept { flStartKeyRetryTimer() }
+        return accept
+    }
+
+    private func flIsHsLink(_ link: FLLink) -> Bool {
+        flLock.lock(); defer { flLock.unlock() }
+        return flHsLink == link
+    }
+
+    private var flHsLinkDescription: String {
+        flLock.lock(); defer { flLock.unlock() }
+        return flHsLink?.description ?? "none"
+    }
+
+    /// Caller holds flLock. A new break: await a keyframe; outputs submitted before are stale.
+    private func flEnterAwaitLocked(reason: String, nowUs: UInt64) {
+        // The app starts awaiting (flAwaiting = true, since 0): the first handshake starts the clock.
+        if !flAwaiting || flAwaitSinceUs == 0 {
+            flAwaiting = true
+            flAwaitReason = reason
+            flAwaitSinceUs = nowUs
+        }
+        flGen &+= 1
+        // After a handshake the Mac already owes the key: KeyRetry waits its full 500 ms, or a
+        // request could cross the key in flight and make the Mac hold valid deltas for a second
+        // one. A decode failure is news to the Mac: the caller requests at once.
+        flLastKeyReqUs = nowUs
+    }
+
+    /// The decode gate. nil: drop this frame (a delta while awaiting a key). Otherwise the
+    /// generation the frame decodes in.
+    private func flAdmitForDecode(_ header: MediaFrameHeader) -> UInt64? {
+        let nowUs = keydrdHostTimeUs()
+        flLock.lock()
+        if flAwaiting && !header.isKeyframe {
+            flAwaitDrops += 1
+            let n = flAwaitDrops, reason = flAwaitReason, since = flAwaitSinceUs
+            flLock.unlock()
+            if n <= 10 || n % 120 == 0 {
+                print("[CONSOLE] FL IpadAwaitDrop seq=\(header.seq) hevc=\(header.isHEVC) reason=\(reason) sinceMs=\((nowUs &- since) / 1000) count=\(n)")
+            }
+            return nil
+        }
+        var cleared: (String, UInt64, UInt32)? = nil
+        if flAwaiting {
+            flAwaiting = false
+            cleared = (flAwaitReason, flAwaitSinceUs, flHsEpoch)
+        }
+        let gen = flGen
+        if header.isHEVC { flHevcGen[Int(header.seq & 0xFF)] = gen }
+        flLock.unlock()
+        if let c = cleared {
+            let (reason, since, ep) = c
+            print("[CONSOLE] FL IpadKey seq=\(header.seq) hevc=\(header.isHEVC) ep=\(ep) reason=\(reason) waitMs=\((nowUs &- since) / 1000) gen=\(gen)")
+        }
+        return gen
+    }
+
+    private func flGenForHEVC(seq: UInt16) -> UInt64 {
+        flLock.lock(); defer { flLock.unlock() }
+        return flHevcGen[Int(seq & 0xFF)]
+    }
+
+    private func flIsCurrentHEVCOutput(seq: UInt16) -> Bool {
+        flLock.lock(); defer { flLock.unlock() }
+        return flHevcGen[Int(seq & 0xFF)] == flGen
+    }
+
+    /// AwaitOnFail: a frame of the current generation failed to decode: the picture chain is
+    /// broken until a keyframe decodes.
+    private func flDecodeFailed(gen: UInt64, seq: UInt16, reason: String) {
+        let nowUs = keydrdHostTimeUs()
+        flLock.lock()
+        let current = (gen == flGen)
+        if current { flEnterAwaitLocked(reason: reason, nowUs: nowUs) }
+        flLock.unlock()
+        print("[CONSOLE] FL IpadFail seq=\(seq) reason=\(reason) gen=\(gen) current=\(current ? 1 : 0)")
+        if current { flRequestKey(reason: reason, force: true) }
+    }
+
+    /// Send on one connection (the handshake's): false if it is no longer current.
+    private func flSend(_ data: Data, on link: FLLink) -> Bool {
+        link.usb ? usbTransport.sendInputEvent(data, onSerial: link.serial)
+                 : wirelessTransport.sendInputEvent(data, onSerial: link.serial)
+    }
+
+    /// KeyRetry: REQUEST_KEYFRAME (either codec) on the handshake's connection, at most every
+    /// 500 ms unless forced.
+    private func flRequestKey(reason: String, force: Bool) {
+        let nowUs = keydrdHostTimeUs()
+        flLock.lock()
+        guard let link = flHsLink, force || nowUs &- flLastKeyReqUs >= 500_000 else {
+            flLock.unlock()
+            return
+        }
+        flLastKeyReqUs = nowUs
+        let awaiting = flAwaiting, since = flAwaitSinceUs
+        flLock.unlock()
+        let header = InputEventHeader(type: InputEventType.modeChange.rawValue, tsUs: currentTimestampUs())
+        var data = header.serialize()
+        var subtype = ModeChangeSubtype.requestKeyframe.rawValue
+        data.append(Data(bytes: &subtype, count: 1))
+        let sent = flSend(data, on: link)
+        print("[CONSOLE] FL IpadKeyRetry reason=\(reason) link=\(link) sent=\(sent ? 1 : 0) awaiting=\(awaiting ? 1 : 0) sinceMs=\(awaiting ? (nowUs &- since) / 1000 : 0)")
+    }
+
+    private func flStartKeyRetryTimer() {
+        flLock.lock()
+        let started = flKeyRetryTimer != nil
+        if !started {
+            let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
+            t.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250), leeway: .milliseconds(20))
+            t.setEventHandler { [weak self] in
+                guard let self else { return }
+                self.flLock.lock()
+                let awaiting = self.flAwaiting && self.flHsLink != nil
+                self.flLock.unlock()
+                if awaiting { self.flRequestKey(reason: "await", force: false) }
+            }
+            flKeyRetryTimer = t
+            t.resume()
+        }
+        flLock.unlock()
+    }
+
+    /// All transports torn down (pairing reset, disconnect): the next handshake starts over.
+    private func flResetLinks(reason: String) {
+        flLock.lock()
+        flHsLink = nil
+        flHsEpoch = 0
+        flAwaiting = true
+        flAwaitReason = reason
+        flGen &+= 1
+        flLock.unlock()
+        print("[CONSOLE] FL IpadReset reason=\(reason)")
     }
 
     private func requestImmediateKeyframe() {

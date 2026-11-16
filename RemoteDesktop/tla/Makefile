@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs life life-proofs
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs life life-proofs frame-loop frame-loop-proofs
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs life life-proofs
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs life life-proofs frame-loop frame-loop-proofs
 
 # Lifecycle (2026-11-16, PLAN step 6, connection and session layer, wireless): a relaunched
 # iPad stuck at connecting for 2 min 40 s (pid 98733). The transport models assumed one
@@ -73,6 +73,68 @@ life-proofs:
 	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
 	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
 	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py LifecycleProofs.tla); \
+	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
+	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
+
+# FrameLoop (2026-11-16): media frames across route changes, losses, restarts and handshakes,
+# both codecs as delta chains (a delta decodes iff the iPad's picture is its base). As built, a
+# handshake on a new route zeroes the iPad's reference while the Mac keeps sending deltas, a loss
+# sends no keyframe and media is taken from every connection (NoGarbage); at rest the picture can
+# stay wrong (RestGood), also under the E2E's always-ticking synthetic source. Design: KeyOnBreak,
+# HsConn (epoch-tagged handshake per route, media only from its connection), KeyRetry,
+# VpOnHsConn, IdleKey, EpochMonotone (epoch survives a Mac relaunch), AwaitOnFail (a decode
+# failure makes the iPad await a key). The design is checked in six rows split for size: losses and
+# restarts; route return with a loss; route return with a restart; a Mac relaunch; a decode
+# failure; and a loss, a restart, a relaunch and a decode failure together. Each control drops one switch; the
+# witness shows a fresh frame arrives.
+FL_ROWS = FrameLoop:FrameLoop.cfg:pass \
+	FrameLoop:cfg/FL-design-return.cfg:pass \
+	FrameLoop:cfg/FL-design-return-restart.cfg:pass \
+	FrameLoop:cfg/FL-design-combined.cfg:pass \
+	FrameLoop:cfg/FL-design-relaunch.cfg:pass \
+	FrameLoop:cfg/FL-design-fail.cfg:pass \
+	FrameLoop:cfg/FL-asbuilt.cfg:NoGarbage \
+	FrameLoop:cfg/FL-asbuilt-rest.cfg:RestGood \
+	FrameLoop:cfg/FL-asbuilt-synthetic.cfg:RestGood \
+	FrameLoop:cfg/FL-ctl-KeyOnBreak.cfg:NoGarbage \
+	FrameLoop:cfg/FL-ctl-HsConn.cfg:NoGarbage \
+	FrameLoop:cfg/FL-ctl-KeyRetry.cfg:RestGood \
+	FrameLoop:cfg/FL-ctl-VpOnHsConn.cfg:RestGood \
+	FrameLoop:cfg/FL-ctl-IdleKey.cfg:RestGood \
+	FrameLoop:cfg/FL-ctl-EpochMonotone.cfg:RestGood \
+	FrameLoop:cfg/FL-ctl-AwaitOnFail.cfg:NoGarbage \
+	FrameLoop:cfg/FL-witness.cfg:NeverShowsLast
+
+# The two combined-fault rows (4.6M and 7.0M states, liveness included) need more than 900 s.
+frame-loop: TLC_SECONDS = 2400
+frame-loop: check-tools
+	$(call tlc_rows,$(FL_ROWS))
+
+# TLAPS: NoGarbage (via Inv) under Design for any bounds. KeyRetry, VpOnHsConn and IdleKey are
+# liveness switches (RestGood, Settles), and EpochMonotone's failure is at rest after a relaunch,
+# so their controls are the TLC rows above; the three safety switches must fail at their own
+# actions. The switch is matched after a space, so dropping HsConn leaves VpOnHsConn alone.
+FL_PROOF_CTLS = 'KeyOnBreak:SpecSafe.<1>2.<2>2.<3>2 SpecSafe.<1>2.<2>4.<3>2:Lost,Connect' \
+	'HsConn:SpecSafe.<1>2.<2>9.<3>5.<4>1.<5>QED SpecSafe.<1>2.<2>9.<3>5.<4>2 SpecSafe.<1>2.<2>9.<3>5.<4>4 SpecSafe.<1>2.<2>9.<3>5.<4>5.<5>2:Recv' \
+	'AwaitOnFail:SpecSafe.<1>2.<2>10.<3>5:DecodeFail'
+
+frame-loop-proofs:
+	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }
+	@path="$$PATH"; if ! ps -p $$$$ >/dev/null 2>&1; then mkdir -p "$(PSDIR)" && \
+	  printf '#!/bin/sh\necho "  PID  PPID   PID"\n' > "$(PSDIR)/ps" && chmod +x "$(PSDIR)/ps" && path="$(PSDIR):$$PATH"; fi; \
+	  out=$$(PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) FrameLoopProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL FrameLoopProofs: killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  if printf '%s\n' "$$out" | grep -q "All [0-9]* obligations proved"; then echo "OK   FrameLoopProofs: $$(printf '%s\n' "$$out" | grep -o "All [0-9]* obligations proved")"; \
+	  else printf '%s\n' "$$out" | grep -B2 -A8 "ERROR\|failed" | head -40; echo "FAIL FrameLoopProofs: not every obligation proved"; exit 2; fi; \
+	  for c in $(FL_PROOF_CTLS); do sw=$${c%%:*}; rest=$${c#*:}; want=$${rest%%:*}; act=$${rest##*:}; \
+	    dir="$(CTLDIR)/fl-$$sw"; mkdir -p "$$dir" && \
+	    sed -e "s/^\(Design ==.*\) $$sw \/\\\\ /\1 /" -e "s/^\(Design ==.*\) \/\\\\ $$sw$$/\1/" FrameLoop.tla > "$$dir/FrameLoop.tla" && \
+	    cp FrameLoopProofs.tla "$$dir/" && \
+	    ! cmp -s FrameLoop.tla "$$dir/FrameLoop.tla" || { echo "FAIL control: could not drop $$sw"; exit 2; }; \
+	    out=$$(cd "$$dir" && PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) FrameLoopProofs.tla 2>&1); \
+	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
+	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py FrameLoopProofs.tla); \
 	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
 	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
 

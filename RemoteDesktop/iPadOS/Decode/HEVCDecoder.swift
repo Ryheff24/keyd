@@ -18,6 +18,9 @@ final class HEVCDecoder {
     /// Callback invoked when a frame is decoded asynchronously after decode() returned.
     /// Parameters: pixelBuffer, header, payloadLength, decodeSubmitUs, callbackUs
     var onDecodedFrame: ((CVPixelBuffer, MediaFrameHeader, Int, UInt64, UInt64) -> Void)?
+    /// tla/FrameLoop.tla AwaitOnFail: an asynchronous decode error for this frame (the picture
+    /// chain is broken from here until a keyframe decodes).
+    var onDecodeError: ((MediaFrameHeader, OSStatus) -> Void)?
 
     private var decompressionSession: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
@@ -204,6 +207,13 @@ final class HEVCDecoder {
                     }
                 } else {
                     os_log(.error, log: Self.log, "Decode frame error: %d", decodeStatus)
+                    // A noErr callback without an image (decoder dropped the output) leaves the
+                    // reference chain intact; only a decode error breaks it.
+                    if decodeStatus != noErr {
+                        self.onDecodeError?(header, decodeStatus)
+                    } else {
+                        print("[CONSOLE] FL IpadNoImage seq=\(header.seq) (noErr, no image buffer)")
+                    }
                     self.decodeCallbackLogCount += 1
                     if self.decodeCallbackLogCount <= 10 || self.decodeCallbackLogCount % 120 == 0 || callbackElapsedMs >= 8.0 {
                         print("[CONSOLE] HEVCDecoder: decode-callback seq=\(header.seq) status=error code=\(decodeStatus) callbackMs=\(String(format: "%.2f", callbackElapsedMs)) payload=\(payloadLength)B")

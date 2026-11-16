@@ -421,7 +421,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -1497,6 +1497,19 @@ if [ "$LIFECYCLE_RESULT" -ne 0 ]; then
   RESULT=1
 else
   log_progress "[CONSOLE] lifecycle-trace result=conforms"
+fi
+
+# ---- FrameLoop trace validation (tla/FrameLoop.tla): handshake epochs only grow, every owed
+# keyframe is sent, and no iPad instance ends stuck awaiting a key. A divergence fails the run. ----
+set +e
+python3 RemoteDesktop/scripts/frameloop_trace.py "$MAC_LOG_FILE" "${LIFECYCLE_IPAD_LOGS[@]}" 2>&1 | tee -a "$LOG_FILE"
+FRAMELOOP_RESULT=${PIPESTATUS[0]}
+set -e
+if [ "$FRAMELOOP_RESULT" -ne 0 ]; then
+  log_progress "[CONSOLE] frameloop-trace result=diverged"
+  RESULT=1
+else
+  log_progress "[CONSOLE] frameloop-trace result=conforms"
 fi
 
 set +e
