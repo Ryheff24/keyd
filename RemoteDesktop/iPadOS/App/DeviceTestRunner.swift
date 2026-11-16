@@ -48,6 +48,10 @@ final class DeviceTestRunner {
     // Latency probe
     private var latencyProbeRTT: Int = -1
     private var latencyProbeComplete = false
+    /// True only while runLatencyProbeTest waits: the session's periodic 1 s probes also answer
+    /// here, and must not complete the test before it starts (frames arriving late reordered
+    /// the whole chain and hung the suite).
+    private var latencyProbeActive = false
 
     // Handshake details
     private var handshakeWidth: UInt32 = 0
@@ -582,6 +586,11 @@ final class DeviceTestRunner {
 
     private func runLatencyProbeTest() {
         print("[TEST] RUNNING: latency-probe")
+        guard !latencyProbeComplete else {
+            print("[CONSOLE] latency-probe: already complete, not rerunning")
+            return
+        }
+        latencyProbeActive = true
 
         guard let sm = sessionManager else {
             recordResult(name: "latency-probe", passed: false, detail: "sessionManager nil")
@@ -610,6 +619,7 @@ final class DeviceTestRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             guard let self = self, !self.latencyProbeComplete else { return }
             self.latencyProbeComplete = true
+            self.latencyProbeActive = false
             self.recordResult(name: "latency-probe", passed: false, detail: "timeout after 5s")
             self.runKeepaliveTest()
         }
@@ -623,8 +633,9 @@ final class DeviceTestRunner {
             return
         }
 
-        guard !latencyProbeComplete else { return }
+        guard latencyProbeActive, !latencyProbeComplete else { return }
         latencyProbeComplete = true
+        latencyProbeActive = false
 
         let rttMs = Int(rttUs / 1000)
         latencyProbeRTT = rttMs

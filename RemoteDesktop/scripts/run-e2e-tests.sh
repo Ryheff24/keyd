@@ -954,7 +954,25 @@ elif [ "$WIRELESS_ONLY" = true ]; then
   MAC_LAUNCH_ARGS+=(--wireless-only)
 fi
 if [ -n "$CAPTURE_FILE" ]; then
-  MAC_LAUNCH_ARGS+=(--test-capture-file "$CAPTURE_FILE")
+  # The agent runs as its own app (LaunchServices launch below), so a file under
+  # ~/Documents would need its own Documents-folder permission: the open blocks on that
+  # consent and stalls the agent's transport queue (seen: 28 s, input replies starved).
+  # Hand it an APFS clone in /tmp instead: instant, no extra space. No full-copy fallback
+  # (the file is ~20 GB); if cloning fails, use the original path and say so.
+  AGENT_CAPTURE_FILE="$CAPTURE_FILE"
+  case "$CAPTURE_FILE" in
+    "$HOME"/Documents/*|"$HOME"/Desktop/*|"$HOME"/Downloads/*)
+      CLONE_PATH="/tmp/keyd-e2e-capture.${CAPTURE_FILE##*.}"
+      rm -f "$CLONE_PATH"
+      if cp -c "$CAPTURE_FILE" "$CLONE_PATH" 2>/dev/null; then
+        AGENT_CAPTURE_FILE="$CLONE_PATH"
+        log_progress "Mac capture file cloned outside protected folders: $CLONE_PATH"
+      else
+        log_progress "WARNING: could not APFS-clone capture file; agent may block on Documents access"
+      fi
+      ;;
+  esac
+  MAC_LAUNCH_ARGS+=(--test-capture-file "$AGENT_CAPTURE_FILE")
   if [ "$CAPTURE_FILE" = "$DEFAULT_CAPTURE_FILE" ]; then
     log_progress "Mac synthetic capture file: $CAPTURE_FILE (default auto-selected)"
   else
