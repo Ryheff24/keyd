@@ -581,9 +581,23 @@ final class WirelessTransport {
                 print("[CONSOLE] WirelessTransport: TLS TCP connection CANCELLED exit isConnected=\(self.isConnected) mediaConnectionActive=\(hasMediaPath)")
                 self.log.info("TLS wireless TCP connection cancelled")
 
-            default:
-                break
+            case .waiting(let error):
+                // Network.framework parks here (no failure) when it cannot reach the
+                // endpoint on the allowed interfaces; the watchdog is the only exit.
+                print("[CONSOLE] WirelessTransport: TCP CONNECT-STATE waiting active=\(isActiveConnection) error=\(error) path=\(String(describing: inputConn.currentPath)) endpoint=\(endpoint)")
+
+            case .preparing:
+                print("[CONSOLE] WirelessTransport: TCP CONNECT-STATE preparing active=\(isActiveConnection) endpoint=\(endpoint)")
+
+            case .setup:
+                print("[CONSOLE] WirelessTransport: TCP CONNECT-STATE setup active=\(isActiveConnection)")
+
+            @unknown default:
+                print("[CONSOLE] WirelessTransport: TCP CONNECT-STATE unknown=\(state) active=\(isActiveConnection)")
             }
+        }
+        inputConn.pathUpdateHandler = { path in
+            print("[CONSOLE] WirelessTransport: TCP CONNECT-PATH status=\(path.status) interfaces=\(path.availableInterfaces.map { "\($0.name):\($0.type)" }) remote=\(String(describing: path.remoteEndpoint)) local=\(String(describing: path.localEndpoint))")
         }
 
         inputConn.start(queue: transportQueue)
