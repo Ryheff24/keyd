@@ -74,6 +74,8 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
 @property (nonatomic, readwrite) BOOL isAWDL;
 @end
 
+static char kWirelessTransportQueueKey;
+
 @implementation WirelessTransport
 
 - (BOOL)mediaChannelReady {
@@ -85,6 +87,8 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     if (self) {
         _transportQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.wireless.transport",
                                                 DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_set_specific(_transportQueue, &kWirelessTransportQueueKey,
+                                    &kWirelessTransportQueueKey, NULL);
         _sendPacingQueue = dispatch_queue_create("com.ryheff.keyd.remote.agent.wireless.pacing",
                                                  DISPATCH_QUEUE_SERIAL);
 
@@ -273,6 +277,13 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
 #pragma mark - Public API
 
 - (void)startAdvertising {
+    /* Listener state is owned by the transport queue. The session queue (reconnect) and
+     * main (delayed start) call this too: hop so two queues never both create a listener. */
+    if (dispatch_get_specific(&kWirelessTransportQueueKey) == NULL) {
+        __weak WirelessTransport *weakSelf = self;
+        dispatch_async(_transportQueue, ^{ [weakSelf startAdvertising]; });
+        return;
+    }
     _advertisingRequested = YES;
     if (_bonjourListener) {
         os_log(wireless_log(),
@@ -394,6 +405,11 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
 }
 
 - (void)beginReconnectWindow {
+    if (dispatch_get_specific(&kWirelessTransportQueueKey) == NULL) {
+        __weak WirelessTransport *weakSelf = self;
+        dispatch_async(_transportQueue, ^{ [weakSelf beginReconnectWindow]; });
+        return;
+    }
     _allowReconnectTakeover = YES;
     os_log(wireless_log(),
            "Reconnect window armed: allowReconnectTakeover=1 inputConnection=%{public}p isConnected=%{public}d isAWDL=%{public}d",
