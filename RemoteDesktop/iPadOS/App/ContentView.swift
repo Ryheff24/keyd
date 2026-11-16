@@ -259,6 +259,18 @@ struct QRScannerPane: View {
                 }
             }
         }
+        .onDisappear {
+            // The pane shows briefly at launch while a stored pairing is restored; as built
+            // the camera kept running for the whole session (iPadOS camera indicator stayed
+            // on, reported 2026-11-16). Stop it whenever the scanner leaves the screen.
+            // stopRunning() blocks, so run it off the main thread.
+            print("[CONSOLE] QRScannerPane.onDisappear -> stopping camera (isSessionRunning=\(pairing.isSessionRunning))")
+            pairing.onSessionStarted = nil
+            DispatchQueue.global(qos: .userInitiated).async {
+                pairing.stopScanning()
+                print("[CONSOLE] QRScannerPane.onDisappear: camera stopped")
+            }
+        }
     }
 }
 

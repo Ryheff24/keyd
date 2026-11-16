@@ -439,9 +439,11 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
 
     /* Pass capture host-time timestamp through sourceFrameRefcon so the
      * output callback can stamp ts_us at capture time, not encode-output time. */
-    uint64_t *tsRef = malloc(sizeof(uint64_t));
+    /* [0] capture callback host time, [1] encode call time (ENC-SPLIT stats in the callback). */
+    uint64_t *tsRef = malloc(2 * sizeof(uint64_t));
     if (tsRef) {
-        *tsRef = captureTimestampUs;
+        tsRef[0] = captureTimestampUs;
+        tsRef[1] = keydrd_host_time_us();
     }
 
     /* Increment pending count BEFORE submitting to encoder */
@@ -540,9 +542,29 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
 
     /* Extract capture timestamp passed via sourceFrameRefcon, free in all paths */
     uint64_t captureTimestampUs = 0;
+    uint64_t encodeCallUs = 0;
     if (sourceFrameRefCon) {
-        captureTimestampUs = *(uint64_t *)sourceFrameRefCon;
+        captureTimestampUs = ((uint64_t *)sourceFrameRefCon)[0];
+        encodeCallUs = ((uint64_t *)sourceFrameRefCon)[1];
         free(sourceFrameRefCon);
+    }
+    /* ENC-SPLIT: capture callback -> encode call (gate, guard waits) and encode call -> output
+     * (VideoToolbox). Output callbacks are serial per session, so plain statics suffice. */
+    if (status == noErr && sampleBuffer && captureTimestampUs > 0 && encodeCallUs >= captureTimestampUs) {
+        static uint64_t sN = 0, sCallSum = 0, sCallMax = 0, sEncSum = 0, sEncMax = 0, sEncOver16 = 0;
+        uint64_t nowUs = keydrd_host_time_us();
+        uint64_t callLag = encodeCallUs - captureTimestampUs;
+        uint64_t enc = nowUs > encodeCallUs ? nowUs - encodeCallUs : 0;
+        sN++; sCallSum += callLag; sEncSum += enc;
+        if (callLag > sCallMax) sCallMax = callLag;
+        if (enc > sEncMax) sEncMax = enc;
+        if (enc > 16000) sEncOver16++;
+        if (sN >= 120) {
+            os_log(hevc_log(), "ENC-SPLIT n=%llu capToCall avg=%.1fms max=%.1fms encode avg=%.1fms max=%.1fms over16ms=%llu pending=%d",
+                   sN, sCallSum / 1000.0 / sN, sCallMax / 1000.0, sEncSum / 1000.0 / sN, sEncMax / 1000.0,
+                   sEncOver16, encoder ? atomic_load_explicit(&encoder->_pendingFrameCount, memory_order_relaxed) : -1);
+            sN = sCallSum = sCallMax = sEncSum = sEncMax = sEncOver16 = 0;
+        }
     }
 
     if (status != noErr) {

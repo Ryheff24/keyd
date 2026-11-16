@@ -726,9 +726,18 @@ final class QRPairing: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             print("[CONSOLE] about to call session.startRunning()")
             self?.log.info("[QRPairing] about to call session.startRunning() on background thread")
+            guard let self, self.captureSession === session else {
+                print("[CONSOLE] beginRunning: scanner stopped before start — not starting camera")
+                return
+            }
             session.startRunning()
             print("[CONSOLE] session.startRunning() returned, isRunning=\(session.isRunning)")
-            self?.log.info("[QRPairing] session.startRunning() returned, session.isRunning=\(session.isRunning)")
+            self.log.info("[QRPairing] session.startRunning() returned, session.isRunning=\(session.isRunning)")
+            // stopScanning() may have run while startRunning() was in progress.
+            if self.captureSession !== session {
+                session.stopRunning()
+                print("[CONSOLE] beginRunning: scanner stopped during start — camera stopped again")
+            }
         }
     }
 

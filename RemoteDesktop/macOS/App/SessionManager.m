@@ -60,6 +60,11 @@ static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
 static const int kWirelessHEVCFPS = 60;
 static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps — reasonable WiFi LAN starting point */
+/* AWDL target (WiFiRateControl T on AWDL). Run a470989 on AWDL: target 10 Mbps, actual ~7 Mbps
+ * (16 KB/frame at 56 fps), visibly soft; big frames moved at p10 27 / p50 59 Mb/s. 20 Mbps keeps a
+ * frame's air time (~12 ms at 27 Mb/s) under the 16.7 ms interval. Infrastructure keeps 10: its
+ * 512 TU receive holds already cap it (ddfd000 at 20-30 Mbps fell to 29 fps). */
+static const int kAWDLHEVCBitrate = 20000000;
 static const int kWirelessAdaptiveMinFPS = 30;
 static const int kWirelessAdaptiveMidFPS = 52;
 static const int kWirelessAdaptiveMaxFPS = 60;
@@ -2228,6 +2233,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 /* tla/WiFiRateControl.tla design: called once a second while the ack gate is active, before
  * the perf window resets. Gate holds do not count (IgnoreHolds): the bitrate steps toward the
  * fixed target T = kWirelessHEVCBitrate. FPS stays at max (KeepFps). */
+/* The fixed rate target T for the current wireless link (AWDL or infrastructure). */
+- (int32_t)wirelessTargetBitrate {
+    return _wirelessTransport.isAWDL ? kAWDLHEVCBitrate : kWirelessHEVCBitrate;
+}
+
 - (void)evaluateWiFiAckRateControlNowUs:(uint64_t)nowUs {
     os_unfair_lock_lock(&_wifiAckLock);
     uint64_t deliveryMaxBps = _wifiPerfAckDeliveryMaxBps; /* diagnostic only */
@@ -2235,12 +2245,13 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
     int32_t prevBitrate = _wifiAdaptiveTargetBitrate;
     int32_t targetBitrate = prevBitrate;
+    const int32_t T = [self wirelessTargetBitrate];
     const char *branch = "at-target";
-    if (prevBitrate < kWirelessHEVCBitrate) {
-        targetBitrate = MIN(kWirelessHEVCBitrate, prevBitrate + kWiFiAckRateStepUp);
+    if (prevBitrate < T) {
+        targetBitrate = MIN(T, prevBitrate + kWiFiAckRateStepUp);
         branch = "up";
-    } else if (prevBitrate > kWirelessHEVCBitrate) {
-        targetBitrate = MAX(kWirelessHEVCBitrate, prevBitrate - kWirelessAdaptiveMaxDownshiftBitrateDelta);
+    } else if (prevBitrate > T) {
+        targetBitrate = MAX(T, prevBitrate - kWirelessAdaptiveMaxDownshiftBitrateDelta);
         branch = "down";
     }
     _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
@@ -3150,13 +3161,15 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         self.wirelessLastEncodeSubmitUs = 0;
         [self resetWiFiAdaptiveControlState];
     } else {
-        bitrate = kWirelessHEVCBitrate;
+        bitrate = [self wirelessTargetBitrate];
+        os_log(sLog, "Wireless HEVC start: link=%{public}s bitrate=%.1fMbps",
+               _wirelessTransport.isAWDL ? "awdl" : "infra", bitrate / 1e6);
         quality = 0.0f;     /* bitrate-based */
         fps = kWirelessHEVCFPS;
         _capture.captureFPS = fps;
         self.wirelessLastEncodeSubmitUs = 0;
         _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
-        _wifiAdaptiveTargetBitrate = kWirelessHEVCBitrate;
+        _wifiAdaptiveTargetBitrate = bitrate;
         _wifiAdaptiveAppliedFPS = fps;
         _wifiAdaptiveAppliedBitrate = bitrate;
         _wifiAdaptiveLastChangeUs = keydrd_host_time_us();
