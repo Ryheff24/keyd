@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }
@@ -268,6 +268,23 @@ INPUT_ROWS = InputPath:InputPath.cfg:pass \
 
 input: check-tools
 	$(call tlc_rows,$(INPUT_ROWS))
+
+# SessionLanes (2026-11-15): which Mac queue runs what. As built, session work (encoder start,
+# capture start, display mode changes) runs inline on the transport queue that also delivers
+# pointer/key messages; the design keeps T non-blocking and moves session work to one serial S.
+LANES_ROWS = SessionLanes:SessionLanes.cfg:pass \
+	SessionLanes:cfg/SL-asbuilt.cfg:RTNotBehindHeavy \
+	SessionLanes:cfg/SL-asbuilt-live.cfg:pass \
+	SessionLanes:cfg/SL-ctl-inline-ctl.cfg:RTNotBehindHeavy \
+	SessionLanes:cfg/SL-ctl-naive.cfg:Temporal \
+	SessionLanes:cfg/SL-ctl-no-once.cfg:CaptureAtMostOnce \
+	SessionLanes:cfg/SL-ctl-no-fresh.cfg:CaptureOnlyWhenReady \
+	SessionLanes:cfg/SL-ctl-concurrent-s.cfg:CtlInOrder \
+	SessionLanes:cfg/SL-ctl-concurrent-j.cfg:RTInOrder \
+	SessionLanes:cfg/SL-witness.cfg:NoProgress
+
+lanes: check-tools
+	$(call tlc_rows,$(LANES_ROWS))
 
 # TLAPS: the step-by-step properties (LabelsMatch, StreamOnlyWithRoute, CodecMatches) for any
 # bounds. Each control replaces one switch in Design by TRUE and must fail at exactly that

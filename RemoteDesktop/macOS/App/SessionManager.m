@@ -160,6 +160,16 @@ static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
 }
 
+/* tla/SessionLanes.tla: how long a handler held the queue it ran on. Logged at >= 2 ms so a
+ * run shows which session work could delay pointer/key messages queued behind it. */
+static void lane_report(const char *lane, const char *what, int type, uint64_t startUs) {
+    uint64_t d = keydrd_host_time_us() - startUs;
+    if (d >= 2000) {
+        os_log(sLog, "LANE-BLOCK lane=%{public}s what=%{public}s type=0x%02x ms=%.1f",
+               lane, what, type, (double)d / 1000.0);
+    }
+}
+
 static void keydrd_limit_size(uint32_t sourceWidth, uint32_t sourceHeight,
                               uint32_t maxWidth, uint32_t maxHeight,
                               uint32_t *outWidth, uint32_t *outHeight) {
@@ -714,13 +724,16 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     _usbTransport.onInputReceived = ^(const void *data, size_t length) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return;
+        uint64_t t0 = keydrd_host_time_us();
         [strongSelf handleReceivedInputEvent:data length:length];
+        lane_report("usb-T", "input", length ? ((const uint8_t *)data)[0] : 0, t0);
     };
 
     /* Wireless connection monitoring */
     _wirelessTransport.onConnectionChanged = ^(BOOL connected, BOOL isAWDL) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return;
+        uint64_t t0 = keydrd_host_time_us();
         if (connected) {
             if (isAWDL) {
                 [strongSelf handleTransportEvent:TRANSPORT_EVT_AWDL_AVAILABLE];
@@ -734,13 +747,16 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                 [strongSelf handleTransportEvent:TRANSPORT_EVT_WIFI_UNAVAILABLE];
             }
         }
+        lane_report("wifi-T", connected ? "connection-up" : "connection-down", 0, t0);
     };
 
     /* Wireless transport input receive callback */
     _wirelessTransport.onInputReceived = ^(const void *data, size_t length) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return;
+        uint64_t t0 = keydrd_host_time_us();
         [strongSelf handleReceivedInputEvent:data length:length];
+        lane_report("wifi-T", "input", length ? ((const uint8_t *)data)[0] : 0, t0);
     };
 
     /* Start USB NCM first (primary transport).
@@ -991,7 +1007,9 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             if (!strongSelf) return;
             strongSelf->_wirelessTransport.onMediaChannelReady = nil; /* one-shot */
             os_log(sLog, "DTLS media channel ready -- starting capture now");
+            uint64_t t0 = keydrd_host_time_us();
             [strongSelf _beginCapture];
+            lane_report("wifi-T", "media-ready-capture", 0, t0);
         };
     } else if (_usbTransport.isConnected && !_hevcEncoder.isActive) {
         /* USB LZ4 mode: defer capture until viewport report arrives.

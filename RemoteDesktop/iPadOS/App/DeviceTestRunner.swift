@@ -3291,7 +3291,7 @@ final class DeviceTestRunner {
                 self.recordResult(name: "input-ready", passed: false, detail: "Mac test window did not come up (reply=\(r.map { "\($0)" } ?? "none"))")
                 for n in ["input-click", "input-keyboard", "input-double-click", "input-drag", "input-right-click",
                           "input-scroll", "input-text", "input-held-release", "input-stale-seq",
-                          "input-autorepeat", "input-latency"] {
+                          "input-autorepeat", "input-during-reconfig", "input-latency"] {
                     self.recordResult(name: n, passed: false, detail: "skipped: no Mac test window")
                 }
                 then(); return
@@ -3500,6 +3500,35 @@ final class DeviceTestRunner {
                 let ok = firsts == 1 && reps >= 3 && Double(reps) <= expected * 1.5 + 2
                 return (ok, "first=\(firsts) repeats=\(reps) expected~\(String(format: "%.1f", expected)) (delay=\(repeatDelay)s interval=\(repeatInterval)s)")
             }),
+            // Pointer moves at ~120 Hz while the Mac restarts its encoder (eco on, then off):
+            // tla/SessionLanes.tla RTNotBehindHeavy.  wire = Mac receive (injector entry, on the
+            // transport queue) - iPad send, clock-synced: network plus any wait behind session work.
+            ("input-during-reconfig", { [weak self] s, done in
+                let total = 180
+                var k = 0
+                func tick() {
+                    s.pointerMove(n(0.2 + 0.5 * Double(k) / Double(total)), n(0.6), ts: now())
+                    if k == 30 { self?.sessionManager?.sendEcoModeForTest(true) }
+                    if k == 110 { self?.sessionManager?.sendEcoModeForTest(false) }
+                    k += 1
+                    if k < total { after(8, tick) } else { after(400, done) }
+                }
+                tick()
+            }, { [weak self] r, _ in
+                let off = Double(self?.clockOffsetUs ?? 0)
+                let timing = (r["timing"] as? [String: [String: Any]]) ?? [:]
+                var wire: [Double] = []
+                for (_, t) in timing where (t["type"] as? Int) == Int(InputSender.tMove) {
+                    if let ipad = t["ipad"] as? Double, let recv = t["recv"] as? Double {
+                        wire.append((recv - (ipad + off)) / 1000)
+                    }
+                }
+                wire.sort()
+                func p(_ q: Double) -> Double { wire.isEmpty ? .nan : wire[min(wire.count - 1, Int(Double(wire.count - 1) * q))] }
+                let f = { (x: Double) in String(format: "%.1f", x) }
+                let ok = wire.count >= 100 && p(0.95) < 50 && p(1) < 150
+                return (ok, "moves=\(wire.count)/180 wire+queue[med/p95/p99/max]=\(f(p(0.5)))/\(f(p(0.95)))/\(f(p(0.99)))/\(f(p(1)))ms during eco on/off (provisional pass: >=100 moves, p95<50ms, max<150ms)")
+            }),
         ]
     }
 
@@ -3625,7 +3654,8 @@ final class DeviceTestRunner {
                        "sec-keychain-access-control",
                        "input-ready", "input-click", "input-keyboard", "input-double-click",
                        "input-drag", "input-right-click", "input-scroll", "input-text",
-                       "input-held-release", "input-stale-seq", "input-autorepeat", "input-latency"]
+                       "input-held-release", "input-stale-seq", "input-autorepeat",
+                       "input-during-reconfig", "input-latency"]
         if sustainedStreamDuration > 0 {
             allTests.append("sustained-stream")
         }

@@ -14,7 +14,7 @@ between them. TLC checks bounded instances. TLAPS proves the safety invariants e
 | H2 | pairing | `macOS/Pairing/PairingManager.m:76-142, 428-846, 1015-1080`; QR window `SessionManager.m:509-620` | identity loaded; QR shown/hidden; listener open/closed; active pairing connection; stored peer fingerprint |
 | H3 | transport FSM + fallback | `macOS/Transport/TransportFSM.c`; `SessionManager.m:737-790` | IDLE, USB_NCM, WIFI, AWDL, DISCONNECTED × 9 events; immediate fallback re-injects WIFI/WIRED events |
 | H4 | media pipeline | `SessionManager.m:2610` (viewport), capture and encoder start/stop, `revertDisplayMode` | encoder deferred until the viewport report arrives; capture runs only while streaming |
-| H5 | input | `SessionManager.m:2376-2409` | **Not implemented in RD** `[C]`: the handler covers control and probe types only; no mouse/key case, no CGEvent anywhere in `RemoteDesktop/macOS`. Phase 3 work; the model's `Inject` is the requirement it must meet |
+| H5 | input | `InputInjector.m`, `InputSender.swift` | **Implemented 2026-11-15** to `InputPath.tla`: seq guard, release on connection end, release-only `HELD` resync, iPad-side cancel, silence deadline, release on stop. Hardware E2E (Wi-Fi, run e304223): 12/12 input tests pass with real CGEvents into an agent-owned test window (click, keys+shift, double-click, drag, right-click, scroll phases, Unicode text, `HELD` release, stale seq dropped, Mac-driven repeat); iPad event → Mac app median 6.8 ms, p95 24.5 ms. Not exercised on hardware: the silence deadline (a live link keeps resetting it) and loss/relaunch release |
 | H6 | permissions | `SessionManager.m:483-506` | Accessibility / Screen Recording granted, or revoked while streaming |
 
 ### iPad client

@@ -1389,6 +1389,9 @@ final class SessionManager {
         return nil
     }
 
+    /// E2E: ask the Mac to enter or leave eco mode (HEVC encoder restart), as the eco toggle does.
+    func sendEcoModeForTest(_ on: Bool) { handleEcoModeChange(on) }
+
     /// E2E: a KEYDRD_INPUT_TEST_CONTROL command (JSON) to the Mac's input test harness.
     func sendInputTestControl(_ cmd: [String: Any]) {
         guard let json = try? JSONSerialization.data(withJSONObject: cmd) else { return }
