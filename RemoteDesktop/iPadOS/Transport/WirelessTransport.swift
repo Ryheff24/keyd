@@ -176,6 +176,10 @@ final class WirelessTransport {
     //                   does not set avoidAWDL; the resume redial goes back to AWDL.
     private var spannedSuspension = false
     private var suspendedAtUptimeNs: UInt64 = 0
+    /// The connection held when the app was suspended: only that one is dropped on resume. The
+    /// process can run before the app is active again (6222ff7+3, 2026-11-16 18:36): the heartbeat
+    /// had already dropped it and a fresh AWDL connection was READY when resume ran.
+    private weak var connectionAtSuspend: NWConnection?
     private var nextDialAWDL: Bool {
         if WirelessTransport.pinAWDL { return true }
         return WirelessTransport.includePeerToPeer && !avoidAWDL
@@ -1433,6 +1437,7 @@ final class WirelessTransport {
             guard let self = self else { return }
             self.suspendedAtUptimeNs = DispatchTime.now().uptimeNanoseconds
             self.spannedSuspension = (self.inputConnection != nil || self.isConnected)
+            self.connectionAtSuspend = self.inputConnection
             print("[CONSOLE] WirelessTransport: app-suspended held=\(self.spannedSuspension ? 1 : 0) connected=\(self.isConnected) AWDL=\(self.isAWDL)")
         }
     }
@@ -1450,7 +1455,11 @@ final class WirelessTransport {
             let awaySec = Double(DispatchTime.now().uptimeNanoseconds &- self.suspendedAtUptimeNs) / 1_000_000_000.0
             self.suspendedAtUptimeNs = 0
             let held = self.inputConnection != nil && self.isConnected
-            if held && awaySec >= self.linkSilenceDeadline {
+            let sameAsSuspended = held && self.inputConnection === self.connectionAtSuspend
+            self.connectionAtSuspend = nil
+            if held && !sameAsSuspended {
+                print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=keep (new connection since the suspension) AWDL=\(self.isAWDL) tUs=\(keydrdHostTimeUs())")
+            } else if held && awaySec >= self.linkSilenceDeadline {
                 print("[CONSOLE] WirelessTransport: app-resumed awayMs=\(Int(awaySec * 1000)) held=1 decision=drop-and-redial (away past the \(Int(self.linkSilenceDeadline * 1000)) ms deadline) AWDL=\(self.isAWDL) tUs=\(keydrdHostTimeUs())")
                 self.handleSilentLinkLoss(silentSec: awaySec, reason: "resume-after-suspension")
             } else if held {
