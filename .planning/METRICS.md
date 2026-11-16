@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `40.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.185` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `39 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `125 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `57 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `58 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `143 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `75 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `39.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `39 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `120 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `28.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.314` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `45 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `222 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `78 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `61 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `243 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `96 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `37.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `31 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `110 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `84.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `82.6%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -152,3 +152,4 @@ Rules:
 | 2026-11-15 | 22:25:51 EST | `4540d26` | `2752x1786` | `2496x1620` | `27.0 fps` | `2.625` | `102/855/233 ms` | `77/796/199 ms` | `42.6 fps, 49/256 ms` | `1` | `37/46` | per-frame timeline FT-M/FT-I instrumentation (logging only) to locate Wi-Fi stalls |
 | 2026-11-15 | 23:28:09 EST | `8148018` | `2752x1786` | `2496x1620` | `44.0 fps` | `1.556` | `68/334/106 ms` | `79/348/120 ms` | `42.2 fps, 79/378 ms` | `1` | `39/46` | link liveness+infra-first dial, compressor live resize, USB 120fps restore; on en0, 0 silence trips; bw 14.8Mb/s |
 | 2026-11-16 | 00:08:13 EST | `cfe6597` | `2752x1786` | `2496x1620` | `40.4 fps` | `1.185` | `39/125/57 ms` | `58/143/75 ms` | `39.2 fps, 39/120 ms` | `1` | `39/46` | Wi-Fi ack gate: iPad frame acks, encode only while unacked<3, no post-encode drop or stall reset |
+| 2026-11-16 | 00:21:07 EST | `ddfd000` | `2752x1786` | `2496x1620` | `28.9 fps` | `1.314` | `45/222/78 ms` | `61/243/96 ms` | `37.3 fps, 31/110 ms` | `1` | `38/46` | Wi-Fi rate: gate holds no longer congestion; bitrate follows half ack-measured delivery rate; fps kept at 60 |
