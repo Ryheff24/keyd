@@ -23,6 +23,21 @@ final class WirelessTransport {
         return on
     }()
 
+    /// Test mode `--wireless-only` (harness `--transport-rotation wifi`): require the Wi-Fi
+    /// interface. Without it Bonjour may resolve the Mac over USB NCM (en13), AWDL or another
+    /// link, and a "Wi-Fi" run silently measures that link instead. Normal use is unchanged.
+    static let requireWiFiInterface: Bool = {
+        let args = ProcessInfo.processInfo.arguments
+        let on = args.contains("--test-mode") && args.contains("--wireless-only")
+        print("[CONSOLE] WirelessTransport: requireWiFiInterface=\(on)")
+        return on
+    }()
+
+    private static func applyInterfacePolicy(_ params: NWParameters) {
+        params.includePeerToPeer = includePeerToPeer
+        if requireWiFiInterface { params.requiredInterfaceType = .wifi }
+    }
+
 
     // MARK: - Properties
 
@@ -237,10 +252,10 @@ final class WirelessTransport {
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
-        params.includePeerToPeer = WirelessTransport.includePeerToPeer
+        WirelessTransport.applyInterfacePolicy(params)
         // Media arrives on this connection: interactive video (WMM AC_VI) for it and its ACKs.
         params.serviceClass = .interactiveVideo
-        print("[CONSOLE] WirelessTransport: TCP params serviceClass=interactiveVideo includePeerToPeer=\(params.includePeerToPeer)")
+        print("[CONSOLE] WirelessTransport: TCP params serviceClass=interactiveVideo includePeerToPeer=\(params.includePeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
         return params
     }
 
@@ -268,7 +283,7 @@ final class WirelessTransport {
             }, DispatchQueue.global())
 
         let params = NWParameters(dtls: dtlsOptions, udp: .init())
-        params.includePeerToPeer = WirelessTransport.includePeerToPeer
+        WirelessTransport.applyInterfacePolicy(params)
         params.serviceClass = .interactiveVideo
         return params
     }
@@ -288,7 +303,7 @@ final class WirelessTransport {
         log.info("Starting Bonjour browse for \(keydrdService) (TLS/DTLS enabled)")
 
         let params = NWParameters()
-        params.includePeerToPeer = WirelessTransport.includePeerToPeer
+        WirelessTransport.applyInterfacePolicy(params)
 
         let descriptor = NWBrowser.Descriptor.bonjour(type: keydrdService, domain: nil)
         let newBrowser = NWBrowser(for: descriptor, using: params)
