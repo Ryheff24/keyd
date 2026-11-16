@@ -1647,6 +1647,7 @@ final class SessionManager {
         flHsEpoch = 0
         flAwaiting = true
         flAwaitReason = reason
+        flAwaitSinceUs = 0  // the next accepted handshake starts the clock
         flGen &+= 1
         flLock.unlock()
         print("[CONSOLE] FL IpadReset reason=\(reason)")
