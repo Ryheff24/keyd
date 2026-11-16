@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `47.9 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.606` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `48 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `265 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `88 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `64 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `267 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `102 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `41.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `91 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `391 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `49.3 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.550` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `52 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `188 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `77 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `66 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `197 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `92 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `50.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `50 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `123 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `84.8%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -145,3 +145,4 @@ Rules:
 | 2026-11-15 | 20:45:21 EST | `558ac03` | `2752x1786` | `2496x1620` | `52.0 fps` | `1.237` | `38/136/59 ms` | `57/148/75 ms` | `54.0 fps, 34/113 ms` | `1` | `38/46` | baseline before queue split: LANE-BLOCK logging + input-during-reconfig (pointer moves during eco on/off) |
 | 2026-11-15 | 20:54:23 EST | `02f587c` | `2752x1786` | `2496x1620` | `50.0 fps` | `1.294` | `50/136/65 ms` | `63/150/81 ms` | `51.1 fps, 51/137 ms` | `1` | `40/46` | Mac session queue split (SessionLanes): input stays on transport queue, session work on serial S; scroll check by sumDy |
 | 2026-11-15 | 20:59:53 EST | `bc6e7d8` | `2752x1786` | `2496x1620` | `47.9 fps` | `1.606` | `48/265/88 ms` | `64/267/102 ms` | `41.2 fps, 91/391 ms` | `1` | `40/46` | SessionLanes follow-up: startAdvertising/beginReconnectWindow hop to Wi-Fi transport queue (S now calls them) |
+| 2026-11-15 | 21:14:30 EST | `5f4b88c` | `2752x1786` | `2496x1620` | `49.3 fps` | `1.550` | `52/188/77 ms` | `66/197/92 ms` | `50.3 fps, 50/123 ms` | `1` | `39/46` | wifi stutter diag: log iPad PEER-ADDR; external 10Hz ping iPad+router during run (no behavior change) |
