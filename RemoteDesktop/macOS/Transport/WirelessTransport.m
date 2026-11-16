@@ -600,7 +600,16 @@ static char kWirelessTransportQueueKey;
 #pragma mark - Private: Connection Handling
 
 - (void)handleNewConnection:(nw_connection_t)connection {
-    os_log(wireless_log(), "TLS wireless connection accepted from iPad");
+    {
+        nw_endpoint_t remote = nw_connection_copy_endpoint(connection);
+        char *addr = (remote && nw_endpoint_get_type(remote) == nw_endpoint_type_address)
+                         ? nw_endpoint_copy_address_string(remote) : NULL;
+        uint16_t port = remote ? nw_endpoint_get_port(remote) : 0;
+        /* PEER-ADDR: read by scratch ping probes to time-correlate Wi-Fi stalls. */
+        os_log(wireless_log(), "TLS wireless connection accepted from iPad PEER-ADDR=%{public}s port=%u",
+               addr ? addr : "unknown", port);
+        free(addr);
+    }
 
     /* Ignore duplicate candidates while an existing session is still active.
      * During reconnect/rotation, the old TCP socket can remain "connected" for
