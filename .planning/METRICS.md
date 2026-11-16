@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `35.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.535` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `56 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `195 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `84 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `67 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `214 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `102 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `31.6 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `62 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `347 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `50.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.974` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `35 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `141 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `51 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `55 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `158 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `70 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `51.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `29 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `86 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `83.0%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -169,3 +169,4 @@ Rules:
 | 2026-11-16 | 16:51:55 EST | `6e079b6` | `2752x1786` | `2496x1620` | `45.2 fps` | `1.333` | `36/171/59 ms` | `55/187/77 ms` | `52.0 fps, 31/84 ms` | `1` | `39/46` | FrameLoop design: epoch handshakes, KeyOnBreak gate, HsConn filter, KeyRetry, IdleKey, AwaitOnFail + FL trace |
 | 2026-11-16 | 16:57:24 EST | `20d1ea9` | `2752x1786` | `2496x1620` | `49.6 fps` | `1.158` | `32/150/52 ms` | `53/166/70 ms` | `57.3 fps, 29/53 ms` | `1` | `40/46` | FrameLoop design run 2: iPad await clock from handshake after reset (logging fix) |
 | 2026-11-16 | 17:30:48 EST | `68e521e` | `2752x1786` | `2496x1620` | `35.4 fps` | `1.535` | `56/195/84 ms` | `67/214/102 ms` | `31.6 fps, 62/347 ms` | `1` | `40/46` | strict whole-run report (e2e_strict.py) + FT-I always on; baseline before fixes |
+| 2026-11-16 | 17:50:47 EST | `6222ff7` | `2752x1786` | `2496x1620` | `50.4 fps` | `0.974` | `35/141/51 ms` | `55/158/70 ms` | `51.3 fps, 29/86 ms` | `1` | `39/47` | background-recovery phase baseline: UI test Home 15s + strict analyser; expect infra pin + decode refusal |
