@@ -17,21 +17,21 @@ Rules:
 |--------|---------|------|------|--------|
 | Viewport width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
-| Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `56.3 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.671` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `32 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `71 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `38 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `53 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `85 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `57 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `56.9 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `28 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `46 ms` | `8 ms` | `7 ms` | ❌ |
+| Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
+| Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
+| FPS | `55.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.794` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `41 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `97 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `50 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `62 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `113 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `70 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `55.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `52 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `133 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `84.8%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -161,3 +161,4 @@ Rules:
 | 2026-11-16 | 01:33:09 EST | `7993138` | `2752x1786` | `2496x1620` | `47.8 fps` | `1.222` | `34/153/51 ms` | `54/166/68 ms` | `44.8 fps, 34/161 ms` | `1` | `39/46` | AWDL dial prohibits wired types; LZ4 keyframe on USB connect, iPad drops wireless LZ4 (DeltaSync T4) |
 | 2026-11-16 | 01:58:06 EST | `a470989` | `2752x1786` | `2496x1620` | `53.1 fps` | `1.036` | `40/90/49 ms` | `60/104/68 ms` | `52.6 fps, 57/93 ms` | `1` | `39/46` | replug/agent-restart fixes: iPad USB liveness+redial, LZ4 only on USB, codec resync, capture resize, HEVC slice fix |
 | 2026-11-16 | 02:20:10 EST | `4cc1c70` | `2752x1786` | `2496x1620` | `56.3 fps` | `0.671` | `32/71/38 ms` | `53/85/57 ms` | `56.9 fps, 28/46 ms` | `1` | `40/46` | AWDL target 20 Mbps (infra 10); ENC-SPLIT encode timing; iPad camera stops when QR pane hidden |
+| 2026-11-16 | 02:34:30 EST | `2dfcccb` | `2752x1786` | `2752x1786` | `55.8 fps` | `0.794` | `41/97/50 ms` | `62/113/70 ms` | `55.1 fps, 52/133 ms` | `1` | `39/46` | AWDL encodes at native viewport (cap 2752x2064; infra keeps 2496x1620); drop unsupported speed hint |
