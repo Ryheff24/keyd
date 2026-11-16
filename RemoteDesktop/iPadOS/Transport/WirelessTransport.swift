@@ -845,6 +845,7 @@ final class WirelessTransport {
         // Data arrives with 4-byte big-endian length prefix per message.
         connection.receive(minimumIncompleteLength: 1, maximumLength: Self.tcpReceiveMaxLength) {
             [weak self] content, _, isComplete, error in
+            let rxUs = keydrdHostTimeUs()
             guard let self = self else { return }
             guard self.inputConnection === connection else {
                 if error != nil || isComplete {
@@ -854,6 +855,7 @@ final class WirelessTransport {
             }
 
             if let data = content, !data.isEmpty {
+                FrameTimeline.shared.tcpReceive(atUs: rxUs, bytes: data.count)
                 let beforeCount = self.tcpBuffer.count
                 self.reserveTCPBufferIfNeeded(incomingBytes: data.count, currentCount: beforeCount)
                 self.tcpBuffer.append(data)
@@ -942,6 +944,7 @@ final class WirelessTransport {
             deliveredThisDrain += 1
             tcpDrainDeliveredCount += 1
 
+            FrameTimeline.shared.tcpMessageDelivered(moreBuffered: tcpBuffer.count > tcpBufferReadOffset)
             onInputReceived?(message)
         }
 

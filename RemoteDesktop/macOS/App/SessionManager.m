@@ -11,6 +11,7 @@
 #import "protocol.h"
 
 #import <os/log.h>
+#import <os/lock.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreImage/CoreImage.h>
 #import <QuartzCore/QuartzCore.h>
@@ -158,6 +159,63 @@ static const uint64_t kWirelessAdaptivePostStaleUpshiftHoldMs = 4200;
 
 static uint64_t keydrd_host_time_us(void) {
     return (uint64_t)(CACurrentMediaTime() * 1000000.0);
+}
+
+/* ---- Frame timeline, Mac half ("FT-M" lines) ----
+ * One record per Wi-Fi TCP media frame, keyed by capture ts_us so it joins the
+ * iPad's "FT-I" lines (iPadOS Protocol.swift FrameTimeline). Diagnostic only: it
+ * locates where a Wi-Fi stall starts (capture/encode, scheduler, local stack, link).
+ * Records are batched 8 per os_log line so per-frame logging stays off the send path.
+ * Entry: seq,tsUs,bytes,flags,encOutUs,+submit,+done,inFlight,outcome
+ *   encOutUs = entry to the send path (encoder output), offsets in us from encOutUs,
+ *   +done = -1 when never submitted; outcome S=sent F=failed D=backpressure-drop
+ *   X=completion after a stall-recovery generation change. */
+typedef struct {
+    uint16_t seq;
+    uint8_t  flags;
+    char     outcome;
+    uint32_t bytes;
+    int32_t  inFlight;
+    uint64_t tsUs;
+    uint64_t encOutUs;
+    uint64_t submitUs;
+    uint64_t doneUs;
+} FTMacRecord;
+
+enum { kFTMacBatch = 8 };
+static os_unfair_lock sFTMacLock = OS_UNFAIR_LOCK_INIT;
+static FTMacRecord sFTMacBuf[kFTMacBatch];
+static int sFTMacCount = 0;
+static uint32_t sFTMacLine = 0;
+
+static void ft_mac_record(FTMacRecord rec) {
+    FTMacRecord batch[kFTMacBatch];
+    int n = 0;
+    uint32_t line = 0;
+    os_unfair_lock_lock(&sFTMacLock);
+    sFTMacBuf[sFTMacCount++] = rec;
+    if (sFTMacCount == kFTMacBatch) {
+        memcpy(batch, sFTMacBuf, sizeof(batch));
+        n = sFTMacCount;
+        sFTMacCount = 0;
+        line = ++sFTMacLine;
+    }
+    os_unfair_lock_unlock(&sFTMacLock);
+    if (n == 0) return;
+
+    char buf[1024];
+    size_t off = 0;
+    for (int i = 0; i < n && off < sizeof(buf); i++) {
+        const FTMacRecord *r = &batch[i];
+        long long sub = r->submitUs ? (long long)(r->submitUs - r->encOutUs) : -1;
+        long long done = (r->doneUs && r->submitUs) ? (long long)(r->doneUs - r->encOutUs) : -1;
+        int w = snprintf(buf + off, sizeof(buf) - off, "%u,%llu,%u,%u,%llu,%lld,%lld,%d,%c;",
+                         r->seq, (unsigned long long)r->tsUs, r->bytes, r->flags,
+                         (unsigned long long)r->encOutUs, sub, done, r->inFlight, r->outcome);
+        if (w < 0) break;
+        off += (size_t)w;
+    }
+    os_log(sLog, "FT-M line=%u n=%d %{public}s", line, n, buf);
 }
 
 /* tla/SessionLanes.tla: how long a handler held the queue it ran on. Logged at >= 2 ms so a
@@ -1510,6 +1568,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             wifiTCPMediaLogCount++;
             uint32_t seq = originalHeader->seq;
             uint64_t enqueueUs = keydrd_host_time_us();
+            FTMacRecord ftRec = {
+                .seq = originalHeader->seq, .flags = originalHeader->flags, .outcome = 'S',
+                .bytes = (uint32_t)len, .inFlight = 0, .tsUs = originalHeader->ts_us,
+                .encOutUs = enqueueUs, .submitUs = 0, .doneUs = 0,
+            };
             uint32_t sendGeneration = self.wifiTCPSendGeneration;
             uint64_t schedulerWindowStartUs = self.wifiTCPSchedulerWindowStartUs;
             if (schedulerWindowStartUs == 0 ||
@@ -1750,14 +1813,26 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                            sinceLastReqMs == UINT64_MAX ? 0 : sinceLastReqMs,
                            schedulerDelayUs, schedulerSpacingUs, schedulerReason, burstWindowSendCount);
                 }
+                ftRec.outcome = 'D';
+                ftRec.inFlight = inFlight - 1;
+                ft_mac_record(ftRec);
                 return;
             }
             __weak SessionManager *weakSelf = self;
+            ftRec.inFlight = inFlight;
+            ftRec.submitUs = keydrd_host_time_us();
             [_wirelessTransport sendMediaFrameViaTCP:data length:len completion:^(BOOL success) {
+                uint64_t doneUs = keydrd_host_time_us();
+                FTMacRecord ftDone = ftRec;
+                ftDone.doneUs = doneUs;
+                ftDone.outcome = success ? 'S' : 'F';
                 SessionManager *strongSelf = weakSelf;
                 if (!strongSelf) return;
-                uint64_t doneUs = keydrd_host_time_us();
                 uint32_t activeGeneration = strongSelf.wifiTCPSendGeneration;
+                if (sendGeneration != activeGeneration) {
+                    ftDone.outcome = 'X';
+                }
+                ft_mac_record(ftDone);
                 if (sendGeneration != activeGeneration) {
                     static int wifiTCPStaleCompletionLogCount = 0;
                     wifiTCPStaleCompletionLogCount++;

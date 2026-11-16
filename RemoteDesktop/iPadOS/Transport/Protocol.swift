@@ -376,3 +376,156 @@ struct ViewportReportPayload {
         return buf
     }
 }
+
+// MARK: - FrameTimeline (iPad half, "FT-I" lines)
+
+/// Per-frame timestamps from TCP receive to presentation, keyed by the capture
+/// `tsUs` carried in MediaFrameHeader, so each frame joins the Mac's "FT-M" lines
+/// (macOS SessionManager.m ft_mac_record). Diagnostic only: it locates where a
+/// Wi-Fi stall starts. Records are kept in memory and printed once a second in
+/// batches, so per-frame logging stays off the receive and render paths.
+///
+/// FT-I entry: seq,tsUs,bytes,flags,firstRxUs,+lastRx,+complete,+decSub,+decDone,+enq,+deq,+target
+///   firstRxUs = TCP receive callback that delivered the frame's first bytes;
+///   +lastRx   = callback that delivered its last bytes; +complete = length-prefix
+///   parse done (handed to the session). Offsets are us from firstRxUs; -1 = stage
+///   never reached (e.g. replaced in the renderer before it was presented).
+/// FT-IRX entry: gapStartUs,gapUs,bytesInNextCallback for TCP receive-callback
+///   gaps >= 15 ms.
+final class FrameTimeline {
+    static let shared = FrameTimeline()
+    static let enabled = ProcessInfo.processInfo.arguments.contains("--test-mode")
+
+    private struct Record {
+        var seq: UInt16
+        var flags: UInt8
+        var bytes: Int
+        var firstRxUs: UInt64
+        var lastRxUs: UInt64
+        var completeUs: UInt64
+        var decSubmitUs: UInt64 = 0
+        var decDoneUs: UInt64 = 0
+        var enqueueUs: UInt64 = 0
+        var dequeueUs: UInt64 = 0
+        var targetUs: UInt64 = 0
+    }
+
+    private let lock = NSLock()
+    private var records: [UInt64: Record] = [:]
+    private var rxGaps: [(UInt64, UInt64, Int)] = []
+    private var flushTimer: DispatchSourceTimer?
+    private let flushQueue = DispatchQueue(label: "com.ryheff.keyd.frametimeline", qos: .utility)
+    private var lineNumber = 0
+
+    // TCP receive state. Touched only on the wireless transport queue (receive
+    // callback, drain, and the synchronous onInputReceived it invokes).
+    private var lastRxUs: UInt64 = 0
+    private var currentRxUs: UInt64 = 0
+    private var pendingFirstRxUs: UInt64 = 0
+    private var messageFirstRxUs: UInt64 = 0
+    private var messageLastRxUs: UInt64 = 0
+
+    /// First thing in the TCP receive callback, with the callback-entry time.
+    func tcpReceive(atUs nowUs: UInt64, bytes: Int) {
+        guard Self.enabled else { return }
+        if lastRxUs > 0 && nowUs > lastRxUs && nowUs - lastRxUs >= 15_000 {
+            lock.lock()
+            if rxGaps.count < 4096 { rxGaps.append((lastRxUs, nowUs - lastRxUs, bytes)) }
+            lock.unlock()
+        }
+        lastRxUs = nowUs
+        currentRxUs = nowUs
+        if pendingFirstRxUs == 0 { pendingFirstRxUs = nowUs }
+    }
+
+    /// Called by the TCP drain for each complete length-prefixed message, before
+    /// it is handed on. Bytes left in the buffer after a message arrived in the
+    /// current callback, so they start the next message there.
+    func tcpMessageDelivered(moreBuffered: Bool) {
+        guard Self.enabled else { return }
+        messageFirstRxUs = pendingFirstRxUs
+        messageLastRxUs = currentRxUs
+        pendingFirstRxUs = moreBuffered ? currentRxUs : 0
+    }
+
+    /// A media frame header was parsed from the message just delivered.
+    func frameComplete(_ header: MediaFrameHeader, bytes: Int) {
+        guard Self.enabled else { return }
+        let nowUs = keydrdHostTimeUs()
+        let first = messageFirstRxUs > 0 ? messageFirstRxUs : nowUs
+        let last = messageLastRxUs > 0 ? messageLastRxUs : nowUs
+        messageFirstRxUs = 0
+        messageLastRxUs = 0
+        lock.lock()
+        if records.count < 4096 {
+            records[header.tsUs] = Record(seq: header.seq, flags: header.flags, bytes: bytes,
+                                          firstRxUs: first, lastRxUs: last, completeUs: nowUs)
+        }
+        let needTimer = flushTimer == nil
+        lock.unlock()
+        if needTimer { startFlushTimer() }
+    }
+
+    func decoded(tsUs: UInt64, submitUs: UInt64, doneUs: UInt64) {
+        guard Self.enabled else { return }
+        lock.lock()
+        if records[tsUs] != nil {
+            records[tsUs]!.decSubmitUs = submitUs
+            records[tsUs]!.decDoneUs = doneUs
+        }
+        lock.unlock()
+    }
+
+    func presented(tsUs: UInt64, enqueueUs: UInt64, dequeueUs: UInt64, targetUs: UInt64) {
+        guard Self.enabled else { return }
+        lock.lock()
+        if records[tsUs] != nil {
+            records[tsUs]!.enqueueUs = enqueueUs
+            records[tsUs]!.dequeueUs = dequeueUs
+            records[tsUs]!.targetUs = targetUs
+        }
+        lock.unlock()
+    }
+
+    private func startFlushTimer() {
+        lock.lock()
+        guard flushTimer == nil else { lock.unlock(); return }
+        let timer = DispatchSource.makeTimerSource(queue: flushQueue)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in self?.flush() }
+        flushTimer = timer
+        lock.unlock()
+        timer.resume()
+    }
+
+    /// Print frames whose last stage is at least 1 s old (presented or replaced by then).
+    private func flush() {
+        let cutoff = keydrdHostTimeUs() &- 1_000_000
+        lock.lock()
+        let ready = records.filter { $0.value.completeUs < cutoff }
+        for key in ready.keys { records.removeValue(forKey: key) }
+        let gaps = rxGaps
+        rxGaps.removeAll(keepingCapacity: true)
+        lock.unlock()
+
+        func off(_ t: UInt64, _ base: UInt64) -> String { t == 0 ? "-1" : String(Int64(bitPattern: t &- base)) }
+        let sorted = ready.sorted { $0.value.completeUs < $1.value.completeUs }
+        var batch: [String] = []
+        for (ts, r) in sorted {
+            let b = r.firstRxUs
+            batch.append("\(r.seq),\(ts),\(r.bytes),\(r.flags),\(b),\(off(r.lastRxUs, b)),\(off(r.completeUs, b)),\(off(r.decSubmitUs, b)),\(off(r.decDoneUs, b)),\(off(r.enqueueUs, b)),\(off(r.dequeueUs, b)),\(off(r.targetUs, b))")
+            if batch.count == 10 {
+                lineNumber += 1
+                print("[CONSOLE] FT-I line=\(lineNumber) n=\(batch.count) \(batch.joined(separator: ";"))")
+                batch.removeAll(keepingCapacity: true)
+            }
+        }
+        if !batch.isEmpty {
+            lineNumber += 1
+            print("[CONSOLE] FT-I line=\(lineNumber) n=\(batch.count) \(batch.joined(separator: ";"))")
+        }
+        if !gaps.isEmpty {
+            print("[CONSOLE] FT-IRX n=\(gaps.count) \(gaps.map { "\($0.0),\($0.1),\($0.2)" }.joined(separator: ";"))")
+        }
+    }
+}

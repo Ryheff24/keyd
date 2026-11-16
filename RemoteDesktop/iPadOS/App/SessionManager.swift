@@ -825,6 +825,7 @@ final class SessionManager {
                                           source: String,
                                           decodeSubmitUs: UInt64,
                                           decodeDoneUs: UInt64) {
+        FrameTimeline.shared.decoded(tsUs: header.tsUs, submitUs: decodeSubmitUs, doneUs: decodeDoneUs)
         let scheduleUs = keydrdHostTimeUs()
         hevcHandoffQueue.async { [weak self] in
             guard let self else { return }
@@ -1094,6 +1095,7 @@ final class SessionManager {
         // sequencing path.
         if data.count >= MediaFrameHeader.size,
            let mediaHeader = MediaFrameHeader.parse(from: data) {
+            FrameTimeline.shared.frameComplete(mediaHeader, bytes: data.count)
             if mediaHeader.chunkTotal > 1 || mediaHeader.isHEVC {
                 if mediaHeader.chunkTotal > 1 && !mediaHeader.isHEVC {
                     print("[CONSOLE] handleInputReceived: routing chunked non-HEVC frame via reassembler seq=\(mediaHeader.seq) chunk=\(mediaHeader.chunkIdx + 1)/\(mediaHeader.chunkTotal)")

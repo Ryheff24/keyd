@@ -614,6 +614,10 @@ extension MetalRenderer: CAMetalDisplayLinkDelegate {
                     let targetPresentation = update.targetPresentationTimestamp
                     if targetPresentation > 0 {
                         let presentedHostTimeUs = Int64(targetPresentation * 1_000_000)
+                        FrameTimeline.shared.presented(tsUs: currentCaptureTimestampUs,
+                                                       enqueueUs: currentEnqueuedAtUs,
+                                                       dequeueUs: dequeueNowUs,
+                                                       targetUs: UInt64(presentedHostTimeUs))
                         onFramePresented?(currentCaptureTimestampUs, presentedHostTimeUs)
                     }
                 }
