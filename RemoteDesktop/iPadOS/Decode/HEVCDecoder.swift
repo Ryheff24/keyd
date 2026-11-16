@@ -259,6 +259,16 @@ final class HEVCDecoder {
         invalidate()
     }
 
+    /// Copy bytes [range] of `data`, with `range` in zero-based offsets (the same offsets the
+    /// parsers use on withUnsafeBytes). Data subscripts use the collection's own indices, so a
+    /// slice whose startIndex is not 0 (frames from the UDP reassembler) trapped here on an HEVC
+    /// keyframe (crash 2026-11-16 01:43, Data._Representation.subscript.getter).
+    private static func zeroBased(_ data: Data, _ range: Range<Int>) -> Data {
+        let lo = max(0, min(range.lowerBound, data.count))
+        let hi = max(lo, min(range.upperBound, data.count))
+        return Data(data[(data.startIndex + lo)..<(data.startIndex + hi)])
+    }
+
     // MARK: - Session Setup
 
     /// Extract SPS/PPS from keyframe data and create/recreate the decompression session.
@@ -269,7 +279,7 @@ final class HEVCDecoder {
             // Log first few bytes for debugging NAL unit format
             let safeStart = payloadOffset
             let safeEnd = min(data.count, payloadOffset + min(payloadLength, 20))
-            let preview = data[safeStart..<safeEnd].map { String(format: "%02x", $0) }.joined(separator: " ")
+            let preview = Self.zeroBased(data, safeStart..<max(safeStart, safeEnd)).map { String(format: "%02x", $0) }.joined(separator: " ")
             print("[CONSOLE] HEVCDecoder: createFormatDescription FAILED, payload[\(payloadLength)]= \(preview)...")
             return false
         }
@@ -329,9 +339,9 @@ final class HEVCDecoder {
                 // HEVC NAL unit type is in bits 1-6 of the first byte
                 let nalType = (bytes[range.lowerBound] >> 1) & 0x3F
                 switch nalType {
-                case 32: vps = Data(data[range])  // VPS
-                case 33: sps = Data(data[range])  // SPS
-                case 34: pps = Data(data[range])  // PPS
+                case 32: vps = Self.zeroBased(data, range)  // VPS
+                case 33: sps = Self.zeroBased(data, range)  // SPS
+                case 34: pps = Self.zeroBased(data, range)  // PPS
                 default: break
                 }
             }
@@ -482,7 +492,7 @@ final class HEVCDecoder {
                 let nalType = (bytes[offset] >> 1) & 0x3F
                 let nalStart = offset
                 let nalEnd = offset + nalLength
-                let nalData = Data(data[nalStart..<nalEnd])
+                let nalData = Self.zeroBased(data, nalStart..<nalEnd)
                 switch nalType {
                 case 32: vps = nalData
                 case 33: sps = nalData

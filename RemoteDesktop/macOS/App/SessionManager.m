@@ -817,7 +817,17 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             if (strongSelf->_transportState != TRANSPORT_USB_NCM) {
                 [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_APPEARED];
             } else {
-                os_log(sLog, "USB NCM TCP input ready — sending handshake");
+                os_log(sLog, "USB NCM TCP input ready — sending handshake (hevcActive=%d eco=%d)",
+                       strongSelf->_hevcEncoder.isActive, strongSelf->_isEcoMode);
+                /* tla/TransportAgreement.tla RouteResync: the codec is the route's. The FSM can
+                 * already read USB_NCM while the session ran on wireless (interface appear sets
+                 * the label, TA-asbuilt-labels), so WIRED_APPEARED's LZ4 effect never fires and
+                 * HEVC went out over USB (seen 2026-11-16 after an iPad relaunch). A new USB
+                 * connection starts lossless; the iPad asks for eco again if it wants it. */
+                if (strongSelf->_hevcEncoder.isActive) {
+                    os_log(sLog, "RouteResync: USB input ready with HEVC active -> LZ4");
+                    [strongSelf switchToLZ4Mode];
+                }
                 /* tla/DeltaSync.tla KeyOnConnect: frames compressed before this connection
                  * (seen: the switch keyframe sent over AWDL) never reach it in order. */
                 [strongSelf->_capture requestLZ4Keyframe];
@@ -1351,6 +1361,16 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     _capture.shouldCompressFrame = ^BOOL(void) {
         SessionManager *strongSelf = weakSelf;
         if (!strongSelf) return NO;
+        /* tla/DeltaSync.tla GateBeforeCompress + T4: LZ4 is USB-only. With no USB connection
+         * (the ~0.3 s between USB NCM appearing and its TLS input READY, and the unplug window
+         * before HEVC) compressed frames went out over AWDL, where the iPad drops them (seen:
+         * 26 deltas + a 3 MB keyframe on one replug). Skip them; the reference does not move and
+         * the keyframe requested on connect resyncs. */
+        if (!strongSelf->_usbTransport.isConnected) {
+            static uint32_t gateNoUSB = 0;
+            if ((gateNoUSB++ % 120) == 0) os_log(sLog, "LZ4 compress skipped: no USB connection (count=%u)", gateNoUSB);
+            return NO;
+        }
         int32_t inFlight = __atomic_load_n(&strongSelf->_tcpMediaSendsInFlight, __ATOMIC_ACQUIRE);
         return inFlight < kUSBLZ4GateInFlight;
     };
@@ -3072,12 +3092,24 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         /* Tell iPad the frame size BEFORE any frames arrive */
         [self sendGeometryUpdate];
 
-        /* Set capture resolution (SCStream config update) */
-        _capture.captureWidth = _viewportWidth;
-        _capture.captureHeight = _viewportHeight;
+        if (_capture.isCapturing) {
+            /* Capture already runs (e.g. it started at display size during a wireless session
+             * that never got a viewport, then USB connected). Setting the size properties does
+             * not touch a running SCStream, so frames stayed at display size and every iPad
+             * decode failed (size mismatch, seen 2026-11-16 after an agent restart).
+             * updateCaptureResolution reconfigures the stream and the compressor. */
+            os_log(sLog, "LZ4 viewport: capture running at %ux%u -> reconfiguring to %ux%u",
+                   _capture.captureWidth, _capture.captureHeight, _viewportWidth, _viewportHeight);
+            [_capture updateCaptureResolution:_viewportWidth height:_viewportHeight];
+            [_capture requestLZ4Keyframe];
+        } else {
+            /* Set capture resolution (applied at stream start) */
+            _capture.captureWidth = _viewportWidth;
+            _capture.captureHeight = _viewportHeight;
 
-        /* NOW start capture — iPad decompressor is already at correct size */
-        [self _beginCapture];
+            /* NOW start capture — iPad decompressor is already at correct size */
+            [self _beginCapture];
+        }
 
         if (self.onResolutionChanged) {
             self.onResolutionChanged(_captureWidth, _captureHeight);

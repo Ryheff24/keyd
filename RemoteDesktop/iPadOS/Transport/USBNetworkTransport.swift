@@ -634,9 +634,11 @@ final class USBNetworkTransport {
                 self.scheduleMediaReceive(mediaConn)
             case .failed(let error):
                 self.log.error("USB NCM DTLS media connection failed: \(error)")
+                guard mediaConn === self.mediaConnection else { return }
                 self.mediaConnection = nil
                 if self.inputConnection == nil { self.isConnected = false }
             case .cancelled:
+                guard mediaConn === self.mediaConnection else { return }
                 self.mediaConnection = nil
                 if self.inputConnection == nil { self.isConnected = false }
             default:
@@ -664,9 +666,11 @@ final class USBNetworkTransport {
                 self.scheduleInputReceive(inputConn)
             case .failed(let error):
                 self.log.error("USB NCM TLS input connection failed: \(error)")
-                self.inputConnection = nil
-                if self.mediaConnection == nil { self.isConnected = false }
+                print("[CONSOLE] USBTransport: TLS input FAILED (interface): \(error) (connection=\(inputConn === self.inputConnection ? "current" : "stale"))")
+                guard inputConn === self.inputConnection else { return }
+                self.usbInputLost(inputConn, reason: "input-failed-interface")
             case .cancelled:
+                guard inputConn === self.inputConnection else { return }
                 self.inputConnection = nil
                 if self.mediaConnection == nil { self.isConnected = false }
             default:
@@ -733,6 +737,7 @@ final class USBNetworkTransport {
             case .failed(let error):
                 print("[CONSOLE] USBTransport: DTLS media FAILED: \(error)")
                 self.log.error("USB NCM DTLS media failed: \(error)")
+                guard mediaConn === self.mediaConnection else { return }
                 self.mediaConnection = nil
                 if self.inputConnection == nil { self.isConnected = false }
             default: break
@@ -783,11 +788,7 @@ final class USBNetworkTransport {
                 print("[CONSOLE] USBTransport: TLS input FAILED: \(error) (connection=\(current ? "current" : "stale"))")
                 self.log.error("USB NCM TLS input failed: \(error)")
                 guard current else { return }
-                self.inputConnection = nil
-                if self.mediaConnection == nil { self.isConnected = false }
-                self.monitorQueue.async { [weak self] in
-                    self?.scheduleUSBConnectRetry(reason: "input-failed")
-                }
+                self.usbInputLost(inputConn, reason: "input-failed")
             case .waiting(let error):
                 print("[CONSOLE] USBTransport: TLS input WAITING: \(error) — will retry in 0.5s")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -846,13 +847,44 @@ final class USBNetworkTransport {
                 self.isConnected = true
                 self.scheduleInputReceive(inputConn)
             case .failed(let error):
-                print("[CONSOLE] USBTransport: TLS input FAILED (retry): \(error)")
+                print("[CONSOLE] USBTransport: TLS input FAILED (retry): \(error) (connection=\(inputConn === self.inputConnection ? "current" : "stale"))")
+                guard inputConn === self.inputConnection else { return }
+                self.usbInputLost(inputConn, reason: "input-failed-retry")
             case .waiting(let error):
-                print("[CONSOLE] USBTransport: TLS input still WAITING (retry): \(error)")
+                // Refused (agent not listening yet, e.g. a Mac agent restart) parks the
+                // connection in .waiting forever; as built nothing redialled, so the session
+                // stayed on wireless with the cable in. Drop it and redial on the 1 s cadence
+                // while the cable is in (scheduleUSBConnectRetry stops once the interface goes).
+                print("[CONSOLE] USBTransport: TLS input still WAITING (retry): \(error) (connection=\(inputConn === self.inputConnection ? "current" : "stale")) -> cancel and redial")
+                guard inputConn === self.inputConnection else { return }
+                inputConn.cancel()
+                self.usbInputLost(inputConn, reason: "input-waiting-retry")
             default: break
             }
         }
         inputConn.start(queue: transportQueue)
+    }
+
+    /// The TLS input (TCP) connection is the USB link's liveness: frames and control ride it,
+    /// and the DTLS media socket (UDP, gated off) never notices a dead peer. So losing the
+    /// current input connection ends the USB link: drop the media socket too, clear
+    /// isConnected (routing falls back to wireless), and redial. TransportAgreement.tla T7
+    /// assumes exactly this; as built a live media socket kept isConnected true, so after a
+    /// Mac agent restart the iPad sent its viewport report into the dead USB connection and
+    /// the Mac never started encoding (black screen, seen 2026-11-16).
+    private func usbInputLost(_ conn: NWConnection, reason: String) {
+        let hadMedia = mediaConnection != nil
+        let wasConnected = isConnected
+        inputConnection = nil
+        if let media = mediaConnection {
+            mediaConnection = nil
+            media.cancel()
+        }
+        isConnected = false
+        print("[CONSOLE] USBTransport: USB link lost reason=\(reason) wasConnected=\(wasConnected) droppedMedia=\(hadMedia) -> isConnected=false, redialing")
+        monitorQueue.async { [weak self] in
+            self?.scheduleUSBConnectRetry(reason: reason)
+        }
     }
 
     // MARK: - Private: Receive Loops
