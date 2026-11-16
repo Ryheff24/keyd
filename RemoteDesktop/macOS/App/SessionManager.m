@@ -6,6 +6,8 @@
 #import "WirelessTransport.h"
 #import "UDPChunker.h"
 #import "PairingManager.h"
+#import "InputInjector.h"
+#import "InputTestHarness.h"
 #import "protocol.h"
 
 #import <os/log.h>
@@ -208,6 +210,10 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 @property (nonatomic, strong) USBNetworkTransport *usbTransport;
 @property (nonatomic, strong) WirelessTransport *wirelessTransport;
 @property (nonatomic, strong) PairingManager *pairing;
+/* iPad pointer/keyboard -> CGEvents (tla/InputPath.tla) */
+@property (nonatomic, strong) InputInjector *inputInjector;
+/* Test mode only: agent-owned window that observes injected input (E2E). */
+@property (nonatomic, strong, nullable) InputTestHarness *inputTestHarness;
 
 /* Compression state (pure C struct) */
 @property (nonatomic, assign) FrameCompressorState compressorState;
@@ -359,6 +365,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         _usbTransport = [[USBNetworkTransport alloc] init];
         _wirelessTransport = [[WirelessTransport alloc] init];
         _pairing = [[PairingManager alloc] init];
+        _inputInjector = [[InputInjector alloc] init];
         _wifiAdaptiveTargetFPS = kWirelessAdaptiveMaxFPS;
         _wifiAdaptiveTargetBitrate = kWirelessHEVCBitrate;
         _wifiAdaptiveAppliedFPS = 0;
@@ -395,6 +402,13 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     [self transitionTo:SESSION_AWAITING_PERMISSIONS];
 
     if (_testMode) {
+        /* Don't block the test run on permissions, but do raise the system Accessibility prompt:
+         * without it CGEventPost drops every input event and the input E2E tests fail. */
+        if (!AXIsProcessTrusted()) {
+            NSDictionary *axOpts = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
+            BOOL ax = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)axOpts);
+            os_log_error(sLog, "Test mode: Accessibility not granted -- system prompt shown (trusted now=%{public}d); input events will be dropped until granted", ax);
+        }
         os_log(sLog, "Test mode -- skipping permission checks");
         [self onPermissionsGranted];
         return;
@@ -405,6 +419,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
 - (void)stop {
     os_log(sLog, "Session stopping");
+    /* InputPath StopRelease: nothing stays pressed after the agent stops. */
+    [_inputInjector releaseAllSync:"agent-stop"];
     [self.reconnectTimer invalidate];
     self.reconnectTimer = nil;
     [self.permissionTimer invalidate];
@@ -688,6 +704,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             [strongSelf handleTransportEvent:TRANSPORT_EVT_WIRED_DISAPPEARED];
         }
     };
+
+    /* InputPath ReleaseOnLoss: any input connection ending releases every held key/button. */
+    InputInjector *injector = _inputInjector;
+    _usbTransport.onInputStreamEnded = ^{ [injector inputStreamEnded:"usb"]; };
+    _wirelessTransport.onInputStreamEnded = ^{ [injector inputStreamEnded:"wireless"]; };
 
     /* USB transport input receive callback */
     _usbTransport.onInputReceived = ^(const void *data, size_t length) {
@@ -2413,6 +2434,34 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     if (length < sizeof(InputEventHeader)) return;
 
     const InputEventHeader *header = (const InputEventHeader *)data;
+
+    /* Any message proves an iPad link alive (InputPath SilenceDeadline). Pointer and key
+     * messages go straight to the injector's own queue. */
+    [_inputInjector noteActivity];
+    if ([InputInjector isInputMessageType:header->type]) {
+        [_inputInjector handleMessage:data length:length];
+        return;
+    }
+    if (header->type == KEYDRD_INPUT_TEST_CONTROL) {
+        if (!_testMode) {
+            os_log_error(sLog, "Input test control ignored: not in test mode");
+            return;
+        }
+        if (!_inputTestHarness) _inputTestHarness = [[InputTestHarness alloc] initWithInjector:_inputInjector];
+        NSData *json = [NSData dataWithBytes:(const uint8_t *)data + sizeof(InputEventHeader)
+                                      length:length - sizeof(InputEventHeader)];
+        __weak SessionManager *weakSelf = self;
+        [_inputTestHarness handleControl:json reply:^(NSData *reply) {
+            SessionManager *s = weakSelf;
+            if (!s) return;
+            NSMutableData *msg = [NSMutableData dataWithLength:sizeof(InputEventHeader)];
+            InputEventHeader rh = { .type = KEYDRD_INPUT_TEST_REPORT, .ts_us = [s currentTimestampUs] };
+            memcpy(msg.mutableBytes, &rh, sizeof rh);
+            [msg appendData:reply];
+            [s sendInputEventToiPad:msg.bytes length:msg.length];
+        }];
+        return;
+    }
 
     switch (header->type) {
         case KEYDRD_INPUT_RES_MATCH_REQUEST:

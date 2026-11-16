@@ -51,7 +51,8 @@ struct ContentView: View {
                 let _ = contentLog.info("[ContentView] rendering .connecting/.streaming/.reconnecting (state=\(sessionManager.state.rawValue))")
                 // Metal render view present from .connecting so the display link is
                 // ready when frames arrive (avoids rendered=0 race at stream start).
-                MetalRenderView(renderer: sessionManager.metalRenderer)
+                MetalRenderView(renderer: sessionManager.metalRenderer,
+                                input: sessionManager.inputSender)
                     .ignoresSafeArea()
 
                 if sessionManager.state == .connecting && !sessionManager.hasRenderedFrameInCurrentSession {
@@ -153,9 +154,11 @@ struct ContentView: View {
 struct MetalRenderView: UIViewRepresentable {
 
     let renderer: MetalRenderer
+    let input: InputSender
 
     func makeUIView(context: Context) -> MetalHostView {
-        let view = MetalHostView()
+        let view = InputCaptureView()
+        view.input = input
         view.backgroundColor = .black
 
         // Pass the view's layer (which IS a CAMetalLayer) to MetalRenderer

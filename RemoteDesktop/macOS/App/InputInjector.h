@@ -17,13 +17,20 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface InputInjector : NSObject
 
-/** Test-mode only: events are posted only while this returns YES (the agent's own test window
- *  is key), so tests never type into whatever app has focus. nil = always post. */
-@property (atomic, copy, nullable) BOOL (^postGate)(void);
+/** Test-mode only: an event of this message type is posted only while this returns YES (the
+ *  agent's own test window covers the screen / is key), so tests never reach another app.
+ *  nil = always post. Called on the injector queue. */
+@property (atomic, copy, nullable) BOOL (^postGate)(uint8_t type);
 
-/** Called on the injector queue after each posted pointer/key event: message type, the iPad
- *  timestamp from the header (iPad host time, us), Mac host time when the event was posted (us). */
-@property (atomic, copy, nullable) void (^onPosted)(uint8_t type, uint64_t ipadTsUs, uint64_t postedUs);
+/** Called on the injector queue after each applied pointer/key message: type, seq, the iPad
+ *  timestamp (iPad host time, us), Mac host time at receive and after posting (us). Every
+ *  CGEvent posted for it carries seq in kCGEventSourceUserData. */
+@property (atomic, copy, nullable) void (^onPosted)(uint8_t type, uint64_t seq, uint64_t ipadTsUs,
+                                                     uint64_t recvUs, uint64_t postedUs);
+
+/** Key repeat timing the injector uses (from the Mac's keyboard settings). */
+@property (nonatomic, readonly) double repeatDelay;
+@property (nonatomic, readonly) double repeatInterval;
 
 @property (atomic, readonly) uint64_t postedCount;
 @property (atomic, readonly) uint64_t droppedStaleCount;

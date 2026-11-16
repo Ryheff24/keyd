@@ -20,6 +20,17 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     sLog = os_log_create("com.ryheff.keyd.remote.agent", "AppDelegate");
 
+    /* SIGTERM (kill, launchd, logout) goes through normal termination so the session stops
+     * and releases every injected key and button (tla/InputPath.tla StopRelease). */
+    signal(SIGTERM, SIG_IGN);
+    static dispatch_source_t sTermSource;
+    sTermSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(sTermSource, ^{
+        os_log(sLog, "SIGTERM: terminating through NSApp");
+        [NSApp terminate:nil];
+    });
+    dispatch_resume(sTermSource);
+
     /* ---- Skip heavy initialization when running as XCTest host ---- */
     if (NSClassFromString(@"XCTestCase") != nil ||
         [NSProcessInfo processInfo].environment[@"XCTestConfigurationFilePath"] != nil) {

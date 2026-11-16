@@ -976,9 +976,22 @@ log stream --predicate "subsystem == '$MAC_SUBSYSTEM' OR subsystem BEGINSWITH 'c
 MAC_LOG_PID=$!
 sleep 1
 
-"$MAC_APP/Contents/MacOS/RemoteDesktopAgent" "${MAC_LAUNCH_ARGS[@]}" &
-MAC_PID=$!
-echo "Mac agent PID: $MAC_PID"
+# Launch through LaunchServices, not by exec'ing the binary: TCC attributes a binary started
+# from a shell to the shell's responsible app (Terminal, Claude, ...), so the agent's own
+# Accessibility grant would not apply and CGEventPost would drop every input event.
+MAC_STDOUT_LOG="/tmp/keyd-e2e-mac-stdout.log"
+open -n -g -a "$MAC_APP" --stdout "$MAC_STDOUT_LOG" --stderr "$MAC_STDOUT_LOG" --args "${MAC_LAUNCH_ARGS[@]}"
+for i in $(seq 1 50); do
+  MAC_PID=$(pgrep -n -f "$MAC_APP/Contents/MacOS/RemoteDesktopAgent" || true)
+  [ -n "$MAC_PID" ] && break
+  sleep 0.1
+done
+if [ -z "$MAC_PID" ]; then
+  echo "ERROR: Mac agent did not start via open -a $MAC_APP"
+  cat "$MAC_STDOUT_LOG" 2>/dev/null | tail -20
+  exit 1
+fi
+echo "Mac agent PID: $MAC_PID (launched via LaunchServices; stdout: $MAC_STDOUT_LOG)"
 
 # ---- Step 5: Wait for Mac to be ready and write the QR payload file ----
 log_progress "=== [5/6] Waiting for Mac QR readiness ==="

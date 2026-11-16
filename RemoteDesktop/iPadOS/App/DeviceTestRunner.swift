@@ -58,7 +58,7 @@ final class DeviceTestRunner {
 
     // Overall timeout
     private var overallTimer: Timer?
-    private static let baseOverallTimeout: TimeInterval = 180
+    private static let baseOverallTimeout: TimeInterval = 210   // +30 s for the input tests
     private let overallTimeoutSeconds: TimeInterval
 
     // --- New test state ---
@@ -3214,7 +3214,275 @@ final class DeviceTestRunner {
                         detail: "VULNERABLE (H1): \(issues.joined(separator: "; "))")
         }
 
-        finishTests()
+        runInputTests { [weak self] in self?.finishTests() }
+    }
+
+    // MARK: - Input E2E (tla/InputPath.tla)
+    //
+    // The iPad sends real input messages through SessionManager.inputSender; the Mac posts them
+    // as CGEvents into its own full-screen test window (InputTestHarness), which records every
+    // NSEvent with the seq stamped by the injector. Posting is gated to that window, so nothing
+    // reaches another app. Latency per event: iPad UIKit-time -> Mac window, clock-synced.
+
+    private var inputReplyHandler: (([String: Any]) -> Void)?
+    private var inputLatency: [(total: Double, wire: Double, inject: Double, deliver: Double)] = []
+    private var inputLastDroppedStale = 0
+
+    func reportInputTestReply(_ data: Data) {
+        let body = Data(data.dropFirst(InputEventHeader.size))
+        guard let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+            print("[CONSOLE] input-test: unparsable reply (\(body.count) bytes)")
+            return
+        }
+        DispatchQueue.main.async {
+            let h = self.inputReplyHandler
+            self.inputReplyHandler = nil
+            h?(obj)
+        }
+    }
+
+    private func inputControl(_ cmd: [String: Any], timeout: TimeInterval = 5,
+                              _ done: @escaping ([String: Any]?) -> Void) {
+        var finished = false
+        inputReplyHandler = { r in
+            if finished { return }
+            finished = true
+            done(r)
+        }
+        sessionManager?.sendInputTestControl(cmd)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            if finished { return }
+            finished = true
+            self?.inputReplyHandler = nil
+            print("[CONSOLE] input-test: no reply to \(cmd)")
+            done(nil)
+        }
+    }
+
+    private typealias InputStep = (name: String, act: (InputSender, @escaping () -> Void) -> Void,
+                                   check: ([String: Any], [[String: Any]]) -> (Bool, String))
+
+    private func runInputTests(_ then: @escaping () -> Void) {
+        guard let sm = sessionManager else { then(); return }
+        let sender = sm.inputSender
+        inputLatency.removeAll()
+        print("[TEST] RUNNING: input-ready")
+        inputControl(["cmd": "begin"]) { [weak self] r in
+            guard let self else { return }
+            guard let r, (r["windowUp"] as? Bool) == true else {
+                self.recordResult(name: "input-ready", passed: false, detail: "Mac test window did not come up (reply=\(r.map { "\($0)" } ?? "none"))")
+                for n in ["input-click", "input-keyboard", "input-double-click", "input-drag", "input-right-click",
+                          "input-scroll", "input-text", "input-held-release", "input-stale-seq",
+                          "input-autorepeat", "input-latency"] {
+                    self.recordResult(name: n, passed: false, detail: "skipped: no Mac test window")
+                }
+                then(); return
+            }
+            let ax = (r["axTrusted"] as? Bool) ?? false
+            self.inputLastDroppedStale = (r["droppedStale"] as? Int) ?? 0
+            self.recordResult(name: "input-ready", passed: ax,
+                              detail: "window up, axTrusted=\(ax) active=\(r["active"] ?? "?") key=\(r["key"] ?? "?") link=\(sm.inputLinkDescription)\(ax ? "" : " — grant Accessibility to RemoteDesktopAgent; CGEventPost drops events without it")")
+            let steps = self.inputSteps(sender: sender, screenW: (r["screenW"] as? Double) ?? 0,
+                                        screenH: (r["screenH"] as? Double) ?? 0,
+                                        repeatDelay: (r["repeatDelay"] as? Double) ?? 0.5,
+                                        repeatInterval: (r["repeatInterval"] as? Double) ?? 0.083)
+            self.runInputStep(steps, 0) {
+                self.recordInputLatency()
+                self.inputControl(["cmd": "end"]) { _ in then() }
+            }
+        }
+    }
+
+    private func runInputStep(_ steps: [InputStep], _ i: Int, _ done: @escaping () -> Void) {
+        guard i < steps.count else { done(); return }
+        let step = steps[i]
+        print("[TEST] RUNNING: \(step.name)")
+        step.act(sessionManager!.inputSender) { [weak self] in
+            guard let self else { return }
+            self.inputControl(["cmd": "report", "tag": step.name]) { r in
+                if let r {
+                    let events = (r["events"] as? [[String: Any]]) ?? []
+                    self.collectInputLatency(r, events)
+                    let (ok, detail) = step.check(r, events)
+                    let kinds = events.map { ($0["t"] as? String) ?? "?" }.filter { $0 != "mouseMoved" }
+                    print("[CONSOLE] input-test \(step.name): events=\(kinds)")
+                    self.recordResult(name: step.name, passed: ok, detail: "\(detail) [events=\(events.count)]")
+                } else {
+                    self.recordResult(name: step.name, passed: false, detail: "no report from Mac")
+                }
+                self.runInputStep(steps, i + 1, done)
+            }
+        }
+    }
+
+    private func collectInputLatency(_ r: [String: Any], _ events: [[String: Any]]) {
+        guard let timing = r["timing"] as? [String: [String: Any]] else { return }
+        let off = Double(clockOffsetUs)   // Mac - iPad (us)
+        for e in events {
+            let kind = (e["t"] as? String) ?? ""
+            guard kind != "mouseMoved", (e["rep"] as? Int ?? 0) == 0,
+                  let seq = e["seq"] as? Int, seq > 0,
+                  let t = timing[String(seq)],
+                  let ipad = t["ipad"] as? Double, let recv = t["recv"] as? Double,
+                  let posted = t["posted"] as? Double, let obs = e["obs"] as? Double else { continue }
+            let ipadMac = ipad + off
+            inputLatency.append((total: (obs - ipadMac) / 1000, wire: (recv - ipadMac) / 1000,
+                                 inject: (posted - recv) / 1000, deliver: (obs - posted) / 1000))
+        }
+    }
+
+    private func recordInputLatency() {
+        print("[TEST] RUNNING: input-latency")
+        let n = inputLatency.count
+        func pct(_ xs: [Double], _ p: Double) -> Double {
+            let s = xs.sorted(); guard !s.isEmpty else { return .nan }
+            return s[min(s.count - 1, Int(Double(s.count - 1) * p))]
+        }
+        let tot = inputLatency.map(\.total), wire = inputLatency.map(\.wire)
+        let inj = inputLatency.map(\.inject), del = inputLatency.map(\.deliver)
+        let f = { (x: Double) in String(format: "%.1f", x) }
+        let detail = "samples=\(n) iPad-event->Mac-app total[med/p95/max]=\(f(pct(tot, 0.5)))/\(f(pct(tot, 0.95)))/\(f(pct(tot, 1)))ms wire[med/p95]=\(f(pct(wire, 0.5)))/\(f(pct(wire, 0.95)))ms inject[med/p95]=\(f(pct(inj, 0.5)))/\(f(pct(inj, 0.95)))ms deliver[med/p95]=\(f(pct(del, 0.5)))/\(f(pct(del, 0.95)))ms clock=\(clockOffsetCalibrated ? "calibrated" : "uncalibrated") (provisional pass: >=10 samples, median<50ms)"
+        recordResult(name: "input-latency", passed: n >= 10 && pct(tot, 0.5) < 50, detail: detail)
+    }
+
+    private func inputSteps(sender: InputSender, screenW: Double, screenH: Double,
+                            repeatDelay: Double, repeatInterval: Double) -> [InputStep] {
+        let now = { ProcessInfo.processInfo.systemUptime }
+        func n(_ f: Double) -> UInt16 { UInt16((f * 65535).rounded()) }
+        func after(_ ms: Int, _ f: @escaping () -> Void) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms), execute: f)
+        }
+        func kinds(_ ev: [[String: Any]], _ k: String) -> [[String: Any]] { ev.filter { ($0["t"] as? String) == k } }
+        func near(_ e: [String: Any], _ fx: Double, _ fy: Double) -> Bool {
+            guard let x = e["x"] as? Double, let y = e["y"] as? Double, screenW > 0 else { return false }
+            return abs(x - fx * (screenW - 1)) <= 3 && abs(y - fy * (screenH - 1)) <= 3
+        }
+        let shiftMask = 1 << 17
+        return [
+            ("input-click", { s, done in
+                s.pointerMove(n(0.5), n(0.5), ts: now())
+                s.button(InputSender.buttonLeft, down: true, n(0.5), n(0.5), ts: now())
+                s.button(InputSender.buttonLeft, down: false, n(0.5), n(0.5), ts: now())
+                after(400, done)   // the click also makes the agent active and its window key
+            }, { r, ev in
+                let d = kinds(ev, "leftMouseDown"), u = kinds(ev, "leftMouseUp")
+                let ok = d.count == 1 && u.count == 1 && near(d[0], 0.5, 0.5) && (d[0]["cc"] as? Int) == 1
+                return (ok, "down=\(d.count) up=\(u.count) at=(\(d.first?["x"] ?? "-"),\(d.first?["y"] ?? "-")) cc=\(d.first?["cc"] ?? "-") key=\(r["key"] ?? "?") active=\(r["active"] ?? "?")")
+            }),
+            ("input-keyboard", { s, done in
+                s.key(0x04, down: true, ts: now()); s.key(0x04, down: false, ts: now())        // a
+                s.key(0xE1, down: true, ts: now())                                              // shift
+                s.key(0x04, down: true, ts: now()); s.key(0x04, down: false, ts: now())        // A
+                s.key(0xE1, down: false, ts: now())
+                after(150, done)
+            }, { _, ev in
+                let downs = kinds(ev, "keyDown").map { ($0["ch"] as? String) ?? "" }
+                let ups = kinds(ev, "keyUp").count
+                let flags = kinds(ev, "flagsChanged").count
+                let shifted = kinds(ev, "keyDown").contains { ($0["ch"] as? String) == "A" && (($0["fl"] as? Int ?? 0) & shiftMask) != 0 }
+                let ok = downs == ["a", "A"] && ups == 2 && flags == 2 && shifted
+                return (ok, "keyDown=\(downs) keyUp=\(ups) flagsChanged=\(flags) shiftOnA=\(shifted)")
+            }),
+            ("input-double-click", { s, done in
+                for _ in 0..<2 {
+                    s.button(InputSender.buttonLeft, down: true, n(0.3), n(0.3), ts: now())
+                    s.button(InputSender.buttonLeft, down: false, n(0.3), n(0.3), ts: now())
+                }
+                after(150, done)
+            }, { _, ev in
+                let cc = kinds(ev, "leftMouseDown").map { ($0["cc"] as? Int) ?? 0 }
+                return (cc == [1, 2], "clickCounts=\(cc)")
+            }),
+            ("input-drag", { s, done in
+                s.button(InputSender.buttonLeft, down: true, n(0.4), n(0.4), ts: now())
+                var k = 1
+                func step() {
+                    let f = 0.4 + 0.04 * Double(k)
+                    s.pointerMove(n(f), n(f), ts: now())
+                    if k == 5 {
+                        s.button(InputSender.buttonLeft, down: false, n(0.6), n(0.6), ts: now())
+                        after(150, done)
+                    } else { k += 1; after(16, step) }
+                }
+                after(16, step)
+            }, { _, ev in
+                let drags = kinds(ev, "leftMouseDragged").count
+                let up = kinds(ev, "leftMouseUp").first
+                let ok = drags >= 4 && up != nil && near(up!, 0.6, 0.6)
+                return (ok, "dragged=\(drags) upAt=(\(up?["x"] ?? "-"),\(up?["y"] ?? "-"))")
+            }),
+            ("input-right-click", { s, done in
+                s.button(InputSender.buttonRight, down: true, n(0.5), n(0.5), ts: now())
+                s.button(InputSender.buttonRight, down: false, n(0.5), n(0.5), ts: now())
+                after(150, done)
+            }, { _, ev in
+                let d = kinds(ev, "rightMouseDown").count, u = kinds(ev, "rightMouseUp").count
+                return (d == 1 && u == 1, "rightDown=\(d) rightUp=\(u)")
+            }),
+            ("input-scroll", { s, done in
+                s.scroll(dx: 0, dy: 10, phase: InputSender.phaseBegan, n(0.5), n(0.5), ts: now())
+                var k = 0
+                func step() {
+                    if k == 5 {
+                        s.scroll(dx: 0, dy: 0, phase: InputSender.phaseEnded, n(0.5), n(0.5), ts: now())
+                        after(150, done); return
+                    }
+                    s.scroll(dx: 0, dy: 10, phase: InputSender.phaseChanged, n(0.5), n(0.5), ts: now())
+                    k += 1; after(16, step)
+                }
+                after(16, step)
+            }, { _, ev in
+                let sc = kinds(ev, "scrollWheel")
+                let dy = sc.compactMap { $0["dy"] as? Double }.reduce(0, +)
+                let phases = sc.compactMap { $0["ph"] as? Int }
+                let ok = sc.count >= 6 && dy > 0 && phases.contains(1) && phases.contains(8)
+                return (ok, "scrollEvents=\(sc.count) sumDy=\(String(format: "%.1f", dy)) phases=\(phases)")
+            }),
+            ("input-text", { s, done in
+                s.text("héllo ✓", ts: now())
+                after(150, done)
+            }, { _, ev in
+                let typed = kinds(ev, "keyDown").map { ($0["ch"] as? String) ?? "" }.joined()
+                return (typed == "héllo ✓", "typed=\"\(typed)\"")
+            }),
+            ("input-held-release", { s, done in
+                s.key(0x05, down: true, ts: now())          // b down, then the iPad loses held state
+                after(50) {
+                    s.cancelAll(reason: "e2e-held-release")   // HELD {} (release-only on the Mac)
+                    after(150, done)
+                }
+            }, { _, ev in
+                let down = kinds(ev, "keyDown").contains { ($0["ch"] as? String) == "b" }
+                let up = kinds(ev, "keyUp").contains { ($0["kc"] as? Int) == 11 }
+                return (down && up, "bDown=\(down) bReleasedByHELD=\(up)")
+            }),
+            ("input-stale-seq", { s, done in
+                var body = Data(); body.appendLE(UInt16(0x06)); body.append(1)   // c down with an old seq
+                s.sendRawForTest(type: InputSender.tKey, body: body, seq: 1)
+                after(150, done)
+            }, { [weak self] r, ev in
+                let typed = kinds(ev, "keyDown").contains { ($0["ch"] as? String) == "c" }
+                let dropped = (r["droppedStale"] as? Int) ?? 0
+                let before = self?.inputLastDroppedStale ?? 0
+                self?.inputLastDroppedStale = dropped
+                return (!typed && dropped > before, "staleApplied=\(typed) droppedStale \(before)->\(dropped)")
+            }),
+            ("input-autorepeat", { s, done in
+                let hold = min(1.5, repeatDelay + 8 * repeatInterval)
+                s.key(0x07, down: true, ts: now())          // d
+                after(Int(hold * 1000)) {
+                    s.key(0x07, down: false, ts: now())
+                    after(150, done)
+                }
+            }, { _, ev in
+                let hold = min(1.5, repeatDelay + 8 * repeatInterval)
+                let reps = kinds(ev, "keyDown").filter { ($0["ch"] as? String) == "d" && ($0["rep"] as? Int) == 1 }.count
+                let firsts = kinds(ev, "keyDown").filter { ($0["ch"] as? String) == "d" && ($0["rep"] as? Int) == 0 }.count
+                let expected = max(0, (hold - repeatDelay) / max(repeatInterval, 0.001))
+                let ok = firsts == 1 && reps >= 3 && Double(reps) <= expected * 1.5 + 2
+                return (ok, "first=\(firsts) repeats=\(reps) expected~\(String(format: "%.1f", expected)) (delay=\(repeatDelay)s interval=\(repeatInterval)s)")
+            }),
+        ]
     }
 
     // MARK: - Continuous Stream Telemetry
@@ -3336,7 +3604,10 @@ final class DeviceTestRunner {
                        "sec-pairing-port-closed", "sec-pairing-port-closed-after-stream",
                        "sec-mitm-reconnect", "sec-pre-pairing-transport-reject",
                        "sec-pairing-race", "sec-identity-secure-enclave",
-                       "sec-keychain-access-control"]
+                       "sec-keychain-access-control",
+                       "input-ready", "input-click", "input-keyboard", "input-double-click",
+                       "input-drag", "input-right-click", "input-scroll", "input-text",
+                       "input-held-release", "input-stale-seq", "input-autorepeat", "input-latency"]
         if sustainedStreamDuration > 0 {
             allTests.append("sustained-stream")
         }

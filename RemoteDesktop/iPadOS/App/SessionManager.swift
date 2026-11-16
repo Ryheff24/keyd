@@ -45,6 +45,8 @@ final class SessionManager {
     let usbTransport = USBNetworkTransport()
     let wirelessTransport = WirelessTransport()
     let metalRenderer = MetalRenderer()
+    /// Pointer/keyboard input to the Mac (tla/InputPath.tla).
+    let inputSender = InputSender()
     let hudViewModel = HUDViewModel()
     private var lz4Decompressor: LZ4Decompressor?
     private let hevcDecoder = HEVCDecoder()
@@ -1020,6 +1022,16 @@ final class SessionManager {
         viewportHeight = vpH
 
         sendViewportReport(width: vpW, height: vpH)
+
+        // Input: geometry for pointer mapping, then HELD on this new connection (InputPath Connect).
+        let sender = inputSender
+        let w = macDisplayWidth, h = macDisplayHeight
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            sender.send = { [weak self] data in self?.sendInputEventReturningLink(data) }
+            sender.macDisplaySize = CGSize(width: w, height: h)
+            sender.connectionEstablished(link: self.currentInputLink)
+        }
         Self.log.info("Sent viewport report: \(vpW)x\(vpH) (iPad screen: \(screenW)x\(screenH), Mac: \(self.macDisplayWidth)x\(self.macDisplayHeight))")
 
         // Update HUD with resolution info
@@ -1098,6 +1110,9 @@ final class SessionManager {
         guard let header = InputEventHeader.parse(from: data) else { return }
 
         switch header.type {
+        case 0x27:  // KEYDRD_INPUT_TEST_REPORT (test mode)
+            testRunner?.reportInputTestReply(data)
+
         case InputEventType.latencyProbe.rawValue:
             handleLatencyProbeResponse(header)
 
@@ -1359,11 +1374,37 @@ final class SessionManager {
     // MARK: - Private: Transport Send Helpers
 
     private func sendInputEventToMac(_ data: Data) {
+        _ = sendInputEventReturningLink(data)
+    }
+
+    /// Sends on the link input uses now (USB first) and says which; nil if none.
+    fileprivate func sendInputEventReturningLink(_ data: Data) -> InputSender.Link? {
         if usbTransport.isConnected {
             usbTransport.sendInputEvent(data)
+            return .usb
         } else if wirelessTransport.isConnected {
             wirelessTransport.sendInputEvent(data)
+            return .wifi
         }
+        return nil
+    }
+
+    /// E2E: a KEYDRD_INPUT_TEST_CONTROL command (JSON) to the Mac's input test harness.
+    func sendInputTestControl(_ cmd: [String: Any]) {
+        guard let json = try? JSONSerialization.data(withJSONObject: cmd) else { return }
+        var data = InputEventHeader(type: 0x26, tsUs: currentTimestampUs()).serialize()
+        data.append(json)
+        sendInputEventToMac(data)
+    }
+
+    /// E2E: which link input uses now, for test details.
+    var inputLinkDescription: String {
+        switch currentInputLink { case .usb: return "usb"; case .wifi: return "wifi"; case nil: return "none" }
+    }
+
+    /// Link input would use now.
+    private var currentInputLink: InputSender.Link? {
+        usbTransport.isConnected ? .usb : (wirelessTransport.isConnected ? .wifi : nil)
     }
 
     // MARK: - Private: Reconnection

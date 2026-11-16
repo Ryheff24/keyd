@@ -31,6 +31,8 @@
 		A1000050000000000000000A /* PairingManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000050000000000000000F /* PairingManager.m */; };
 		A1000060000000000000000A /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000060000000000000000F /* AppDelegate.m */; };
 		A1000062000000000000000A /* SessionManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000062000000000000000F /* SessionManager.m */; };
+		A10000E0000000000000000A /* InputInjector.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000E0000000000000000F /* InputInjector.m */; };
+		A10000D0000000000000000A /* InputTestHarness.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000D0000000000000000F /* InputTestHarness.m */; };
 		A1000064000000000000000A /* StatusBarController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1000064000000000000000F /* StatusBarController.m */; };
 /* -- Test target build files -- */
 		B1000001000000000000000A /* ProtocolTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000000000F /* ProtocolTests.m */; };
@@ -94,6 +96,10 @@
 		A1000061000000000000000F /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		A1000062000000000000000F /* SessionManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SessionManager.m; sourceTree = "<group>"; };
 		A1000063000000000000000F /* SessionManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SessionManager.h; sourceTree = "<group>"; };
+		A10000E0000000000000000F /* InputInjector.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = InputInjector.m; sourceTree = "<group>"; };
+		A10000E1000000000000000F /* InputInjector.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = InputInjector.h; sourceTree = "<group>"; };
+		A10000D0000000000000000F /* InputTestHarness.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = InputTestHarness.m; sourceTree = "<group>"; };
+		A10000D1000000000000000F /* InputTestHarness.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = InputTestHarness.h; sourceTree = "<group>"; };
 		A1000064000000000000000F /* StatusBarController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = StatusBarController.m; sourceTree = "<group>"; };
 		A1000065000000000000000F /* StatusBarController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = StatusBarController.h; sourceTree = "<group>"; };
 		A10000FF000000000000000F /* RemoteDesktopAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemoteDesktopAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -288,6 +294,10 @@
 				A1000060000000000000000F /* AppDelegate.m */,
 				A1000063000000000000000F /* SessionManager.h */,
 				A1000062000000000000000F /* SessionManager.m */,
+				A10000E1000000000000000F /* InputInjector.h */,
+				A10000E0000000000000000F /* InputInjector.m */,
+				A10000D1000000000000000F /* InputTestHarness.h */,
+				A10000D0000000000000000F /* InputTestHarness.m */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -412,6 +422,8 @@
 				A1000050000000000000000A /* PairingManager.m in Sources */,
 				A1000060000000000000000A /* AppDelegate.m in Sources */,
 				A1000062000000000000000A /* SessionManager.m in Sources */,
+				A10000E0000000000000000A /* InputInjector.m in Sources */,
+				A10000D0000000000000000A /* InputTestHarness.m in Sources */,
 				A1000064000000000000000A /* StatusBarController.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
