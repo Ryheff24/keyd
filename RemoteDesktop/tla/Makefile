@@ -40,29 +40,32 @@ PERSIST_ROWS = PairingPersistence:PairingPersistence.cfg:pass \
 
 # TransportConnections (2026-11-15, wireless lane of PLAN 4a): the USB->Wi-Fi unplug at 22:51
 # landed on an AWDL connection that had gone silent, labelled Wi-Fi, kept 113 s, then never
-# redialled. Design: dial infrastructure first, exact labels, heartbeat silence deadline, redial
+# redialled. Design: one link per dial, AWDL first (2026-11-16: infrastructure holds 37-45% of
+# the time on a 512 TU schedule; AWDL 18%), exact labels, heartbeat silence deadline, redial
 # on loss. Each as-built row shows one defect; each control reports exactly its property.
 CONN_ROWS = TransportConnections:TransportConnections.cfg:pass \
 	TransportConnections:cfg/TC-design-big.cfg:pass \
 	TransportConnections:cfg/TC-awdl-pin.cfg:pass \
 	TransportConnections:cfg/TC-awdl-pin-recover.cfg:Temporal \
-	TransportConnections:cfg/TC-asbuilt.cfg:PreferInfra \
+	TransportConnections:cfg/TC-asbuilt.cfg:PreferAwdl \
 	TransportConnections:cfg/TC-asbuilt-label.cfg:LabelExact \
 	TransportConnections:cfg/TC-asbuilt-silence.cfg:DetectDeadline \
 	TransportConnections:cfg/TC-asbuilt-recover.cfg:Temporal \
-	TransportConnections:cfg/TC-ctl-infra-first.cfg:PreferInfra \
+	TransportConnections:cfg/TC-ctl-one-link.cfg:PreferAwdl \
+	TransportConnections:cfg/TC-ctl-awdl-first.cfg:PreferAwdl \
 	TransportConnections:cfg/TC-ctl-label.cfg:LabelExact \
 	TransportConnections:cfg/TC-ctl-silence.cfg:DetectDeadline \
 	TransportConnections:cfg/TC-ctl-redial.cfg:Temporal \
-	TransportConnections:cfg/TC-witness.cfg:NeverStreams
+	TransportConnections:cfg/TC-witness.cfg:NeverStreams \
+	TransportConnections:cfg/TC-witness-fallback.cfg:NeverFallsBackFromAwdl
 
 conn: check-tools
 	$(call tlc_rows,$(CONN_ROWS))
 
-# TLAPS: PreferInfra, LabelExact, DetectDeadline for any bounds. Controls: Design without one
-# switch must fail at exactly that mechanism's step: InfraFirst at Dial (<2>1), ExactLabel at
+# TLAPS: PreferAwdl, LabelExact, DetectDeadline for any bounds. Controls: Design without one
+# switch must fail at exactly that mechanism's step: OneLink and AwdlFirst at Dial (<2>1), ExactLabel at
 # Establish (<2>2), SilenceDetect at Tick (<2>6).
-CONN_PROOF_CTLS = 'InfraFirst:SpecSafe.<1>2.<2>1:Dial' 'ExactLabel:SpecSafe.<1>2.<2>2:Establish' \
+CONN_PROOF_CTLS = 'OneLink:SpecSafe.<1>2.<2>1:Dial' 'AwdlFirst:SpecSafe.<1>2.<2>1:Dial' 'ExactLabel:SpecSafe.<1>2.<2>2:Establish' \
 	'SilenceDetect:SpecSafe.<1>2.<2>6:Tick'
 
 conn-proofs:

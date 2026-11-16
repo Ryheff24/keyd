@@ -33,12 +33,8 @@ final class WirelessTransport {
         return on
     }()
 
-    /// Test mode `--awdl-only` (harness `--awdl-only`, diagnostic): dial the Mac over AWDL only:
-    /// peer-to-peer on, every non-peer-to-peer interface the Bonjour result lists prohibited
-    /// (results list only en0 even with peer-to-peer browsing) (AwdlPin in
-    /// tla/TransportConnections.tla). Measures whether AWDL flows in the windows where the
-    /// infrastructure link holds (run 251f328: two ~100 ms holds every 512 TU). Normal use and
-    /// every other test mode are unchanged.
+    /// Test mode `--awdl-only` (harness `--awdl-only`, diagnostic): every dial uses AWDL, never
+    /// the infrastructure fallback (AwdlPin in tla/TransportConnections.tla).
     static let pinAWDL: Bool = {
         let args = ProcessInfo.processInfo.arguments
         let on = args.contains("--test-mode") && args.contains("--awdl-only")
@@ -46,8 +42,35 @@ final class WirelessTransport {
         return on
     }()
 
-    /// Infrastructure interfaces of the Bonjour result being dialled, prohibited under pinAWDL.
-    private var pinProhibitedInterfaces: [NWInterface] = []
+    /// Whether this build ever dials AWDL (the product does unless `--no-peer-to-peer`).
+    static var prefersAWDL: Bool { includePeerToPeer || pinAWDL }
+
+    /// Infrastructure interfaces prohibited on an AWDL dial: those of the Bonjour result being
+    /// dialled plus every non-peer-to-peer Wi-Fi interface the path monitor sees. A peer-to-peer
+    /// dial still races every interface, and a result seen over awdl0 lists only awdl0 (run of
+    /// 2026-11-16 01:1x landed on en0), so the result alone is not enough.
+    private var dialProhibitedInterfaces: [NWInterface] = []
+    private var infraWiFiInterfaces: [NWInterface] = []
+    private var infraWiFiMonitor: NWPathMonitor?
+
+    private func startInfraWiFiMonitor() {
+        guard infraWiFiMonitor == nil else { return }
+        let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            let infra = path.availableInterfaces.filter { !WirelessTransport.isPeerToPeerInterface($0) }
+            self.infraWiFiInterfaces = infra
+            print("[CONSOLE] WirelessTransport: infra Wi-Fi interfaces=\(infra.map { $0.name }) status=\(path.status)")
+        }
+        infraWiFiMonitor = monitor
+        monitor.start(queue: transportQueue)
+    }
+
+    /// Prohibited set for an AWDL dial, deduplicated by name.
+    private func awdlDialProhibited() -> [NWInterface] {
+        var seen = Set<String>()
+        return (dialProhibitedInterfaces + infraWiFiInterfaces).filter { seen.insert($0.name).inserted }
+    }
 
     private static func applyInterfacePolicy(_ params: NWParameters) {
         params.includePeerToPeer = includePeerToPeer || pinAWDL
@@ -109,8 +132,11 @@ final class WirelessTransport {
     private let controlRecoveryPollInterval: TimeInterval = 0.75
 
     // Link liveness and link choice (tla/TransportConnections.tla, design):
-    //  InfraFirst    -- dial infrastructure Wi-Fi only; dial peer-to-peer (AWDL) only for the dial
-    //                   right after an infrastructure dial failed. One dial, one candidate.
+    //  OneLink       -- one link per dial, never a race of every usable interface.
+    //  AwdlFirst     -- that link is AWDL (peer-to-peer) unless the last loss or failed dial was on
+    //                   AWDL (avoidAWDL), then infrastructure Wi-Fi; any READY clears avoidAWDL.
+    //                   On infrastructure the iPad's radio holds receive two ~100 ms windows every
+    //                   512 TU (37-45% of the time, runs 1247cc4/251f328); on AWDL 18% (565c38c).
     //  SilenceDetect -- both sides send a heartbeat every linkHeartbeatInterval on the control
     //                   connection; no byte for linkSilenceDeadline means the link is lost.
     //  RedialOnLoss  -- every loss restarts discovery with a fresh browser (fresh results).
@@ -118,7 +144,12 @@ final class WirelessTransport {
     static let linkHeartbeatType: UInt8 = 0x31
     private let linkHeartbeatInterval: TimeInterval = 1.0
     private let linkSilenceDeadline: TimeInterval = 4.0
-    private var dialPeerToPeer = false
+    private var avoidAWDL = false
+    private var lastDialAWDL = false
+    private var nextDialAWDL: Bool {
+        if WirelessTransport.pinAWDL { return true }
+        return WirelessTransport.includePeerToPeer && !avoidAWDL
+    }
     private var lastControlRxUptimeNs: UInt64 = 0
     private var linkHeartbeatTimer: DispatchSourceTimer?
     private var linkHeartbeatsSent = 0
@@ -285,16 +316,15 @@ final class WirelessTransport {
         tcpOptions.noDelay = true
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         WirelessTransport.applyInterfacePolicy(params)
-        // InfraFirst: infrastructure only unless the previous infrastructure dial failed.
-        // The E2E Wi-Fi mode (requireWiFiInterface) never dials peer-to-peer.
-        params.includePeerToPeer = WirelessTransport.includePeerToPeer && dialPeerToPeer
-            && !WirelessTransport.requireWiFiInterface
-        if WirelessTransport.pinAWDL {
-            params.includePeerToPeer = true
-            params.prohibitedInterfaces = pinProhibitedInterfaces
-            print("[CONSOLE] WirelessTransport: AWDL pin dial prohibited=\(pinProhibitedInterfaces.map { $0.name })")
-        }
-        print("[CONSOLE] WirelessTransport: TCP params includePeerToPeer=\(params.includePeerToPeer) dialPeerToPeer=\(dialPeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
+        // OneLink + AwdlFirst. An AWDL dial turns peer-to-peer on and prohibits every
+        // infrastructure interface the Bonjour result listed (results list only en0 even when the
+        // Mac is reachable over awdl0). An infrastructure dial turns peer-to-peer off.
+        let useAWDL = nextDialAWDL
+        lastDialAWDL = useAWDL
+        params.includePeerToPeer = useAWDL
+        let prohibited = useAWDL ? awdlDialProhibited() : []
+        params.prohibitedInterfaces = useAWDL ? prohibited : nil
+        print("[CONSOLE] WirelessTransport: TCP params dial=\(useAWDL ? "awdl" : "infra") avoidAWDL=\(avoidAWDL) prohibited=\(prohibited.map { $0.name }) requiredInterface=\(String(describing: params.requiredInterfaceType))")
         return params
     }
 
@@ -387,9 +417,9 @@ final class WirelessTransport {
                     print("[CONSOLE] Bonjour service FOUND: \(result.endpoint.debugDescription) interfaces=\(result.interfaces.map { "\($0.name)/\($0.type)" })")
                     self.log.info("Bonjour service found: \(result.endpoint.debugDescription)")
 
-                    if WirelessTransport.pinAWDL && !self.isConnected && self.connectedServiceName == nil {
-                        self.pinProhibitedInterfaces = result.interfaces.filter { !WirelessTransport.isPeerToPeerInterface($0) }
-                        print("[CONSOLE] Bonjour: AWDL pin prohibits \(self.pinProhibitedInterfaces.map { $0.name })")
+                    if !self.isConnected && self.connectedServiceName == nil {
+                        self.dialProhibitedInterfaces = result.interfaces.filter { !WirelessTransport.isPeerToPeerInterface($0) }
+                        print("[CONSOLE] Bonjour: AWDL dial would prohibit \(self.dialProhibitedInterfaces.map { $0.name })")
                     }
 
                     // Guard against re-entry: NWBrowser fires .added for every
@@ -457,6 +487,7 @@ final class WirelessTransport {
             }
         }
 
+        startInfraWiFiMonitor()
         newBrowser.start(queue: transportQueue)
     }
 
@@ -558,7 +589,7 @@ final class WirelessTransport {
                 self.isAWDL = detectedAWDL
                 self.isConnected = true
 
-                self.dialPeerToPeer = false
+                self.avoidAWDL = false
                 self.startLinkHeartbeat(for: inputConn)
                 print("[CONSOLE] WirelessTransport: AWDL=\(detectedAWDL), calling onConnectionChanged")
                 self.log.info("Wireless transport: AWDL=\(detectedAWDL)")
@@ -595,7 +626,9 @@ final class WirelessTransport {
                     print("[CONSOLE] WirelessTransport: clearing connectedServiceName after failure (\(self.connectedServiceName ?? "nil"))")
                     self.connectedServiceName = nil
                     self.isConnected = false
-                    print("[CONSOLE] WirelessTransport: TCP FAILED teardown branch isConnected=\(self.isConnected), mediaActive=\(hasMediaPath), wasAWDL=\(wasAWDL)")
+                    // A loss on AWDL, or a failed AWDL dial, makes the next dial infrastructure.
+                    self.avoidAWDL = wasConnected ? wasAWDL : self.lastDialAWDL
+                    print("[CONSOLE] WirelessTransport: TCP FAILED teardown branch isConnected=\(self.isConnected), mediaActive=\(hasMediaPath), wasAWDL=\(wasAWDL) -> next dial \(self.nextDialAWDL ? "awdl" : "infra")")
                     self.onConnectionChanged?(false, wasAWDL)
                     self.scheduleBrowserRestart(reason: "tcp-failed")
                 }
@@ -1119,10 +1152,10 @@ final class WirelessTransport {
                 return
             }
 
-            let nextPeerToPeer = !self.dialPeerToPeer && WirelessTransport.includePeerToPeer
-                && !WirelessTransport.requireWiFiInterface
-            print("[CONSOLE] WirelessTransport: connect watchdog timeout; cancelling pending TCP connection and clearing latch (connectedServiceName=\(self.connectedServiceName ?? "nil")) dialPeerToPeer=\(self.dialPeerToPeer) -> next=\(nextPeerToPeer)")
-            self.dialPeerToPeer = nextPeerToPeer
+            // A timed-out AWDL dial falls back to infrastructure; a timed-out infrastructure
+            // dial tries AWDL again.
+            self.avoidAWDL = self.lastDialAWDL
+            print("[CONSOLE] WirelessTransport: connect watchdog timeout; cancelling pending TCP connection and clearing latch (connectedServiceName=\(self.connectedServiceName ?? "nil")) dial=\(self.lastDialAWDL ? "awdl" : "infra") -> next=\(self.nextDialAWDL ? "awdl" : "infra")")
             self.log.error("Connect watchdog timed out; cancelling pending wireless TCP connection")
             connection.cancel()
             self.inputConnection = nil
@@ -1198,7 +1231,8 @@ final class WirelessTransport {
             self.tcpBufferReservedCapacity = 0
             self.cancelControlPathRecovery(reason: "control-recovery-timeout")
             self.stopLinkHeartbeat(reason: "control-recovery-timeout")
-            self.dialPeerToPeer = false
+            self.avoidAWDL = wasAWDL
+            print("[CONSOLE] WirelessTransport: loss on \(wasAWDL ? "awdl" : "infra") -> next dial \(self.nextDialAWDL ? "awdl" : "infra")")
             self.onConnectionChanged?(false, wasAWDL)
             self.scheduleBrowserRestart(reason: "control-recovery-timeout")
         }
@@ -1251,7 +1285,8 @@ final class WirelessTransport {
         tcpBufferReservedCapacity = 0
 
         stopLinkHeartbeat(reason: "media-path-loss")
-        dialPeerToPeer = false
+        avoidAWDL = wasAWDL
+        print("[CONSOLE] WirelessTransport: loss on \(wasAWDL ? "awdl" : "infra") -> next dial \(nextDialAWDL ? "awdl" : "infra")")
         print("[CONSOLE] WirelessTransport: media path loss decision=reconnect-triggered reason=\(reason) wasAWDL=\(wasAWDL) inputReady=\(inputReady)")
         log.error("Media path loss decision=reconnect-triggered reason=\(reason) inputReady=\(inputReady)")
         onConnectionChanged?(false, wasAWDL)
@@ -1322,7 +1357,8 @@ final class WirelessTransport {
         connectedServiceName = nil
         isConnected = false
         isAWDL = false
-        dialPeerToPeer = false
+        avoidAWDL = wasAWDL
+        print("[CONSOLE] WirelessTransport: loss on \(wasAWDL ? "awdl" : "infra") -> next dial \(nextDialAWDL ? "awdl" : "infra")")
         tcpBuffer.removeAll()
         tcpBufferReadOffset = 0
         tcpBufferReservedCapacity = 0

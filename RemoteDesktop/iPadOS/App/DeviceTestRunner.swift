@@ -2236,8 +2236,12 @@ final class DeviceTestRunner {
             connected = sm.usbTransport.isConnected
             detectedType = "usb"
         } else if transport == "wifi" {
-            connected = sm.wirelessTransport.isConnected && !sm.wirelessTransport.isAWDL
+            // The wireless rotation checks the link the product picks: AWDL first
+            // (tla/TransportConnections.tla AwdlFirst), infrastructure as fallback.
+            connected = sm.wirelessTransport.isConnected &&
+                (!sm.wirelessTransport.isAWDL || WirelessTransport.prefersAWDL)
             detectedType = "wifi"
+            print("[TEST] INFO: wireless rotation link=\(sm.wirelessTransport.isAWDL ? "awdl" : "infra") connected=\(connected)")
         } else if transport == "awdl" {
             connected = sm.wirelessTransport.isConnected && sm.wirelessTransport.isAWDL
             detectedType = "awdl"
