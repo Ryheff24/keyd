@@ -109,8 +109,10 @@ static const int32_t kMaxMediaSendsInFlightWiFi = 3;
 /* Wi-Fi ack gate (tla/WiFiSendLoop.tla AckGate). A send completion only means the kernel took the
  * bytes (run 8148018: completion p50 1 ms after submit, iPad last byte p90 161 ms after completion),
  * so the in-flight count above never sees the socket queue. Once the iPad acknowledges frames
- * (KEYDRD_INPUT_FRAME_ACK), a capture is encoded only while sent-but-unacked frames < this. */
-static const int32_t kWiFiAckGateFrames = 3;
+ * (KEYDRD_INPUT_FRAME_ACK), a capture is encoded only while sent-but-unacked frames < this.
+ * The gate caps throughput at depth / ack RTT: at 3, run b95e17d's slow windows (RTT p50 ~99 ms
+ * during link holds) were held to ~30 fps. TLAPS (WiFiSendLoopProofs) covers any depth. */
+static const int32_t kWiFiAckGateFrames = 5;
 /* Rate under the ack gate (tla/WiFiRateControl.tla). Gate holds are pacing, not congestion: the
  * frame rate stays at kWirelessAdaptiveMaxFPS and the bitrate steps toward the fixed
  * kWirelessHEVCBitrate; the gate skips captures the link cannot take. A bitrate following
