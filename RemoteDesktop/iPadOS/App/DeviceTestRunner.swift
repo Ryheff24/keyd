@@ -2894,9 +2894,15 @@ final class DeviceTestRunner {
         var mediaAccepted = false
         var inputAccepted = false
 
+        var reported = false
+        // Called from securityQueue and from the main-queue timeouts: decide once, on main.
+        // (The 8 s overall timeout used to call this again after both probes had finished,
+        // recording the result twice and running every later test twice.)
         let checkBothDone: () -> Void = { [weak self] in
-            guard let self = self else { return }
+          DispatchQueue.main.async {
+            guard let self = self, !reported else { return }
             guard mediaCompleted && inputCompleted else { return }
+            reported = true
             if mediaAccepted || inputAccepted {
                 var detail = "VULNERABLE:"
                 if mediaAccepted { detail += " media port 14567 accepted unknown client;" }
@@ -2906,7 +2912,8 @@ final class DeviceTestRunner {
                 self.recordResult(name: "sec-pre-pairing-transport-reject", passed: true,
                             detail: "both transport ports rejected unknown client")
             }
-            DispatchQueue.main.async { self.runPairingRaceTest() }
+            self.runPairingRaceTest()
+          }
         }
 
         // Probe media port (14567 / UDP over DTLS)
