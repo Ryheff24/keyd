@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `52.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.004` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `33 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `120 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `47 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `53 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `133 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `66 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `54.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `31 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `74 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `53.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.783` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `34 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `108 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `45 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `54 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `122 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `65 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `55.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `30 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `63 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `87.2%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `85.1%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -175,3 +175,4 @@ Rules:
 | 2026-11-16 | 18:23:04 EST | `36f8446` | `2752x1786` | `2496x1620` | `49.8 fps` | `1.157` | `34/137/51 ms` | `54/151/69 ms` | `55.0 fps, 30/52 ms` | `1` | `39/47` | HEVC decoder: rebuild session and resubmit a refused keyframe once (after background) |
 | 2026-11-16 | 18:37:45 EST | `9db2cbe` | `2752x1786` | `2496x1620` | `51.3 fps` | `1.076` | `33/128/48 ms` | `54/145/67 ms` | `54.8 fps, 30/74 ms` | `1` | `39/47` | background cycle via devicectl (no UI automation, no passcode) + resume timestamps |
 | 2026-11-16 | 18:44:14 EST | `150e9f2` | `2752x1786` | `2496x1620` | `52.1 fps` | `1.004` | `33/120/47 ms` | `53/133/66 ms` | `54.3 fps, 31/74 ms` | `1` | `41/47` | resume drops only the connection held across the suspension (fix race with early heartbeat redial) |
+| 2026-11-16 | 18:50:52 EST | `cf8305c` | `2752x1786` | `2496x1620` | `53.4 fps` | `0.783` | `34/108/45 ms` | `54/122/65 ms` | `55.8 fps, 30/63 ms` | `1` | `40/47` | background-recovery reference rate = max(5s before Home, sustained-stream avg) |
