@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `44.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.163` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `41 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `122 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `61 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `59 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `139 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `77 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `44.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `43 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `118 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `56.1 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.587` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `33 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `71 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `39 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `53 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `88 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `58 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `58.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `29 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `46 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `84.8%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -164,3 +164,4 @@ Rules:
 | 2026-11-16 | 02:34:30 EST | `2dfcccb` | `2752x1786` | `2752x1786` | `55.8 fps` | `0.794` | `41/97/50 ms` | `62/113/70 ms` | `55.1 fps, 52/133 ms` | `1` | `39/46` | AWDL encodes at native viewport (cap 2752x2064; infra keeps 2496x1620); drop unsupported speed hint |
 | 2026-11-16 | 10:20:49 EST | `a25f021` | `2752x1786` | `2496x1620` | `45.7 fps` | `1.302` | `32/161/57 ms` | `53/178/74 ms` | `45.8 fps, 29/154 ms` | `1` | `37/46` | AWDL 20M 2496 repeat + ENC-SPLIT callback-duration diagnostic |
 | 2026-11-16 | 10:26:44 EST | `60ed92d` | `2752x1786` | `2496x1620` | `44.5 fps` | `1.163` | `41/122/61 ms` | `59/139/77 ms` | `44.8 fps, 43/118 ms` | `1` | `39/46` | Daytime infra comparison (--no-peer-to-peer) vs a25f021 AWDL 32% holds |
+| 2026-11-16 | 10:32:15 EST | `5e0007b` | `2752x1786` | `2496x1620` | `56.1 fps` | `0.587` | `33/71/39 ms` | `53/88/58 ms` | `58.7 fps, 29/46 ms` | `1` | `40/46` | AWDL target 30 Mbps (was 20) for sharpness; daytime, compare a25f021 |
