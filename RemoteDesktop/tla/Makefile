@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs ratecontrol ratecontrol-proofs
 
 # PairingPersistence (2026-11-15): the iPad's 8 s connecting timeout deleted its credentials
 # whenever the Mac was unreachable (hardware 22:38). Design: keep credentials, restart discovery
@@ -124,6 +124,44 @@ sendloop-proofs:
 	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
 	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
 	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py WiFiSendLoopProofs.tla); \
+	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
+	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
+
+# WiFiRateControl (2026-11-16): under the ack gate every gate hold counted as a pre-encode drop,
+# so the adaptive loop saw severe congestion every second and latched 30 fps capture / 5 Mbps for
+# the whole of run cfe6597. Design: gate holds are pacing (bitrate follows half the capacity acks
+# measure), the frame rate stays at 60.
+WRC_ROWS = WiFiRateControl:WiFiRateControl.cfg:pass \
+	WiFiRateControl:cfg/WRC-design-big.cfg:pass \
+	WiFiRateControl:cfg/WRC-asbuilt.cfg:FpsKept \
+	WiFiRateControl:cfg/WRC-asbuilt-settle.cfg:Temporal \
+	WiFiRateControl:cfg/WRC-ctl-ignoreholds.cfg:Temporal \
+	WiFiRateControl:cfg/WRC-ctl-keepfps.cfg:FpsKept \
+	WiFiRateControl:cfg/WRC-witness.cfg:NeverSettledThroughHolds
+
+ratecontrol: check-tools
+	$(call tlc_rows,$(WRC_ROWS))
+
+# TLAPS: FpsKept and ranges for any bounds. Control: without KeepFps, Window (<2>1) fails.
+WRC_PROOF_CTLS = 'KeepFps:SpecSafe.<1>2.<2>1:Window'
+
+ratecontrol-proofs:
+	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }
+	@path="$$PATH"; if ! ps -p $$$$ >/dev/null 2>&1; then mkdir -p "$(PSDIR)" && \
+	  printf '#!/bin/sh\necho "  PID  PPID   PID"\n' > "$(PSDIR)/ps" && chmod +x "$(PSDIR)/ps" && path="$(PSDIR):$$PATH"; fi; \
+	  out=$$(PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) WiFiRateControlProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL WiFiRateControlProofs: killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  if printf '%s\n' "$$out" | grep -q "All [0-9]* obligations proved"; then echo "OK   WiFiRateControlProofs: $$(printf '%s\n' "$$out" | grep -o "All [0-9]* obligations proved")"; \
+	  else printf '%s\n' "$$out" | grep -B2 -A8 "ERROR\|failed" | head -40; echo "FAIL WiFiRateControlProofs: not every obligation proved"; exit 2; fi; \
+	  for c in $(WRC_PROOF_CTLS); do sw=$${c%%:*}; rest=$${c#*:}; want=$${rest%%:*}; act=$${rest##*:}; \
+	    dir="$(CTLDIR)/wrc-$$sw"; mkdir -p "$$dir" && \
+	    sed "s/^\(Design == .*\)$$sw \/\\\\ /\1/" WiFiRateControl.tla > "$$dir/WiFiRateControl.tla" && \
+	    cp WiFiRateControlProofs.tla "$$dir/" && \
+	    ! cmp -s WiFiRateControl.tla "$$dir/WiFiRateControl.tla" || { echo "FAIL control: could not drop $$sw"; exit 2; }; \
+	    out=$$(cd "$$dir" && PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) WiFiRateControlProofs.tla 2>&1); \
+	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
+	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py WiFiRateControlProofs.tla); \
 	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
 	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
 
