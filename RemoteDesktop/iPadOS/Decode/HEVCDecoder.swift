@@ -97,7 +97,8 @@ final class HEVCDecoder {
     func decode(frameData: Data,
                 payloadOffset: Int,
                 payloadLength: Int,
-                header: MediaFrameHeader) -> DecodeResult {
+                header: MediaFrameHeader,
+                allowRebuild: Bool = true) -> DecodeResult {
         guard payloadOffset >= 0,
               payloadLength >= 0,
               payloadOffset + payloadLength <= frameData.count else {
@@ -207,6 +208,9 @@ final class HEVCDecoder {
                     }
                 } else {
                     os_log(.error, log: Self.log, "Decode frame error: %d", decodeStatus)
+                    if header.isKeyframe {
+                        print("[CONSOLE] HEVCDecoder: decode-callback KEY error seq=\(header.seq) status=\(decodeStatus)")
+                    }
                     // A noErr callback without an image (decoder dropped the output) leaves the
                     // reference chain intact; only a decode error breaks it.
                     if decodeStatus != noErr {
@@ -225,7 +229,25 @@ final class HEVCDecoder {
 
         if status != noErr {
             os_log(.error, log: Self.log, "VTDecompressionSessionDecodeFrame failed: %d", status)
+            // After a background iPadOS can invalidate the hardware session (kVTInvalidSessionErr
+            // -12903): the first key after resume was refused and FrameLoop waited ~0.5 s for the
+            // next one (findings 2026-11-16 item 3). A keyframe carries its own parameter sets, so
+            // rebuild the session and submit the same key once more.
+            let rebuild = header.isKeyframe && allowRebuild
+            print("[CONSOLE] HEVCDecoder: decode-submit FAILED seq=\(header.seq) key=\(header.isKeyframe) status=\(status) action=\(rebuild ? "rebuild-and-resubmit" : "fail")")
             handleSessionError(status)
+            if rebuild {
+                let retry = decode(frameData: frameData, payloadOffset: payloadOffset,
+                                   payloadLength: payloadLength, header: header, allowRebuild: false)
+                let outcome: String
+                switch retry {
+                case .decoded: outcome = "decoded"
+                case .deferred: outcome = "deferred"
+                case .failed: outcome = "failed"
+                }
+                print("[CONSOLE] HEVCDecoder: decode-resubmit seq=\(header.seq) result=\(outcome)")
+                return retry
+            }
             return .failed
         }
 
