@@ -97,11 +97,12 @@ static const int32_t kWirelessBurstTailFrameCountThreshold = 3;
 static const int32_t kWirelessBurstSevereFrameCountThreshold = 1;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
-/* AWDL encodes at the iPad's native size (up to the 13" iPad Pro panel). The 2496x1620 cap kept
- * keyframes on the UDP path, which is gated off (media rides TLS/TCP); on AWDL it made the iPad
- * upscale by ~1.1x, visibly soft (2026-11-16). Infrastructure keeps the cap. */
-static const uint32_t kAWDLMaxEncodeWidth = 2752;
-static const uint32_t kAWDLMaxEncodeHeight = 2064;
+/* AWDL encode cap. Native size (2752x2064 cap, run 2dfcccb, 2026-11-16) removed the iPad's ~1.1x
+ * upscale but HEVC encode went to ~16-17 ms a frame (over the 16.7 ms interval at 60 fps):
+ * pipeline median 32 -> 41 ms, g2g 53 -> 62 ms vs 4cc1c70, fps unchanged. Kept at 2496x1620 until
+ * encode time drops (the hardware encoder rejects PrioritizeEncodingSpeedOverQuality). */
+static const uint32_t kAWDLMaxEncodeWidth = 2496;
+static const uint32_t kAWDLMaxEncodeHeight = 1620;
 /* Keep wireless media on the established TLS/TCP stream. This removes the
  * paced-DTLS chunk backlog that was inflating tail latency/jitter on Wi-Fi
  * and keeps reconnect/rotation behavior aligned to a single transport socket. */

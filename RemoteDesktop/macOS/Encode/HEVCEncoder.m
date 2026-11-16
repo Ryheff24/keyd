@@ -530,6 +530,11 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
 
 #pragma mark - Output Callback
 
+/* ENC-SPLIT callback-duration stats: time spent inside the output callback (send path included).
+ * Output callbacks are serial per session, so a slow callback delays every later output and shows
+ * up as "encode" time on the frames behind it. Written at callback exit, logged with ENC-SPLIT. */
+static uint64_t sEncCbN = 0, sEncCbSum = 0, sEncCbMax = 0;
+
 static void _hevcOutputCallback(void *outputCallbackRefCon,
                                  void *sourceFrameRefCon,
                                  OSStatus status,
@@ -537,6 +542,7 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
                                  CMSampleBufferRef sampleBuffer) {
     /* Decrement pending frame count at the very beginning of callback.
      * This unblocks the next encodePixelBuffer call as early as possible. */
+    uint64_t cbEntryUs = keydrd_host_time_us();
     HEVCEncoder *encoder = (__bridge HEVCEncoder *)outputCallbackRefCon;
     if (encoder) {
         atomic_fetch_sub_explicit(&encoder->_pendingFrameCount, 1, memory_order_relaxed);
@@ -562,10 +568,12 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
         if (enc > sEncMax) sEncMax = enc;
         if (enc > 16000) sEncOver16++;
         if (sN >= 120) {
-            os_log(hevc_log(), "ENC-SPLIT n=%llu capToCall avg=%.1fms max=%.1fms encode avg=%.1fms max=%.1fms over16ms=%llu pending=%d",
+            os_log(hevc_log(), "ENC-SPLIT n=%llu capToCall avg=%.1fms max=%.1fms encode avg=%.1fms max=%.1fms over16ms=%llu pending=%d callback avg=%.2fms max=%.2fms",
                    sN, sCallSum / 1000.0 / sN, sCallMax / 1000.0, sEncSum / 1000.0 / sN, sEncMax / 1000.0,
-                   sEncOver16, encoder ? atomic_load_explicit(&encoder->_pendingFrameCount, memory_order_relaxed) : -1);
+                   sEncOver16, encoder ? atomic_load_explicit(&encoder->_pendingFrameCount, memory_order_relaxed) : -1,
+                   sEncCbN ? sEncCbSum / 1000.0 / sEncCbN : 0.0, sEncCbMax / 1000.0);
             sN = sCallSum = sCallMax = sEncSum = sEncMax = sEncOver16 = 0;
+            sEncCbN = sEncCbSum = sEncCbMax = 0;
         }
     }
 
@@ -697,6 +705,11 @@ static void _hevcOutputCallback(void *outputCallbackRefCon,
 
     if (keyframeBuf) {
         free(keyframeBuf);
+    }
+    if (cbEntryUs > 0) {
+        uint64_t cbUs = keydrd_host_time_us() - cbEntryUs;
+        sEncCbN++; sEncCbSum += cbUs;
+        if (cbUs > sEncCbMax) sEncCbMax = cbUs;
     }
 }
 
