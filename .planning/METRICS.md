@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `52.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.237` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `38 ms` | `7 ms` | `6 ms` | ❌ |
+| FPS | `50.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.294` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `50 ms` | `7 ms` | `6 ms` | ❌ |
 | Pipeline latency p95 | `136 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `59 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `57 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `148 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `75 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `54.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `34 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `113 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `65 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `63 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `150 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `81 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `51.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `51 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `137 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `82.6%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -143,3 +143,4 @@ Rules:
 | 2026-11-15 | 18:12:39 EST | `061f6a0` | `2752x1786` | `2752x1786` | `94.5 fps` | `0.549` | `8/28/12 ms` | `27/50/30 ms` | `100.5 fps, 7/23 ms` | `1` | `30/33` | USB control: ring kept, queue cap 1 (newest wins); FIFO cap 2 backed out after c7db83b latency rise |
 | 2026-11-15 | 20:26:08 EST | `e304223` | `2752x1786` | `2496x1620` | `52.2 fps` | `1.176` | `39/128/58 ms` | `58/142/75 ms` | `53.3 fps, 36/120 ms` | `1` | `39/45` | input E2E: fix duplicate test chain (pre-pairing checkBothDone fired twice); 12 input tests |
 | 2026-11-15 | 20:45:21 EST | `558ac03` | `2752x1786` | `2496x1620` | `52.0 fps` | `1.237` | `38/136/59 ms` | `57/148/75 ms` | `54.0 fps, 34/113 ms` | `1` | `38/46` | baseline before queue split: LANE-BLOCK logging + input-during-reconfig (pointer moves during eco on/off) |
+| 2026-11-15 | 20:54:23 EST | `02f587c` | `2752x1786` | `2496x1620` | `50.0 fps` | `1.294` | `50/136/65 ms` | `63/150/81 ms` | `51.1 fps, 51/137 ms` | `1` | `40/46` | Mac session queue split (SessionLanes): input stays on transport queue, session work on serial S; scroll check by sumDy |
