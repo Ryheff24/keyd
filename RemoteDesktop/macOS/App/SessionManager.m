@@ -97,6 +97,11 @@ static const int32_t kWirelessBurstTailFrameCountThreshold = 3;
 static const int32_t kWirelessBurstSevereFrameCountThreshold = 1;
 static const uint32_t kWirelessMaxEncodeWidth = 2496;
 static const uint32_t kWirelessMaxEncodeHeight = 1620;
+/* AWDL encodes at the iPad's native size (up to the 13" iPad Pro panel). The 2496x1620 cap kept
+ * keyframes on the UDP path, which is gated off (media rides TLS/TCP); on AWDL it made the iPad
+ * upscale by ~1.1x, visibly soft (2026-11-16). Infrastructure keeps the cap. */
+static const uint32_t kAWDLMaxEncodeWidth = 2752;
+static const uint32_t kAWDLMaxEncodeHeight = 2064;
 /* Keep wireless media on the established TLS/TCP stream. This removes the
  * paced-DTLS chunk backlog that was inflating tail latency/jitter on Wi-Fi
  * and keeps reconnect/rotation behavior aligned to a single transport socket. */
@@ -3079,7 +3084,8 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         uint32_t expectedEncodeWidth = _viewportWidth;
         uint32_t expectedEncodeHeight = _viewportHeight;
         keydrd_limit_size(_viewportWidth, _viewportHeight,
-                          kWirelessMaxEncodeWidth, kWirelessMaxEncodeHeight,
+                          _wirelessTransport.isAWDL ? kAWDLMaxEncodeWidth : kWirelessMaxEncodeWidth,
+                          _wirelessTransport.isAWDL ? kAWDLMaxEncodeHeight : kWirelessMaxEncodeHeight,
                           &expectedEncodeWidth, &expectedEncodeHeight);
         if (!viewportChanged &&
             _captureWidth == expectedEncodeWidth &&
@@ -3174,10 +3180,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
         _wifiAdaptiveAppliedBitrate = bitrate;
         _wifiAdaptiveLastChangeUs = keydrd_host_time_us();
         keydrd_limit_size(_viewportWidth, _viewportHeight,
-                          kWirelessMaxEncodeWidth, kWirelessMaxEncodeHeight,
+                          _wirelessTransport.isAWDL ? kAWDLMaxEncodeWidth : kWirelessMaxEncodeWidth,
+                          _wirelessTransport.isAWDL ? kAWDLMaxEncodeHeight : kWirelessMaxEncodeHeight,
                           &encodeWidth, &encodeHeight);
         if (encodeWidth != _viewportWidth || encodeHeight != _viewportHeight) {
-            os_log(sLog, "WiFi encode cap: viewport %ux%u -> %ux%u to keep keyframes on UDP",
+            os_log(sLog, "WiFi encode cap: viewport %ux%u -> %ux%u (link cap)",
                    _viewportWidth, _viewportHeight, encodeWidth, encodeHeight);
         }
     }
