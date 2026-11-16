@@ -366,6 +366,13 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 @property (atomic, assign) uint64_t wifiTCPLastStallRecoveryUs;
 @property (atomic, assign) uint64_t wifiTCPStallLastLogUs;
 @property (atomic, assign) uint32_t wifiTCPSendGeneration;
+/* Test-mode bandwidth probe state; touched only on the Wi-Fi transport queue. */
+@property (nonatomic, strong) NSData *bwProbeChunk;
+@property (nonatomic, assign) uint64_t bwProbeStartUs;
+@property (nonatomic, assign) uint64_t bwProbeEndUs;
+@property (nonatomic, assign) uint64_t bwProbeSentBytes;
+@property (nonatomic, assign) int bwProbeInFlight;
+@property (nonatomic, assign) BOOL bwProbeActive;
 @property (atomic, assign) uint64_t wifiTCPSchedulerWindowStartUs;
 @property (atomic, assign) uint64_t wifiTCPSchedulerLastSubmitUs;
 @property (nonatomic, assign) volatile int32_t wifiTCPSchedulerWindowSendCount;
@@ -974,8 +981,9 @@ static const int32_t kUSBLZ4GateInFlight = 2;
      * This avoids the reconnect/backoff cycle and keeps streaming + capture alive. */
     if (_transportState == TRANSPORT_DISCONNECTED && _sessionState == SESSION_STREAMING) {
         if (_wirelessTransport.isConnected) {
-            os_log(sLog, "Immediate WiFi fallback — WiFi still connected, switching directly");
-            [self handleTransportEvent:TRANSPORT_EVT_WIFI_AVAILABLE];
+            BOOL awdl = _wirelessTransport.isAWDL;
+            os_log(sLog, "Immediate wireless fallback — wireless still connected (AWDL=%d), switching directly", awdl);
+            [self handleTransportEvent:awdl ? TRANSPORT_EVT_AWDL_AVAILABLE : TRANSPORT_EVT_WIFI_AVAILABLE];
             return;
         }
         if (_usbTransport.isConnected) {
@@ -1034,7 +1042,11 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     /* Capture resolution will be set to viewport dims when iPad sends viewport report.
      * If viewport already known (reconnect), resize now. */
     if (_viewportReceived && _viewportWidth > 0 && _viewportHeight > 0) {
-        os_log(sLog, "LZ4: resizing capture to viewport %ux%u", _viewportWidth, _viewportHeight);
+        /* Wi-Fi HEVC lowered the capture rate (kWirelessHEVCFPS / adaptive); USB LZ4 runs at the
+         * capture default of 120 (seen 2026-11-15: USB stuck at 60 fps after a Wi-Fi round trip). */
+        _capture.captureFPS = 120;
+        os_log(sLog, "LZ4: resizing capture to viewport %ux%u @%ufps", _viewportWidth, _viewportHeight,
+               _capture.captureFPS);
         [_capture updateCaptureResolution:_viewportWidth height:_viewportHeight];
         _captureWidth = _viewportWidth;
         _captureHeight = _viewportHeight;
@@ -2623,9 +2635,15 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             os_log_error(sLog, "Input test control ignored: not in test mode");
             return;
         }
-        if (!_inputTestHarness) _inputTestHarness = [[InputTestHarness alloc] initWithInjector:_inputInjector];
         NSData *json = [NSData dataWithBytes:(const uint8_t *)data + sizeof(InputEventHeader)
                                       length:length - sizeof(InputEventHeader)];
+        NSDictionary *cmdObj = [NSJSONSerialization JSONObjectWithData:json options:0 error:nil];
+        if ([cmdObj isKindOfClass:[NSDictionary class]] && [cmdObj[@"cmd"] isEqual:@"bw-probe"]) {
+            int ms = [cmdObj[@"ms"] intValue];
+            [self startBandwidthProbeMs:(ms > 0 && ms <= 10000) ? ms : 3000];
+            return;
+        }
+        if (!_inputTestHarness) _inputTestHarness = [[InputTestHarness alloc] initWithInjector:_inputInjector];
         __weak SessionManager *weakSelf = self;
         [_inputTestHarness handleControl:json reply:^(NSData *reply) {
             SessionManager *s = weakSelf;
@@ -3047,6 +3065,76 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 }
 
 #pragma mark - Mode Change from iPad
+
+#pragma mark - Bandwidth probe (test mode)
+
+/* Measures Mac->iPad capacity on the live Wi-Fi TCP/TLS connection. Sends 64 KB filler
+ * messages (KEYDRD_INPUT_TEST_FILLER) back to back, kBWProbeMaxInFlight at a time, for `ms`,
+ * then a TEST_REPORT once every filler send has completed. The iPad times each arrival
+ * (DeviceTestRunner runBandwidthProbe); the report follows the filler on the same stream, so
+ * its arrival marks the end. The media stream keeps running, so the iPad sees filler plus
+ * stream. Runs on the Wi-Fi transport queue: TEST_CONTROL is handled there, and send
+ * completions are delivered there (WirelessTransport sets it as the connection queue). */
+static const int kBWProbeMaxInFlight = 8;
+static const size_t kBWProbeChunkBytes = 64 * 1024;
+
+- (void)sendBandwidthProbeReply:(NSDictionary *)obj {
+    NSData *body = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil] ?: [NSData data];
+    NSMutableData *msg = [NSMutableData dataWithLength:sizeof(InputEventHeader)];
+    InputEventHeader rh = { .type = KEYDRD_INPUT_TEST_REPORT, .ts_us = [self currentTimestampUs] };
+    memcpy(msg.mutableBytes, &rh, sizeof rh);
+    [msg appendData:body];
+    [self sendInputEventToiPad:msg.bytes length:msg.length];
+}
+
+- (void)startBandwidthProbeMs:(int)ms {
+    if (!_wirelessTransport.isConnected || _usbTransport.isConnected || self.bwProbeActive) {
+        os_log(sLog, "bw-probe: refused wifi=%d usb=%d active=%d",
+               _wirelessTransport.isConnected, _usbTransport.isConnected, self.bwProbeActive);
+        [self sendBandwidthProbeReply:@{ @"bwProbe": @"refused" }];
+        return;
+    }
+    NSMutableData *chunk = [NSMutableData dataWithLength:kBWProbeChunkBytes];
+    InputEventHeader h = { .type = KEYDRD_INPUT_TEST_FILLER, .ts_us = 0 };
+    memcpy(chunk.mutableBytes, &h, sizeof h);
+    self.bwProbeChunk = chunk;
+    self.bwProbeStartUs = keydrd_host_time_us();
+    self.bwProbeEndUs = self.bwProbeStartUs + (uint64_t)ms * 1000;
+    self.bwProbeSentBytes = 0;
+    self.bwProbeInFlight = 0;
+    self.bwProbeActive = YES;
+    os_log(sLog, "bw-probe: start ms=%d chunk=%zu maxInFlight=%d", ms, kBWProbeChunkBytes, kBWProbeMaxInFlight);
+    [self pumpBandwidthProbe];
+}
+
+- (void)pumpBandwidthProbe {
+    if (!self.bwProbeActive) return;
+    uint64_t nowUs = keydrd_host_time_us();
+    while (self.bwProbeInFlight < kBWProbeMaxInFlight && nowUs < self.bwProbeEndUs &&
+           _wirelessTransport.isConnected) {
+        self.bwProbeInFlight += 1;
+        NSData *chunk = self.bwProbeChunk;
+        __weak SessionManager *weakSelf = self;
+        [_wirelessTransport sendMediaFrameViaTCP:chunk.bytes length:chunk.length completion:^(BOOL success) {
+            SessionManager *s = weakSelf;
+            if (!s) return;
+            s.bwProbeInFlight -= 1;
+            if (success) s.bwProbeSentBytes += kBWProbeChunkBytes + 4;
+            [s pumpBandwidthProbe];
+        }];
+    }
+    if (self.bwProbeInFlight == 0 && (nowUs >= self.bwProbeEndUs || !_wirelessTransport.isConnected)) {
+        self.bwProbeActive = NO;
+        self.bwProbeChunk = nil;
+        uint64_t elapsedMs = (nowUs - self.bwProbeStartUs) / 1000;
+        os_log(sLog, "bw-probe: done sentBytes=%llu elapsedMs=%llu localRate=%.1fMb/s",
+               self.bwProbeSentBytes, elapsedMs,
+               elapsedMs ? (double)self.bwProbeSentBytes * 8.0 / ((double)elapsedMs * 1000.0) : 0.0);
+        [self sendBandwidthProbeReply:@{ @"bwProbe": @"done",
+                                         @"sentBytes": @(self.bwProbeSentBytes),
+                                         @"elapsedMs": @(elapsedMs) }];
+    }
+}
 
 - (void)handleModeChangeFromiPad:(const void *)data length:(size_t)length {
     /* After the 9-byte InputEventHeader, subtype byte indicates the change type */

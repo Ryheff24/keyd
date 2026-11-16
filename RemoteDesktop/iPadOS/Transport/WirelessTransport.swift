@@ -91,6 +91,22 @@ final class WirelessTransport {
     private var pendingMediaCallbacks = 0
     private var maxPendingMediaCallbacks = 0
     private let controlRecoveryPollInterval: TimeInterval = 0.75
+
+    // Link liveness and link choice (tla/TransportConnections.tla, design):
+    //  InfraFirst    -- dial infrastructure Wi-Fi only; dial peer-to-peer (AWDL) only for the dial
+    //                   right after an infrastructure dial failed. One dial, one candidate.
+    //  SilenceDetect -- both sides send a heartbeat every linkHeartbeatInterval on the control
+    //                   connection; no byte for linkSilenceDeadline means the link is lost.
+    //  RedialOnLoss  -- every loss restarts discovery with a fresh browser (fresh results).
+    /// Shared/protocol.h KEYDRD_LINK_HEARTBEAT.
+    static let linkHeartbeatType: UInt8 = 0x31
+    private let linkHeartbeatInterval: TimeInterval = 1.0
+    private let linkSilenceDeadline: TimeInterval = 4.0
+    private var dialPeerToPeer = false
+    private var lastControlRxUptimeNs: UInt64 = 0
+    private var linkHeartbeatTimer: DispatchSourceTimer?
+    private var linkHeartbeatsSent = 0
+    private var linkHeartbeatsReceived = 0
     private let controlRecoveryHardDeadline: TimeInterval = 6.0
 
     private let log = Logger(subsystem: "com.ryheff.keyd.remote.app", category: "WirelessTransport")
@@ -253,7 +269,11 @@ final class WirelessTransport {
         tcpOptions.noDelay = true
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         WirelessTransport.applyInterfacePolicy(params)
-        print("[CONSOLE] WirelessTransport: TCP params includePeerToPeer=\(params.includePeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
+        // InfraFirst: infrastructure only unless the previous infrastructure dial failed.
+        // The E2E Wi-Fi mode (requireWiFiInterface) never dials peer-to-peer.
+        params.includePeerToPeer = WirelessTransport.includePeerToPeer && dialPeerToPeer
+            && !WirelessTransport.requireWiFiInterface
+        print("[CONSOLE] WirelessTransport: TCP params includePeerToPeer=\(params.includePeerToPeer) dialPeerToPeer=\(dialPeerToPeer) requiredInterface=\(String(describing: params.requiredInterfaceType))")
         return params
     }
 
@@ -512,6 +532,8 @@ final class WirelessTransport {
                 self.isAWDL = detectedAWDL
                 self.isConnected = true
 
+                self.dialPeerToPeer = false
+                self.startLinkHeartbeat(for: inputConn)
                 print("[CONSOLE] WirelessTransport: AWDL=\(detectedAWDL), calling onConnectionChanged")
                 self.log.info("Wireless transport: AWDL=\(detectedAWDL)")
                 self.onConnectionChanged?(true, detectedAWDL)
@@ -629,10 +651,11 @@ final class WirelessTransport {
         // `availableInterfaces.first` is unstable when both Wi-Fi and peer-to-peer
         // are available, which can move media onto the wrong path.
         let prefersAWDL = detectAWDL(connection: tcpConnection)
-        let requiredType: NWInterface.InterfaceType = prefersAWDL ? .other : .wifi
-        if let pathInterface = path.availableInterfaces.first(where: { $0.type == requiredType })
+        if let pathInterface = path.availableInterfaces.first(where: {
+                WirelessTransport.isPeerToPeerInterface($0) == prefersAWDL && $0.type != .loopback })
             ?? path.availableInterfaces.first(where: { $0.type != .loopback }) {
             udpParams.requiredInterface = pathInterface
+            print("[CONSOLE] WirelessTransport: DTLS media bound to \(pathInterface.name) (AWDL=\(prefersAWDL))")
         }
 
         let mediaEndpoint = NWEndpoint.hostPort(host: host, port: mediaPort)
@@ -682,26 +705,21 @@ final class WirelessTransport {
 
     // MARK: - Private: Interface Detection
 
+    /// AWDL interfaces report type .wifi, so the type cannot tell them apart; the name can
+    /// (awdl0, and llw0 for low-latency Wi-Fi). ExactLabel in tla/TransportConnections.tla.
+    static func isPeerToPeerInterface(_ interface: NWInterface) -> Bool {
+        interface.name.hasPrefix("awdl") || interface.name.hasPrefix("llw")
+    }
+
     private func detectAWDL(connection: NWConnection) -> Bool {
-        guard let path = connection.currentPath else { return false }
-
-        var hasWiFi = false
-        var hasPeerToPeer = false
-
-        for interface in path.availableInterfaces {
-            log.info("Connection interface: \(interface.debugDescription) (type=\(String(describing: interface.type)))")
-            switch interface.type {
-            case .wifi:
-                hasWiFi = true
-            case .other:
-                hasPeerToPeer = true
-            default:
-                break
-            }
+        guard let path = connection.currentPath else {
+            print("[CONSOLE] WirelessTransport: link-label path=nil -> AWDL=false")
+            return false
         }
-
-        // AWDL connections show up as type_other; Wi-Fi as type_wifi
-        return hasPeerToPeer && !hasWiFi
+        let names = path.availableInterfaces.map { "\($0.name):\($0.type)" }
+        let awdl = path.availableInterfaces.first.map(WirelessTransport.isPeerToPeerInterface) ?? false
+        print("[CONSOLE] WirelessTransport: link-label interfaces=\(names) local=\(String(describing: path.localEndpoint)) remote=\(String(describing: path.remoteEndpoint)) -> AWDL=\(awdl)")
+        return awdl
     }
 
     // MARK: - Private: Receive Loops
@@ -855,6 +873,7 @@ final class WirelessTransport {
             }
 
             if let data = content, !data.isEmpty {
+                self.lastControlRxUptimeNs = DispatchTime.now().uptimeNanoseconds
                 FrameTimeline.shared.tcpReceive(atUs: rxUs, bytes: data.count)
                 let beforeCount = self.tcpBuffer.count
                 self.reserveTCPBufferIfNeeded(incomingBytes: data.count, currentCount: beforeCount)
@@ -944,6 +963,13 @@ final class WirelessTransport {
             deliveredThisDrain += 1
             tcpDrainDeliveredCount += 1
 
+            if message.first == WirelessTransport.linkHeartbeatType {
+                linkHeartbeatsReceived += 1
+                if linkHeartbeatsReceived <= 3 || linkHeartbeatsReceived % 60 == 0 {
+                    print("[CONSOLE] WirelessTransport: link heartbeat received count=\(linkHeartbeatsReceived)")
+                }
+                continue
+            }
             FrameTimeline.shared.tcpMessageDelivered(moreBuffered: tcpBuffer.count > tcpBufferReadOffset)
             onInputReceived?(message)
         }
@@ -1006,6 +1032,7 @@ final class WirelessTransport {
         tcpBufferReservedCapacity = 0
         isConnected = false
         isAWDL = false
+        stopLinkHeartbeat(reason: "teardown-\(reason)")
         print("[CONSOLE] WirelessTransport: tearDownConnections exit reason=\(reason) connectedServiceName=\(connectedServiceName ?? "nil") isConnected=\(isConnected)")
     }
 
@@ -1020,9 +1047,12 @@ final class WirelessTransport {
             log.info("Browser restart skipped: session active/pending (\(reason))")
             return
         }
-        guard browser == nil else {
-            print("[CONSOLE] WirelessTransport: browser restart skipped (\(reason)) browser already active")
-            return
+        if let running = browser {
+            // RedialOnLoss: a running browser does not re-report a service it already reported
+            // (an .added ignored while connected is never replayed), so replace it.
+            print("[CONSOLE] WirelessTransport: browser restart replacing active browser (\(reason)) to replay results")
+            browser = nil
+            running.cancel()
         }
 
         browserRestartAttempt += 1
@@ -1063,7 +1093,10 @@ final class WirelessTransport {
                 return
             }
 
-            print("[CONSOLE] WirelessTransport: connect watchdog timeout; cancelling pending TCP connection and clearing latch (connectedServiceName=\(self.connectedServiceName ?? "nil"))")
+            let nextPeerToPeer = !self.dialPeerToPeer && WirelessTransport.includePeerToPeer
+                && !WirelessTransport.requireWiFiInterface
+            print("[CONSOLE] WirelessTransport: connect watchdog timeout; cancelling pending TCP connection and clearing latch (connectedServiceName=\(self.connectedServiceName ?? "nil")) dialPeerToPeer=\(self.dialPeerToPeer) -> next=\(nextPeerToPeer)")
+            self.dialPeerToPeer = nextPeerToPeer
             self.log.error("Connect watchdog timed out; cancelling pending wireless TCP connection")
             connection.cancel()
             self.inputConnection = nil
@@ -1138,6 +1171,8 @@ final class WirelessTransport {
             self.tcpBufferReadOffset = 0
             self.tcpBufferReservedCapacity = 0
             self.cancelControlPathRecovery(reason: "control-recovery-timeout")
+            self.stopLinkHeartbeat(reason: "control-recovery-timeout")
+            self.dialPeerToPeer = false
             self.onConnectionChanged?(false, wasAWDL)
             self.scheduleBrowserRestart(reason: "control-recovery-timeout")
         }
@@ -1189,10 +1224,84 @@ final class WirelessTransport {
         tcpBufferReadOffset = 0
         tcpBufferReservedCapacity = 0
 
+        stopLinkHeartbeat(reason: "media-path-loss")
+        dialPeerToPeer = false
         print("[CONSOLE] WirelessTransport: media path loss decision=reconnect-triggered reason=\(reason) wasAWDL=\(wasAWDL) inputReady=\(inputReady)")
         log.error("Media path loss decision=reconnect-triggered reason=\(reason) inputReady=\(inputReady)")
         onConnectionChanged?(false, wasAWDL)
         scheduleBrowserRestart(reason: reason)
+    }
+
+    // MARK: - Link liveness (tla/TransportConnections.tla SilenceDetect)
+
+    private func startLinkHeartbeat(for connection: NWConnection) {
+        stopLinkHeartbeat(reason: "restart")
+        lastControlRxUptimeNs = DispatchTime.now().uptimeNanoseconds
+        linkHeartbeatsSent = 0
+        linkHeartbeatsReceived = 0
+        let timer = DispatchSource.makeTimerSource(queue: transportQueue)
+        timer.schedule(deadline: .now() + linkHeartbeatInterval, repeating: linkHeartbeatInterval)
+        timer.setEventHandler { [weak self, weak connection] in
+            guard let self = self, let connection = connection else { return }
+            self.linkHeartbeatTick(connection)
+        }
+        linkHeartbeatTimer = timer
+        timer.resume()
+        print("[CONSOLE] WirelessTransport: link heartbeat started interval=\(linkHeartbeatInterval)s deadline=\(linkSilenceDeadline)s")
+    }
+
+    private func stopLinkHeartbeat(reason: String) {
+        guard let timer = linkHeartbeatTimer else { return }
+        timer.cancel()
+        linkHeartbeatTimer = nil
+        print("[CONSOLE] WirelessTransport: link heartbeat stopped reason=\(reason) sent=\(linkHeartbeatsSent) received=\(linkHeartbeatsReceived)")
+    }
+
+    private func linkHeartbeatTick(_ connection: NWConnection) {
+        guard inputConnection === connection, isConnected else {
+            stopLinkHeartbeat(reason: "connection-not-current")
+            return
+        }
+        let silentNs = DispatchTime.now().uptimeNanoseconds &- lastControlRxUptimeNs
+        let silentSec = Double(silentNs) / 1_000_000_000.0
+        if silentSec >= linkSilenceDeadline {
+            handleSilentLinkLoss(silentSec: silentSec)
+            return
+        }
+        var payload = Data([WirelessTransport.linkHeartbeatType])
+        var ts = keydrdHostTimeUs().bigEndian
+        withUnsafeBytes(of: &ts) { payload.append(contentsOf: $0) }
+        sendInputEvent(payload)
+        linkHeartbeatsSent += 1
+        if silentSec >= linkHeartbeatInterval * 2 {
+            print("[CONSOLE] WirelessTransport: link quiet silentMs=\(Int(silentSec * 1000)) deadlineMs=\(Int(linkSilenceDeadline * 1000)) AWDL=\(isAWDL)")
+        }
+    }
+
+    /// A connection that delivers no byte for linkSilenceDeadline is lost, whatever TCP thinks.
+    private func handleSilentLinkLoss(silentSec: Double) {
+        let wasAWDL = isAWDL
+        print("[CONSOLE] WirelessTransport: link silent decision=lost silentMs=\(Int(silentSec * 1000)) deadlineMs=\(Int(linkSilenceDeadline * 1000)) AWDL=\(wasAWDL) heartbeatsSent=\(linkHeartbeatsSent) heartbeatsReceived=\(linkHeartbeatsReceived) action=drop-and-redial")
+        log.error("Wireless link silent for \(silentSec)s: dropping and redialling")
+        stopLinkHeartbeat(reason: "silent")
+        cancelControlPathRecovery(reason: "link-silent")
+        connectWatchdogWorkItem?.cancel()
+        connectWatchdogWorkItem = nil
+        let staleMedia = mediaConnection
+        mediaConnection = nil
+        staleMedia?.cancel()
+        let staleInput = inputConnection
+        inputConnection = nil
+        staleInput?.cancel()
+        connectedServiceName = nil
+        isConnected = false
+        isAWDL = false
+        dialPeerToPeer = false
+        tcpBuffer.removeAll()
+        tcpBufferReadOffset = 0
+        tcpBufferReservedCapacity = 0
+        onConnectionChanged?(false, wasAWDL)
+        scheduleBrowserRestart(reason: "link-silent")
     }
 
     deinit {

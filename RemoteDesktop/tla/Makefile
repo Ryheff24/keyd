@@ -23,9 +23,89 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs
+
+# PairingPersistence (2026-11-15): the iPad's 8 s connecting timeout deleted its credentials
+# whenever the Mac was unreachable (hardware 22:38). Design: keep credentials, restart discovery
+# and re-arm on timeout; only the owner's Reset Pairing deletes them. As built and the forget
+# control break CredsOnlyOwnerForgets; no restart loses reconnection after a silent discovery
+# stall (temporal); the witness streams.
+PERSIST_ROWS = PairingPersistence:PairingPersistence.cfg:pass \
+	PairingPersistence:cfg/PP-asbuilt.cfg:CredsOnlyOwnerForgets \
+	PairingPersistence:cfg/PP-ctl-forget.cfg:CredsOnlyOwnerForgets \
+	PairingPersistence:cfg/PP-ctl-no-restart.cfg:Temporal \
+	PairingPersistence:cfg/PP-witness.cfg:NeverStreams
+
+# TransportConnections (2026-11-15, wireless lane of PLAN 4a): the USB->Wi-Fi unplug at 22:51
+# landed on an AWDL connection that had gone silent, labelled Wi-Fi, kept 113 s, then never
+# redialled. Design: dial infrastructure first, exact labels, heartbeat silence deadline, redial
+# on loss. Each as-built row shows one defect; each control reports exactly its property.
+CONN_ROWS = TransportConnections:TransportConnections.cfg:pass \
+	TransportConnections:cfg/TC-design-big.cfg:pass \
+	TransportConnections:cfg/TC-asbuilt.cfg:PreferInfra \
+	TransportConnections:cfg/TC-asbuilt-label.cfg:LabelExact \
+	TransportConnections:cfg/TC-asbuilt-silence.cfg:DetectDeadline \
+	TransportConnections:cfg/TC-asbuilt-recover.cfg:Temporal \
+	TransportConnections:cfg/TC-ctl-infra-first.cfg:PreferInfra \
+	TransportConnections:cfg/TC-ctl-label.cfg:LabelExact \
+	TransportConnections:cfg/TC-ctl-silence.cfg:DetectDeadline \
+	TransportConnections:cfg/TC-ctl-redial.cfg:Temporal \
+	TransportConnections:cfg/TC-witness.cfg:NeverStreams
+
+conn: check-tools
+	$(call tlc_rows,$(CONN_ROWS))
+
+# TLAPS: PreferInfra, LabelExact, DetectDeadline for any bounds. Controls: Design without one
+# switch must fail at exactly that mechanism's step: InfraFirst at Dial (<2>1), ExactLabel at
+# Establish (<2>2), SilenceDetect at Tick (<2>6).
+CONN_PROOF_CTLS = 'InfraFirst:SpecSafe.<1>2.<2>1:Dial' 'ExactLabel:SpecSafe.<1>2.<2>2:Establish' \
+	'SilenceDetect:SpecSafe.<1>2.<2>6:Tick'
+
+conn-proofs:
+	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }
+	@path="$$PATH"; if ! ps -p $$$$ >/dev/null 2>&1; then mkdir -p "$(PSDIR)" && \
+	  printf '#!/bin/sh\necho "  PID  PPID   PID"\n' > "$(PSDIR)/ps" && chmod +x "$(PSDIR)/ps" && path="$(PSDIR):$$PATH"; fi; \
+	  out=$$(PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) TransportConnectionsProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL TransportConnectionsProofs: killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  if printf '%s\n' "$$out" | grep -q "All [0-9]* obligations proved"; then echo "OK   TransportConnectionsProofs: $$(printf '%s\n' "$$out" | grep -o "All [0-9]* obligations proved")"; \
+	  else printf '%s\n' "$$out" | grep -B2 -A8 "ERROR\|failed" | head -40; echo "FAIL TransportConnectionsProofs: not every obligation proved"; exit 2; fi; \
+	  for c in $(CONN_PROOF_CTLS); do sw=$${c%%:*}; rest=$${c#*:}; want=$${rest%%:*}; act=$${rest##*:}; \
+	    dir="$(CTLDIR)/conn-$$sw"; mkdir -p "$$dir" && \
+	    sed "s/^\(Design == .*\)$$sw \/\\\\ /\1/" TransportConnections.tla > "$$dir/TransportConnections.tla" && \
+	    cp TransportConnectionsProofs.tla "$$dir/" && \
+	    ! cmp -s TransportConnections.tla "$$dir/TransportConnections.tla" || { echo "FAIL control: could not drop $$sw"; exit 2; }; \
+	    out=$$(cd "$$dir" && PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) TransportConnectionsProofs.tla 2>&1); \
+	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
+	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py TransportConnectionsProofs.tla); \
+	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
+	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
+
+persist: check-tools
+	$(call tlc_rows,$(PERSIST_ROWS))
+
+# TLAPS: CredsOnlyOwnerForgets for any bounds. Control: Design without KeepCreds must fail at
+# exactly the Timeout step (SpecSafe.<1>2.<2>3).
+persist-proofs:
+	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }
+	@path="$$PATH"; if ! ps -p $$$$ >/dev/null 2>&1; then mkdir -p "$(PSDIR)" && \
+	  printf '#!/bin/sh\necho "  PID  PPID   PID"\n' > "$(PSDIR)/ps" && chmod +x "$(PSDIR)/ps" && path="$(PSDIR):$$PATH"; fi; \
+	  out=$$(PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) PairingPersistenceProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL PairingPersistenceProofs: killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  if printf '%s\n' "$$out" | grep -q "All [0-9]* obligations proved"; then echo "OK   PairingPersistenceProofs: $$(printf '%s\n' "$$out" | grep -o "All [0-9]* obligations proved")"; \
+	  else printf '%s\n' "$$out" | grep -B2 -A8 "ERROR\|failed" | head -40; echo "FAIL PairingPersistenceProofs: not every obligation proved"; exit 2; fi; \
+	  dir="$(CTLDIR)/persist"; mkdir -p "$$dir" && \
+	  sed 's/^Design == KeepCreds \/\\ RestartOnTimeout$$/Design == RestartOnTimeout/' PairingPersistence.tla > "$$dir/PairingPersistence.tla" && \
+	  cp PairingPersistenceProofs.tla "$$dir/" && \
+	  ! cmp -s PairingPersistence.tla "$$dir/PairingPersistence.tla" || { echo "FAIL control: could not drop KeepCreds"; exit 2; }; \
+	  out=$$(cd "$$dir" && PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) PairingPersistenceProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL control (no KeepCreds): killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no KeepCreds): the proof still goes through"; exit 2; }; \
+	  got=$$(printf '%s\n' "$$out" | python3 proof-steps.py PairingPersistenceProofs.tla); \
+	  [ "$$got" = 'SpecSafe.<1>2.<2>3' ] || { echo "FAIL control (no KeepCreds): fails at '$$got', expected 'SpecSafe.<1>2.<2>3' (Timeout)"; exit 2; }; \
+	  echo "OK   control (no KeepCreds): fails at $$got (Timeout)"
 
 check-tools:
 	@test -x "$(JAVA)" || { echo 'Missing JDK at $(JAVA); set JAVA.' >&2; exit 1; }

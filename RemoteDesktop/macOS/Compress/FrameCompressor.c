@@ -241,6 +241,21 @@ int compress_frame(FrameCompressorState *state,
     size_t packedBytesPerRow = surfaceWidth * 4;
     uint8_t *packed_buf = NULL;
 
+    /* Every buffer here (reference, delta, packed rows, stripes) is sized for frame_bytes.
+     * A capture surface of any other size (live SCStream reconfigure on a transport switch,
+     * crash 2026-11-15 22:35 in delta_xor_update_range) would be read or packed out of
+     * bounds. Refuse it: nothing compressed, reference not flipped (same as any failure). */
+    if (packedBytesPerRow * surfaceHeight != bytes || surfaceBytesPerRow < packedBytesPerRow) {
+        static int sizeMismatchCount = 0;
+        sizeMismatchCount++;
+        if (sizeMismatchCount <= 10 || sizeMismatchCount % 120 == 0) {
+            os_log_error(fc_log(), "compress_frame: surface %zux%zu stride=%zu does not match compressor frameBytes=%zu, frame skipped count=%d",
+                         surfaceWidth, surfaceHeight, surfaceBytesPerRow, bytes, sizeMismatchCount);
+        }
+        IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+        return -2;
+    }
+
     if (surfaceBytesPerRow != packedBytesPerRow && surfaceHeight > 0) {
         /* Stride mismatch — pack rows into pre-allocated buffer (no malloc in hot path) */
         packed_buf = state->packed_buf;

@@ -3232,7 +3232,59 @@ final class DeviceTestRunner {
                         detail: "VULNERABLE (H1): \(issues.joined(separator: "; "))")
         }
 
-        runInputTests { [weak self] in self?.finishTests() }
+        runInputTests { [weak self] in
+            self?.runBandwidthProbe { self?.finishTests() }
+        }
+    }
+
+    // MARK: - Bandwidth probe (test mode, informational)
+    //
+    // The Mac pushes 64 KB filler messages over the live Wi-Fi TCP/TLS connection for 3 s,
+    // as fast as the connection takes them (SessionManager.m startBandwidthProbeMs). Arrivals
+    // are timed here; the Mac's reply follows the filler on the same stream, so it marks the
+    // end. The media stream keeps running beside the probe. Reported as [TEST] INFO, no threshold.
+
+    private var bwArrivals: [(UInt64, Int)] = []
+
+    /// Called on the transport queue for each filler message.
+    func noteBandwidthFiller(bytes: Int, atUs: UInt64) {
+        DispatchQueue.main.async { self.bwArrivals.append((atUs, bytes)) }
+    }
+
+    private func runBandwidthProbe(_ then: @escaping () -> Void) {
+        bwArrivals.removeAll()
+        print("[TEST] RUNNING: bw-probe")
+        inputControl(["cmd": "bw-probe", "ms": 3000], timeout: 30) { [weak self] r in
+            guard let self else { then(); return }
+            let a = self.bwArrivals
+            self.bwArrivals.removeAll()
+            guard let r, (r["bwProbe"] as? String) == "done", a.count >= 2 else {
+                print("[TEST] INFO: bw-probe: no result (reply=\(String(describing: r)) arrivals=\(a.count))")
+                then(); return
+            }
+            let t0 = a.first!.0, t1 = a.last!.0
+            let spanUs = max(Int64(t1) - Int64(t0), 1)
+            let total = a.reduce(0) { $0 + $1.1 }
+            let avgMbps = Double(total) * 8.0 / Double(spanUs)
+            var bins = [Int](repeating: 0, count: Int(spanUs / 100_000) + 1)
+            var maxGapUs: Int64 = 0
+            var prev = t0
+            for (t, b) in a {
+                bins[Int((Int64(t) - Int64(t0)) / 100_000)] += b
+                maxGapUs = max(maxGapUs, Int64(t) - Int64(prev))
+                prev = t
+            }
+            let rates = bins.map { Double($0) * 8.0 / 100_000.0 }.sorted()   // Mb/s per 100 ms bin
+            func q(_ p: Double) -> Double { rates[min(rates.count - 1, Int(p * Double(rates.count)))] }
+            let zero = bins.filter { $0 == 0 }.count
+            let macSent = (r["sentBytes"] as? Int) ?? 0
+            let macMs = (r["elapsedMs"] as? Int) ?? 0
+            print(String(format: "[TEST] INFO: bw-probe mac->ipad wifi-tcp: avg=%.1fMb/s bins100ms[p10/p50/p90/max]=%.1f/%.1f/%.1f/%.1fMb/s zeroBins=%d/%d maxGap=%.0fms bytes=%d span=%.0fms macSent=%d macMs=%d",
+                         avgMbps, q(0.1), q(0.5), q(0.9), rates.last ?? 0, zero, bins.count,
+                         Double(maxGapUs) / 1000.0, total, Double(spanUs) / 1000.0, macSent, macMs))
+            print("[CONSOLE] bw-probe bins100ms(KB)=\(bins.map { String($0 / 1000) }.joined(separator: ","))")
+            then()
+        }
     }
 
     // MARK: - Input E2E (tla/InputPath.tla)

@@ -22,6 +22,7 @@ static os_log_t sLog;
 
 /* State */
 @property (nonatomic, assign) TransportState currentTransportState;
+@property (nonatomic, assign) BOOL sessionStreaming;
 @property (nonatomic, assign) BOOL currentEcoMode;
 
 @end
@@ -160,34 +161,55 @@ static os_log_t sLog;
 }
 
 - (void)updateConnectionState:(TransportState)state {
-    _currentTransportState = state;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.currentTransportState = state;
+        [self renderConnectionState];
+    });
+}
+
+- (void)updateSessionStreaming:(BOOL)streaming {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.sessionStreaming = streaming;
+        [self renderConnectionState];
+    });
+}
+
+/* Main queue only. "Connected" means a session is streaming to the iPad, not just that
+ * a link is up: a USB cable or Wi-Fi alone says it is waiting for the iPad. */
+- (void)renderConnectionState {
     if (self.identityFailed) return;   /* fail-closed state stays visible */
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        switch (state) {
-            case TRANSPORT_USB_NCM:
-                self.connectionStateItem.title = @"Connected via USB NCM";
-                self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"cable.connector.horizontal"
-                                                        accessibilityDescription:@"Connected via USB"];
-                break;
-            case TRANSPORT_WIFI:
-                self.connectionStateItem.title = @"Connected via Wi-Fi";
-                self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"wifi"
-                                                        accessibilityDescription:@"Connected via Wi-Fi"];
-                break;
-            case TRANSPORT_AWDL:
-                self.connectionStateItem.title = @"Connected via AWDL";
-                self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"antenna.radiowaves.left.and.right"
-                                                        accessibilityDescription:@"Connected via AWDL"];
-                break;
-            case TRANSPORT_DISCONNECTED:
-            case TRANSPORT_IDLE:
-                self.connectionStateItem.title = @"Disconnected";
-                self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"rectangle.on.rectangle.slash"
-                                                        accessibilityDescription:@"Disconnected"];
-                break;
-        }
-    });
+    TransportState state = self.currentTransportState;
+    BOOL streaming = self.sessionStreaming;
+    NSString *title;
+    NSString *symbol;
+    switch (state) {
+        case TRANSPORT_USB_NCM:
+            title = streaming ? @"Connected via USB" : @"USB cable detected \u2014 waiting for iPad app";
+            symbol = @"cable.connector.horizontal";
+            break;
+        case TRANSPORT_WIFI:
+            title = streaming ? @"Connected via Wi-Fi" : @"Wi-Fi ready \u2014 waiting for iPad app";
+            symbol = @"wifi";
+            break;
+        case TRANSPORT_AWDL:
+            title = streaming ? @"Connected via AWDL" : @"AWDL ready \u2014 waiting for iPad app";
+            symbol = @"antenna.radiowaves.left.and.right";
+            break;
+        case TRANSPORT_DISCONNECTED:
+        case TRANSPORT_IDLE:
+        default:
+            title = @"Disconnected";
+            symbol = @"rectangle.on.rectangle.slash";
+            break;
+    }
+    if (!streaming) symbol = @"rectangle.on.rectangle.slash";
+    if ([self.connectionStateItem.title isEqualToString:title]) return;
+    os_log(sLog, "Menu bar connection: transport=%d streaming=%d -> \"%{public}@\"",
+           (int)state, (int)streaming, title);
+    self.connectionStateItem.title = title;
+    self.statusItem.button.image = [NSImage imageWithSystemSymbolName:symbol
+                                            accessibilityDescription:title];
 }
 
 - (void)updateMode:(BOOL)isEco {

@@ -1414,6 +1414,27 @@ static uint32_t KeydCRCForPixelBuffer(CVPixelBufferRef pixelBuffer) {
             return;
         }
 
+        /* A live reconfigure (updateCaptureResolution: Wi-Fi HEVC size -> USB viewport) does not
+         * resize the compressor. Resize it here, on the queue that owns it (the previous frame's
+         * compress has finished and the send copied its output), once a frame of the *current*
+         * capture size arrives. Stale frames of the old size are still skipped by compress_frame. */
+        size_t surfaceBytes = IOSurfaceGetWidth(surface) * IOSurfaceGetHeight(surface) * 4;
+        size_t captureBytes = (size_t)self.captureWidth * (size_t)self.captureHeight * 4;
+        if (surfaceBytes != self->_compressor.frame_bytes && surfaceBytes == captureBytes) {
+            size_t oldBytes = self->_compressor.frame_bytes;
+            frame_compressor_destroy(&self->_compressor);
+            if (frame_compressor_init_striped(&self->_compressor, surfaceBytes, kLZ4Stripes) != 0) {
+                self->_compressorInitialized = NO;
+                os_log_error(sc_log(), "LZ4 compressor resize failed: %zu -> %zu bytes (%zux%zu)",
+                             oldBytes, surfaceBytes, IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface));
+                OSAtomicDecrement32Barrier(&self->_lz4CompressPending);
+                CFRelease(sampleBuffer);
+                return;
+            }
+            os_log(sc_log(), "LZ4 compressor resized for live capture size: %zu -> %zu bytes (%zux%zu)",
+                   oldBytes, surfaceBytes, IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface));
+        }
+
         __block CompressOutput output;
         output.buf = self->_compressor.output.buf;
         output.buf_capacity = self->_compressor.output.buf_capacity;

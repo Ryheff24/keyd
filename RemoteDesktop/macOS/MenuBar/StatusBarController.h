@@ -25,6 +25,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)updateConnectionState:(TransportState)state;
 
 /**
+ * Update whether a session is streaming to the iPad. The menu says "Connected"
+ * only while streaming; a link without a session says it is waiting for the iPad.
+ */
+- (void)updateSessionStreaming:(BOOL)streaming;
+
+/**
  * Update the encode mode display.
  */
 - (void)updateMode:(BOOL)isEco;

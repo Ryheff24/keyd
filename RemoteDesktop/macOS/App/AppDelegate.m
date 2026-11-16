@@ -95,6 +95,9 @@ static NSString * _Nullable valueForArgument(NSArray<NSString *> *args, NSString
     _sessionManager.onTransportStateChanged = ^(TransportState state) {
         [weakBar updateConnectionState:state];
     };
+    _sessionManager.onSessionStateChanged = ^(SessionState state) {
+        [weakBar updateSessionStreaming:(state == SESSION_STREAMING)];
+    };
     _sessionManager.onModeChanged = ^(BOOL isEco) {
         [weakBar updateMode:isEco];
     };

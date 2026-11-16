@@ -340,20 +340,33 @@ final class SessionManager {
         state = .awaitingPairing
     }
 
-    /// Start a timeout for the .connecting state.
-    /// If we don't reach streaming within the timeout, the persisted pairing is stale
-    /// (e.g. Mac regenerated its TLS cert). Clear pairing and fall back to QR.
+    /// Start a timeout for the .connecting state (tla/PairingPersistence.tla, KeepCreds +
+    /// RestartOnTimeout). Not reaching the Mac is not evidence the pairing is stale (the agent
+    /// may simply not be running), so the timeout never deletes credentials; only the owner's
+    /// Reset Pairing does. Instead it restarts discovery, in case it stalled silently, and
+    /// re-arms itself. A link that is already up is left alone so a slow handshake can finish.
     private func startConnectingTimeout() {
         connectingTimeoutTimer?.invalidate()
         connectingTimeoutTimer = Timer.scheduledTimer(withTimeInterval: Self.connectingTimeout, repeats: false) { [weak self] _ in
-            guard let self = self, self.state == .connecting else { return }
-            print("[CONSOLE] Connecting timeout -- pairing likely stale, falling back to QR (usb=\(self.usbTransport.isConnected), wifi=\(self.wirelessTransport.isConnected), pairedHost=\(self.qrPairing.pairedHost ?? "nil"))")
-            Self.log.info("Connecting timeout expired -- resetting stale pairing (usb=\(self.usbTransport.isConnected), wifi=\(self.wirelessTransport.isConnected), pairedHostPresent=\((self.qrPairing.pairedHost?.isEmpty == false)))")
-            self.udpReassembler.resetForNewStreamSession(reason: "connecting-timeout")
-            self.usbTransport.stopMonitoring()
-            self.wirelessTransport.stopBrowsing()
-            self.qrPairing.resetPairing()
-            self.state = .awaitingPairing
+            guard let self = self else { return }
+            guard self.state == .connecting else {
+                print("[CONSOLE] Connecting timeout: state=\(self.state.rawValue), nothing to do")
+                return
+            }
+            let usbUp = self.usbTransport.isConnected
+            let wifiUp = self.wirelessTransport.isConnected
+            if usbUp || wifiUp {
+                print("[CONSOLE] Connecting timeout: link up but not streaming yet (usb=\(usbUp), wifi=\(wifiUp)) -- keeping pairing, re-arming")
+                Self.log.info("Connecting timeout: link up, not streaming yet; re-arming")
+            } else {
+                print("[CONSOLE] Connecting timeout: Mac not reached -- keeping pairing (pairedHost=\(self.qrPairing.pairedHost ?? "nil")), restarting discovery")
+                Self.log.info("Connecting timeout: Mac not reached; keeping pairing, restarting discovery")
+                self.udpReassembler.resetForNewStreamSession(reason: "connecting-timeout")
+                self.usbTransport.stopMonitoring()
+                self.wirelessTransport.stopBrowsing()
+                self.startTransportMonitoring()
+            }
+            self.startConnectingTimeout()
         }
     }
 
@@ -590,11 +603,12 @@ final class SessionManager {
         // This avoids the reconnect/backoff cycle and keeps streaming uninterrupted.
         if transition.state == .disconnected && state == .streaming {
             if wirelessTransport.isConnected {
-                print("[CONSOLE] Immediate WiFi fallback — WiFi still connected, switching directly")
+                let awdl = wirelessTransport.isAWDL
+                print("[CONSOLE] Immediate wireless fallback — wireless still connected (AWDL=\(awdl)), switching directly")
                 DispatchQueue.main.async {
                     self.hudViewModel.flashTransportChange(to: .disconnected)
                 }
-                handleTransportEvent(.wifiAvailable)
+                handleTransportEvent(awdl ? .awdlAvailable : .wifiAvailable)
                 return
             }
             if usbTransport.isConnected {
@@ -1112,6 +1126,9 @@ final class SessionManager {
         guard let header = InputEventHeader.parse(from: data) else { return }
 
         switch header.type {
+        case 0x28:  // KEYDRD_INPUT_TEST_FILLER (test mode bandwidth probe)
+            testRunner?.noteBandwidthFiller(bytes: data.count + 4, atUs: keydrdHostTimeUs())
+
         case 0x27:  // KEYDRD_INPUT_TEST_REPORT (test mode)
             testRunner?.reportInputTestReply(data)
 

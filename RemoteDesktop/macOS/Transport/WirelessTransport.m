@@ -25,6 +25,10 @@ static const uint64_t kPendingConnectionReplaceThresholdNs = 1500000000ULL;
 static const uint64_t kControlRecoveryPollIntervalNs = 750000000ULL;
 static const uint64_t kControlRecoveryHardDeadlineNs = 6000000000ULL;
 static const uint64_t kTransientMediaGapControlRecoveryGraceNs = 1500000000ULL;
+/* Link liveness (tla/TransportConnections.tla SilenceDetect): a heartbeat each second on the
+ * control connection; no byte from the iPad for the deadline means the link is lost. */
+static const uint64_t kLinkHeartbeatIntervalNs = 1000000000ULL;
+static const uint64_t kLinkSilenceDeadlineNs = 4000000000ULL;
 
 static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     if (newerTicks <= olderTicks) {
@@ -61,6 +65,9 @@ static BOOL keydrd_is_transient_dtls_gap(nw_error_t _Nullable detail) {
     BOOL _allowReconnectTakeover;         // allow replacing lingering input socket after disconnect
     BOOL _advertisingRequested;           // true while caller expects Bonjour advertising to stay active
     dispatch_block_t _Nullable _controlPathRecoveryWorkItem; // delayed control replacement evaluator
+    dispatch_source_t _Nullable _linkHeartbeatTimer;  // SilenceDetect heartbeat + deadline check
+    NSUInteger _linkHeartbeatsSent;
+    NSUInteger _linkHeartbeatsReceived;
     atomic_uint _queuedMediaChunks;        // paced UDP chunks waiting to be sent/completed
     atomic_ullong _sendGeneration;         // increments when media path resets; stale queued sends are discarded
     atomic_bool _mediaReady;               // SessionLanes FreshCheck: true only while the current media connection is ready
@@ -701,12 +708,14 @@ static bool wireless_include_peer_to_peer(void) {
                     const char *name = nw_interface_get_name(interface);
                     os_log(wireless_log(), "Connection interface: %{public}s (type=%d)",
                            name, (int)type);
-                    if (type == nw_interface_type_wifi) hasWiFi = YES;
-                    if (type == nw_interface_type_other) hasPeerToPeer = YES;
+                    /* awdl0 reports type wifi: only the name tells AWDL apart (ExactLabel,
+                     * tla/TransportConnections.tla). llw0 is low-latency Wi-Fi, also peer-to-peer. */
+                    BOOL p2p = name && (strncmp(name, "awdl", 4) == 0 || strncmp(name, "llw", 3) == 0);
+                    if (p2p) hasPeerToPeer = YES;
+                    else if (type == nw_interface_type_wifi) hasWiFi = YES;
                     return true;
                 });
 
-                /* AWDL connections show up as type_other; Wi-Fi as type_wifi */
                 detectedAWDL = hasPeerToPeer && !hasWiFi;
             }
 
@@ -717,6 +726,7 @@ static bool wireless_include_peer_to_peer(void) {
             self2->_lastInputActivityTicks = self2->_inputReadyAtTicks;
             [self2 cancelControlPathRecoveryWithReason:"tcp-ready"];
             os_log(wireless_log(), "TLS wireless connection ready (AWDL=%d)", detectedAWDL);
+            [self2 startLinkHeartbeatForConnection:connection];
 
             if (self2->_bonjourListener) {
                 os_log(wireless_log(),
@@ -1072,7 +1082,13 @@ static bool wireless_include_peer_to_peer(void) {
                     nw_connection_cancel(connection);
                     return;
                 }
-                if (self2.onInputReceived) {
+                if (plen >= 1 && payload[0] == KEYDRD_LINK_HEARTBEAT) {
+                    self2->_linkHeartbeatsReceived++;
+                    if (self2->_linkHeartbeatsReceived <= 3 || self2->_linkHeartbeatsReceived % 60 == 0) {
+                        os_log(wireless_log(), "Link heartbeat received count=%lu",
+                               (unsigned long)self2->_linkHeartbeatsReceived);
+                    }
+                } else if (self2.onInputReceived) {
                     self2.onInputReceived(payload, plen);
                 }
                 off += consumed;
@@ -1203,10 +1219,93 @@ static bool wireless_include_peer_to_peer(void) {
                    evaluator);
 }
 
+#pragma mark - Private: Link liveness (tla/TransportConnections.tla SilenceDetect)
+
+- (void)startLinkHeartbeatForConnection:(nw_connection_t)connection {
+    [self stopLinkHeartbeatWithReason:"restart"];
+    _linkHeartbeatsSent = 0;
+    _linkHeartbeatsReceived = 0;
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _transportQueue);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)kLinkHeartbeatIntervalNs),
+                              kLinkHeartbeatIntervalNs, kLinkHeartbeatIntervalNs / 10);
+    __weak WirelessTransport *weakSelf = self;
+    /* Strong capture: the timer is cancelled on every stop, which releases the connection. */
+    dispatch_source_set_event_handler(timer, ^{
+        WirelessTransport *self2 = weakSelf;
+        if (!self2) return;
+        [self2 linkHeartbeatTickForConnection:connection];
+    });
+    _linkHeartbeatTimer = timer;
+    dispatch_resume(timer);
+    os_log(wireless_log(), "Link heartbeat started intervalMs=%llu deadlineMs=%llu",
+           kLinkHeartbeatIntervalNs / 1000000ULL, kLinkSilenceDeadlineNs / 1000000ULL);
+}
+
+- (void)stopLinkHeartbeatWithReason:(const char *)reason {
+    if (!_linkHeartbeatTimer) return;
+    dispatch_source_cancel(_linkHeartbeatTimer);
+    _linkHeartbeatTimer = nil;
+    os_log(wireless_log(), "Link heartbeat stopped reason=%{public}s sent=%lu received=%lu",
+           reason, (unsigned long)_linkHeartbeatsSent, (unsigned long)_linkHeartbeatsReceived);
+}
+
+- (void)linkHeartbeatTickForConnection:(nw_connection_t _Nullable)connection {
+    if (!connection || _inputConnection != connection || !_isConnected || _lastInputActivityTicks == 0) {
+        [self stopLinkHeartbeatWithReason:"connection-not-current"];
+        return;
+    }
+    uint64_t silentNs = keydrd_mach_delta_ns(mach_absolute_time(), _lastInputActivityTicks);
+    if (silentNs >= kLinkSilenceDeadlineNs) {
+        [self handleSilentLinkLossAfterNs:silentNs];
+        return;
+    }
+    uint8_t beat[9] = { KEYDRD_LINK_HEARTBEAT };
+    uint64_t ticks = mach_absolute_time();
+    memcpy(beat + 1, &ticks, sizeof ticks);
+    [self sendInputEvent:beat length:sizeof beat];
+    _linkHeartbeatsSent++;
+    if (silentNs >= 2 * kLinkHeartbeatIntervalNs) {
+        os_log(wireless_log(), "Link quiet silentMs=%llu deadlineMs=%llu AWDL=%d",
+               silentNs / 1000000ULL, kLinkSilenceDeadlineNs / 1000000ULL, _isAWDL);
+    }
+}
+
+/* A connection that delivers no byte for the deadline is lost, whatever TCP thinks: drop input and
+ * media, end the session (STREAMING -> RECONNECTING), and advertise for the iPad's redial. */
+- (void)handleSilentLinkLossAfterNs:(uint64_t)silentNs {
+    BOOL wasAWDL = _isAWDL;
+    os_log_error(wireless_log(),
+                 "Link silent decision=lost silentMs=%llu deadlineMs=%llu AWDL=%d heartbeatsSent=%lu heartbeatsReceived=%lu action=drop-and-advertise",
+                 silentNs / 1000000ULL, kLinkSilenceDeadlineNs / 1000000ULL, wasAWDL,
+                 (unsigned long)_linkHeartbeatsSent, (unsigned long)_linkHeartbeatsReceived);
+    [self stopLinkHeartbeatWithReason:"silent"];
+    [self cancelControlPathRecoveryWithReason:"link-silent"];
+    nw_connection_t staleMedia = _mediaConnection;
+    atomic_store(&_mediaReady, false);
+    _mediaConnection = nil;
+    if (staleMedia) nw_connection_cancel(staleMedia);
+    nw_connection_t staleInput = _inputConnection;
+    _inputConnection = nil;
+    if (staleInput) nw_connection_cancel(staleInput);
+    _allowReconnectTakeover = NO;
+    _inputAcceptedAtTicks = 0;
+    _inputReadyAtTicks = 0;
+    _lastInputActivityTicks = 0;
+    _isConnected = NO;
+    _isAWDL = NO;
+    if (self.onConnectionChanged) {
+        self.onConnectionChanged(NO, wasAWDL);
+    }
+    if (_advertisingRequested && !_bonjourListener) {
+        [self startAdvertising];
+    }
+}
+
 #pragma mark - Private: Teardown
 
 - (void)tearDownConnections {
     [self cancelControlPathRecoveryWithReason:"tearDownConnections"];
+    [self stopLinkHeartbeatWithReason:"teardown"];
     [self resetSendPacing];
     if (_mediaListener) {
         nw_listener_cancel(_mediaListener);
