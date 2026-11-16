@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `50.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.997` | `0.011` | `0.007` | ❌ |
+| FPS | `49.8 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.157` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `34 ms` | `7 ms` | `6 ms` | ❌ |
 | Pipeline latency p95 | `137 ms` | `8 ms` | `7 ms` | ❌ |
 | Pipeline latency avg | `51 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `55 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency median | `54 ms` | `23 ms` | `20 ms` | ❌ |
 | Glass-to-glass latency p95 | `151 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `70 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `57.2 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Glass-to-glass latency avg | `69 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `55.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
 | Heavy-load pipeline median | `30 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `47 ms` | `8 ms` | `7 ms` | ❌ |
+| Heavy-load pipeline p95 | `52 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `85.1%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `83.0%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -172,3 +172,4 @@ Rules:
 | 2026-11-16 | 17:50:47 EST | `6222ff7` | `2752x1786` | `2496x1620` | `50.4 fps` | `0.974` | `35/141/51 ms` | `55/158/70 ms` | `51.3 fps, 29/86 ms` | `1` | `39/47` | background-recovery phase baseline: UI test Home 15s + strict analyser; expect infra pin + decode refusal |
 | 2026-11-16 | 18:09:28 EST | `6217c48` | `2752x1786` | `2496x1620` | `51.2 fps` | `0.846` | `34/135/49 ms` | `54/151/68 ms` | `56.3 fps, 29/57 ms` | `1` | `40/47` | CauseAware: loss spanning a suspension no longer sets avoidAWDL; resume past 4s drops+redials at once |
 | 2026-11-16 | 18:16:12 EST | `88c850e` | `2752x1786` | `2496x1620` | `50.6 fps` | `0.997` | `34/137/51 ms` | `55/151/70 ms` | `57.2 fps, 30/47 ms` | `1` | `40/47` | CauseAware rerun: UI-test runner retries once on automation-mode timeout |
+| 2026-11-16 | 18:23:04 EST | `36f8446` | `2752x1786` | `2496x1620` | `49.8 fps` | `1.157` | `34/137/51 ms` | `54/151/69 ms` | `55.0 fps, 30/52 ms` | `1` | `39/47` | HEVC decoder: rebuild session and resubmit a refused keyframe once (after background) |
