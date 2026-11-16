@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `50.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.187` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `36 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `135 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `49 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `56 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `143 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `67 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `52.1 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `37 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `137 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `53.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.982` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `32 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `91 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `41 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `52 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `100 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `60 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `56.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `29 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `52 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `78.3%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `87.0%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -157,3 +157,4 @@ Rules:
 | 2026-11-16 | 00:39:38 EST | `1247cc4` | `2752x1786` | `2496x1620` | `40.1 fps` | `1.283` | `57/167/75 ms` | `68/184/92 ms` | `42.7 fps, 50/127 ms` | `1` | `39/46` | Wi-Fi ack gate depth 3 -> 5 (slow windows were capped at 3/RTT); 60fps, fixed 10 Mbps |
 | 2026-11-16 | 00:49:36 EST | `251f328` | `2752x1786` | `2496x1620` | `42.6 fps` | `1.241` | `42/149/66 ms` | `60/165/83 ms` | `42.7 fps, 46/129 ms` | `1` | `39/46` | Diagnostic: --no-peer-to-peer, same build as 1247cc4; does our AWDL use drive the 512 TU iPad rx holds? |
 | 2026-11-16 | 01:04:35 EST | `565c38c` | `2752x1786` | `2496x1620` | `50.4 fps` | `1.187` | `36/135/49 ms` | `56/143/67 ms` | `52.1 fps, 37/137 ms` | `1` | `36/46` | Diagnostic: --awdl-only (infra prohibited); do AWDL frames flow in the 512 TU infra holds? gate 5, 10 Mbps |
+| 2026-11-16 | 01:20:12 EST | `5dd5a0f` | `2752x1786` | `2496x1620` | `53.6 fps` | `0.982` | `32/91/41 ms` | `52/100/60 ms` | `56.0 fps, 29/52 ms` | `1` | `40/46` | AWDL-first wireless (AwdlFirst; infra Wi-Fi prohibited on AWDL dial), infra fallback; gate 5, 10 Mbps |
