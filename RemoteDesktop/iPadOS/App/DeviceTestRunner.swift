@@ -2439,6 +2439,7 @@ final class DeviceTestRunner {
     private static let backgroundFirstFrameGoalMs = 250.0
     private static let backgroundRecoverGoalMs = 1000.0
     private static let backgroundSteadyRatioGoal = 0.9
+    private static let backgroundRecoverHoldSec = 3.0
     private var backgroundRecoveryStarted = false
     private var bgPhase: BackgroundPhase = .idle
     private var bgFrameTimestamps: [CFAbsoluteTime] = []
@@ -2552,14 +2553,28 @@ final class DeviceTestRunner {
         let after = stamps.filter { $0 >= resumed && $0 < resumed + window }
         let firstFrameMs: Double? = after.first.map { ($0 - resumed) * 1000.0 }
 
-        // First 1 s window (starting at a frame) holding >= 90% of the pre-background rate.
+        // Recovered: the first frame from which EVERY 1 s window starting in the next
+        // backgroundRecoverHoldSec holds >= 90% of the reference rate. A single 1 s window is
+        // not enough: the catch-up burst right after the first key can reach it and then sag
+        // for seconds (bg8: 42,28,20,22,19,20,34 fps passed as "recovered at 293 ms").
         let target = Int((preFPS * Self.backgroundSteadyRatioGoal).rounded(.up))
-        var recoverMs: Double?
+        var windowCount = [Int](repeating: 0, count: after.count)
         var j = 0
         for i in 0..<after.count {
             if j < i { j = i }
             while j < after.count && after[j] < after[i] + 1.0 { j += 1 }
-            if j - i >= target { recoverMs = (after[i] - resumed) * 1000.0; break }
+            windowCount[i] = (after[i] + 1.0 <= resumed + window) ? j - i : Int.max
+        }
+        var recoverMs: Double?
+        var holdEnd = 0
+        for i in 0..<after.count {
+            if holdEnd < i { holdEnd = i }
+            while holdEnd < after.count && after[holdEnd] <= after[i] + Self.backgroundRecoverHoldSec { holdEnd += 1 }
+            if after[i] + Self.backgroundRecoverHoldSec + 1.0 > resumed + window { break }
+            if windowCount[i..<holdEnd].allSatisfy({ $0 >= target }) {
+                recoverMs = (after[i] - resumed) * 1000.0
+                break
+            }
         }
 
         var perSecond = [Int](repeating: 0, count: Int(window))
@@ -2600,16 +2615,16 @@ final class DeviceTestRunner {
             issues.append("no frame within \(Int(window))s")
         }
         if let r = recoverMs {
-            if r > Self.backgroundRecoverGoalMs { issues.append("recovery \(Int(r))ms > \(Int(Self.backgroundRecoverGoalMs))ms") }
+            if r > Self.backgroundRecoverGoalMs { issues.append("recovery (90% held \(Int(Self.backgroundRecoverHoldSec))s) \(Int(r))ms > \(Int(Self.backgroundRecoverGoalMs))ms") }
         } else {
-            issues.append("never reached \(target) fps in 1s (90% of pre \(String(format: "%.1f", preFPS)))")
+            issues.append("never held \(target) fps per 1s for \(Int(Self.backgroundRecoverHoldSec))s (90% of ref \(String(format: "%.1f", preFPS)))")
         }
         if steadyRatio < Self.backgroundSteadyRatioGoal {
             issues.append("steady \(String(format: "%.1f", steadyFPS))fps = \(Int(steadyRatio * 100))% of pre \(String(format: "%.1f", preFPS))fps")
         }
         if flFails > 0 { issues.append("decode refusals after resume \(flFails) (FL IpadFail)") }
 
-        var detail = "state@home=\(bgStateBefore) away=\(String(format: "%.1f", resumed - entered))s link[before/final]=\(bgLinkBefore)/\(finalLink) linkSeconds=\(linkSeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")) firstFrame=\(firstFrameMs.map { "\(Int($0))ms" } ?? "none") (goal <=\(Int(Self.backgroundFirstFrameGoalMs))ms) recover90=\(recoverMs.map { "\(Int($0))ms" } ?? "never") (goal <=\(Int(Self.backgroundRecoverGoalMs))ms) fps[ref(pre5s,sustained)/steady]=\(String(format: "%.1f", preFPS))(\(String(format: "%.1f", preWindowFPS)),\(String(format: "%.1f", sustainedStreamAvgFPS)))/\(String(format: "%.1f", steadyFPS)) (goal steady >=90% pre) worst1s=\(perSecond.min() ?? 0) maxGap=\(Int(maxGapMs))ms perSecond=\(perSecond.map(String.init).joined(separator: ",")) flFail[afterResume/whileAway]=\(flFails)/\(flFailsAway) decodeFail=\(decodeFails) stateDrops=\(bgStateDrops)"
+        var detail = "state@home=\(bgStateBefore) away=\(String(format: "%.1f", resumed - entered))s link[before/final]=\(bgLinkBefore)/\(finalLink) linkSeconds=\(linkSeconds.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: ",")) firstFrame=\(firstFrameMs.map { "\(Int($0))ms" } ?? "none") (goal <=\(Int(Self.backgroundFirstFrameGoalMs))ms) recover90held3s=\(recoverMs.map { "\(Int($0))ms" } ?? "never") (goal <=\(Int(Self.backgroundRecoverGoalMs))ms) fps[ref(pre5s,sustained)/steady]=\(String(format: "%.1f", preFPS))(\(String(format: "%.1f", preWindowFPS)),\(String(format: "%.1f", sustainedStreamAvgFPS)))/\(String(format: "%.1f", steadyFPS)) (goal steady >=90% pre) worst1s=\(perSecond.min() ?? 0) maxGap=\(Int(maxGapMs))ms perSecond=\(perSecond.map(String.init).joined(separator: ",")) flFail[afterResume/whileAway]=\(flFails)/\(flFailsAway) decodeFail=\(decodeFails) stateDrops=\(bgStateDrops)"
         if !issues.isEmpty { detail += " [ISSUES: \(issues.joined(separator: ", "))]" }
         recordResult(name: "background-recovery", passed: issues.isEmpty, detail: detail)
         runSecurityTests()

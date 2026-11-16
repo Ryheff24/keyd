@@ -34,6 +34,8 @@
 #                                 devicectl brings Settings to the front, waits, reactivates the app;
 #                                 no UI automation, so no passcode prompt on the iPad)
 #   --background-seconds N        Time the app stays in the background in that phase (default 15)
+#   --background-app BUNDLE_ID    App brought to the front to background ours (default com.apple.calculator;
+#                                 Settings can open on its Wi-Fi page, whose scanning disturbs AWDL)
 #   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
 #
@@ -73,6 +75,7 @@ SUSTAINED_STREAM_SECONDS="90"
 SKIP_TRANSPORT_ROTATION=false
 BACKGROUND_CYCLE=auto
 BACKGROUND_SECONDS=15
+BACKGROUND_APP=com.apple.calculator
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
@@ -132,6 +135,8 @@ while [[ $# -gt 0 ]]; do
       BACKGROUND_CYCLE=false; shift ;;
     --background-seconds)
       BACKGROUND_SECONDS="$2"; shift 2 ;;
+    --background-app)
+      BACKGROUND_APP="$2"; shift 2 ;;
     --no-peer-to-peer)
       # Diagnostic: both apps stop including peer-to-peer (AWDL) interfaces.
       NO_PEER_TO_PEER=true; shift ;;
@@ -900,13 +905,15 @@ fi
 # background-recovery: no UI automation (XCUITest needs the iPad passcode to enable automation
 # mode on each run). devicectl brings another app to the front, which backgrounds ours (same
 # process, suspended), then launches ours without --terminate-existing, which reactivates it.
+now_ms() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03d", strftime("%H:%M:%S", localtime $t), ($t * 1000) % 1000'; }
+
 background_cycle() {
-  echo "[CONSOLE] e2e-bgcycle entry away=${BACKGROUND_SECONDS}s $(date '+%H:%M:%S.%3N')"
-  xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" com.apple.Preferences 2>&1 | tail -1
-  echo "[CONSOLE] e2e-bgcycle backgrounded $(date '+%H:%M:%S.%3N')"
+  echo "[CONSOLE] e2e-bgcycle entry away=${BACKGROUND_SECONDS}s app=${BACKGROUND_APP} $(now_ms)"
+  xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" "$BACKGROUND_APP" 2>&1 | tail -1
+  echo "[CONSOLE] e2e-bgcycle backgrounded $(now_ms)"
   sleep "$BACKGROUND_SECONDS"
   xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" com.ryheff.keyd.remote.app 2>&1 | tail -1
-  echo "[CONSOLE] e2e-bgcycle reactivated $(date '+%H:%M:%S.%3N')"
+  echo "[CONSOLE] e2e-bgcycle reactivated $(now_ms)"
 }
 
 start_async_index "run-e2e-tests.sh"
