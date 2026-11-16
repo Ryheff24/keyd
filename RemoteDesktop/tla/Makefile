@@ -23,9 +23,9 @@ TLAPM_FLAGS ?= --method smt,zenon --threads 2 --stretch 3
 PSDIR ?= $(JTMP)/keyd-tlapm-path
 CTLDIR ?= $(JTMP)/keyd-tlaps-ctl
 
-.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs
+.PHONY: verify check-tools syntax pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs
 
-verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs
+verify: pairing pairing-proofs secure secure-proofs transport transport-proofs delta stripe frame framing custody input lanes persist persist-proofs conn conn-proofs sendloop sendloop-proofs
 
 # PairingPersistence (2026-11-15): the iPad's 8 s connecting timeout deleted its credentials
 # whenever the Mac was unreachable (hardware 22:38). Design: keep credentials, restart discovery
@@ -80,6 +80,50 @@ conn-proofs:
 	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
 	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
 	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py TransportConnectionsProofs.tla); \
+	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
+	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
+
+# WiFiSendLoop (2026-11-15): the Mac's Wi-Fi HEVC send gate counts nw send completions, which
+# fire when the kernel takes the bytes (run 8148018: p50 1 ms) while the iPad gets them p90 161 ms
+# later; post-encode drops leave seq gaps, each asks for a keyframe, and the stall reset zeroes the
+# count without draining. Design: gate on iPad acks, never drop after encode, no blind reset.
+WSL_ROWS = WiFiSendLoop:WiFiSendLoop.cfg:pass \
+	WiFiSendLoop:cfg/WSL-design-big.cfg:pass \
+	WiFiSendLoop:cfg/WSL-asbuilt.cfg:QueueBounded \
+	WiFiSendLoop:cfg/WSL-asbuilt-gap.cfg:NoGap \
+	WiFiSendLoop:cfg/WSL-asbuilt-kf.cfg:OneKeyframe \
+	WiFiSendLoop:cfg/WSL-asbuilt-flows.cfg:Temporal \
+	WiFiSendLoop:cfg/WSL-ctl-ackgate.cfg:QueueBounded \
+	WiFiSendLoop:cfg/WSL-ctl-postdrop.cfg:NoGap \
+	WiFiSendLoop:cfg/WSL-ctl-reset.cfg:OneKeyframe \
+	WiFiSendLoop:cfg/WSL-witness.cfg:NeverShows
+
+sendloop: check-tools
+	$(call tlc_rows,$(WSL_ROWS))
+
+# TLAPS: QueueBounded, NoGap and the keyframe bound for any bounds. Controls: without AckGate the
+# gate check (Capture <3>3) and the ack bookkeeping (EncodeOut, Deliver) fail; without NoPostDrop,
+# EncodeOut's ~PostDrop (<2>2.<3>5); without NoBlindReset, StallReset (<2>6).
+WSL_PROOF_CTLS = 'AckGate:SpecSafe.<1>2.<2>1.<3>3 SpecSafe.<1>2.<2>2.<3>QED SpecSafe.<1>2.<2>8.<3>QED:Capture' \
+	'NoPostDrop:SpecSafe.<1>2.<2>2.<3>5:EncodeOut' 'NoBlindReset:SpecSafe.<1>2.<2>6:StallReset'
+
+sendloop-proofs:
+	@test -x "$(TLAPM)" || { echo 'Missing tlapm at $(TLAPM); set TLAPM.' >&2; exit 1; }
+	@path="$$PATH"; if ! ps -p $$$$ >/dev/null 2>&1; then mkdir -p "$(PSDIR)" && \
+	  printf '#!/bin/sh\necho "  PID  PPID   PID"\n' > "$(PSDIR)/ps" && chmod +x "$(PSDIR)/ps" && path="$(PSDIR):$$PATH"; fi; \
+	  out=$$(PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) WiFiSendLoopProofs.tla 2>&1); \
+	  [ $$? != 124 ] || { echo "FAIL WiFiSendLoopProofs: killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	  if printf '%s\n' "$$out" | grep -q "All [0-9]* obligations proved"; then echo "OK   WiFiSendLoopProofs: $$(printf '%s\n' "$$out" | grep -o "All [0-9]* obligations proved")"; \
+	  else printf '%s\n' "$$out" | grep -B2 -A8 "ERROR\|failed" | head -40; echo "FAIL WiFiSendLoopProofs: not every obligation proved"; exit 2; fi; \
+	  for c in $(WSL_PROOF_CTLS); do sw=$${c%%:*}; rest=$${c#*:}; want=$${rest%%:*}; act=$${rest##*:}; \
+	    dir="$(CTLDIR)/wsl-$$sw"; mkdir -p "$$dir" && \
+	    sed "s/^\(Design == .*\)$$sw \/\\\\ /\1/" WiFiSendLoop.tla > "$$dir/WiFiSendLoop.tla" && \
+	    cp WiFiSendLoopProofs.tla "$$dir/" && \
+	    ! cmp -s WiFiSendLoop.tla "$$dir/WiFiSendLoop.tla" || { echo "FAIL control: could not drop $$sw"; exit 2; }; \
+	    out=$$(cd "$$dir" && PATH="$$path" $(BOUNDED) $(PROOF_SECONDS) "$(TLAPM)" $(TLAPM_FLAGS) WiFiSendLoopProofs.tla 2>&1); \
+	    [ $$? != 124 ] || { echo "FAIL control (no $$sw): killed after $(PROOF_SECONDS)s"; exit 2; }; \
+	    printf '%s\n' "$$out" | grep -q "obligations failed" || { echo "FAIL control (no $$sw): the proof still goes through"; exit 2; }; \
+	    got=$$(printf '%s\n' "$$out" | python3 proof-steps.py WiFiSendLoopProofs.tla); \
 	    [ "$$got" = "$$want" ] || { echo "FAIL control (no $$sw): fails at '$$got', expected '$$want' ($$act)"; exit 2; }; \
 	    echo "OK   control (no $$sw): fails at $$got ($$act)"; done
 

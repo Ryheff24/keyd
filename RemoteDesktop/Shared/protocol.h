@@ -56,6 +56,10 @@ _Static_assert(sizeof(MediaFrameHeader) == 25,
 #define KEYDRD_LINK_HEARTBEAT             0x31  /* both ways on the wireless control connection, every 1 s:
                                                  * link liveness; consumed by the transport, never
                                                  * delivered (tla/TransportConnections.tla SilenceDetect) */
+#define KEYDRD_INPUT_FRAME_ACK            0x32  /* iPad -> Mac on the wireless input connection: u16 LE seq of
+                                                 * the newest HEVC frame fully received (cumulative). The Mac
+                                                 * encodes only while sent-but-unacked frames < limit
+                                                 * (tla/WiFiSendLoop.tla AckGate). */
 #define KEYDRD_INPUT_CLOCK_SYNC_REQ       0xFE  /* iPad -> Mac: Cristian's algorithm probe */
 #define KEYDRD_INPUT_CLOCK_SYNC_RESP      0xFD  /* Mac -> iPad: clock sync response */
 #define KEYDRD_INPUT_LATENCY_PROBE        0xFF

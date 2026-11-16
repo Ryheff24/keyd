@@ -106,19 +106,17 @@ static const uint64_t kWirelessPacingToleranceUs = 1500;         /* tolerate sou
 /* Maximum in-flight TCP sends for Wi-Fi media path.
  * Bounds kernel queue depth to avoid stale-frame tail latency and jitter. */
 static const int32_t kMaxMediaSendsInFlightWiFi = 3;
+/* Wi-Fi ack gate (tla/WiFiSendLoop.tla AckGate). A send completion only means the kernel took the
+ * bytes (run 8148018: completion p50 1 ms after submit, iPad last byte p90 161 ms after completion),
+ * so the in-flight count above never sees the socket queue. Once the iPad acknowledges frames
+ * (KEYDRD_INPUT_FRAME_ACK), a capture is encoded only while sent-but-unacked frames < this. */
+static const int32_t kWiFiAckGateFrames = 3;
 /* Completion latency above this indicates kernel/network backlog in Wi-Fi TCP path. */
 static const uint64_t kWirelessTCPSlowCompletionThresholdMs = 25;
-/* Keyframe request cooldown after Wi-Fi TCP backpressure drops.
- * Prevents request spam during a short burst while still reducing
- * recovery dwell time when a rare send-side sequence hole occurs. */
-static const uint64_t kWirelessTCPDropKeyframeCooldownMs = 120;
-/* Detect and recover from Wi-Fi TCP in-flight saturation stalls where
- * completion callbacks stop draining and pre-encode gate starves source frames. */
-static const uint64_t kWirelessTCPStallSaturationThresholdMs = 320;
-static const uint64_t kWirelessTCPStallNoCompletionThresholdMs = 260;
-static const uint64_t kWirelessTCPStallRecoveryCooldownMs = 1200;
+/* The post-encode drop with its keyframe request and the in-flight stall reset are gone
+ * (tla/WiFiSendLoop.tla NoPostDrop, NoBlindReset). The adaptive controller still reads the
+ * last stall-recovery time, which now stays 0. */
 static const uint64_t kWirelessTCPPostRecoveryAdaptiveHoldMs = 2600;
-static const uint64_t kWirelessTCPStallLogIntervalMs = 500;
 /* Burst-window send scheduler shaping for Wi-Fi TCP media path.
  * Spaces clustered enqueue bursts to reduce completion tail spikes without
  * lowering fidelity, resolution, or steady-state frame cadence. */
@@ -230,7 +228,8 @@ static void lane_report(const char *lane, const char *what, int type, uint64_t s
 
 /* tla/SessionLanes.tla RT set: messages handled inline on the transport queue. Each is
  * O(1) and touches no session state: pointer/key go to the injector's own queue, probes
- * and clock sync echo at once, keepalive is a no-op, test control drives the test window.
+ * and clock sync echo at once, keepalive is a no-op, test control drives the test window,
+ * a Wi-Fi frame ack moves the ack gate under its own lock (tla/WiFiSendLoop.tla).
  * Everything else is forwarded, in arrival order, to the session queue. */
 static BOOL session_lane_is_realtime(uint8_t type) {
     if ([InputInjector isInputMessageType:type]) return YES;
@@ -239,6 +238,7 @@ static BOOL session_lane_is_realtime(uint8_t type) {
         case KEYDRD_INPUT_CLOCK_SYNC_REQ:
         case KEYDRD_INPUT_KEEPALIVE:
         case KEYDRD_INPUT_TEST_CONTROL:
+        case KEYDRD_INPUT_FRAME_ACK:
             return YES;
         default:
             return NO;
@@ -412,11 +412,26 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 - (void)resetWiFiAdaptiveControlState;
 - (void)evaluateWiFiAdaptiveRateControl;
 - (void)applyWiFiAdaptiveRateTargetsIfNeededWithReason:(NSString *)reason nowUs:(uint64_t)nowUs;
-- (BOOL)maybeRecoverWiFiTCPInFlightStallWithInFlight:(int32_t)inFlight nowUs:(uint64_t)nowUs reason:(const char *)reason;
 
 @end
 
-@implementation SessionManager
+@implementation SessionManager {
+    /* Wi-Fi ack gate (tla/WiFiSendLoop.tla AckGate), guarded by _wifiAckLock. */
+    os_unfair_lock _wifiAckLock;
+    BOOL _wifiAckActive;          /* an ack arrived on this connection: gate on unacked frames */
+    BOOL _wifiAckHasSent;
+    uint16_t _wifiAckLastSentSeq;
+    uint16_t _wifiAckLastAckedSeq;
+    uint64_t _wifiAckSendUs[256]; /* send time by seq & 0xFF, for ack RTT */
+    /* per 1 s perf window, under _wifiAckLock */
+    int32_t _wifiPerfAcks;
+    int32_t _wifiPerfAckStale;
+    int32_t _wifiPerfAckGateHolds;
+    int32_t _wifiPerfAckUnackedPeak;
+    int32_t _wifiPerfAckRttSamples;
+    uint64_t _wifiPerfAckRttTotalUs;
+    uint64_t _wifiPerfAckRttMaxUs;
+}
 
 - (instancetype)initWithTestMode:(BOOL)testMode
                   automationMode:(BOOL)automationMode
@@ -1063,6 +1078,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 
 - (void)switchToHEVCMode {
     os_log(sLog, "Switching to HEVC mode (encoder deferred until iPad viewport report)");
+    [self wifiAckResetWithReason:"hevc-mode"];
 
     if (_compressorInitialized) {
         FrameCompressorState state = _compressorState;
@@ -1131,6 +1147,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     _wifiTCPSchedulerLastSubmitUs = 0;
     _wifiTCPSchedulerWindowSendCount = 0;
     _wifiTCPSendGeneration += 1;
+    [self wifiAckResetWithReason:"transport-connected"];
     _wirelessLastEncodeSubmitUs = 0;
     [self resetWiFiAdaptiveControlState];
     [self stopWirelessPerformanceTimer];
@@ -1399,27 +1416,33 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                         }
                         return;
                     }
-                    if (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi) {
-                        [strongSelf maybeRecoverWiFiTCPInFlightStallWithInFlight:tcpInFlightNow
-                                                                            nowUs:nowUs
-                                                                           reason:"pre-encode-gate"];
-                        tcpInFlightNow = strongSelf->_wifiTCPMediaSendsInFlight;
-                    }
-                    if (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi) {
+                    /* No stall reset (tla/WiFiSendLoop.tla NoBlindReset): the count falls only when
+                     * frames leave. With acks the gate counts frames the iPad has not received
+                     * (AckGate); before the first ack, the kernel in-flight count. */
+                    int32_t ackUnacked = [strongSelf wifiAckUnackedFrames];
+                    BOOL gateClosed = ackUnacked >= 0 ? (ackUnacked >= kWiFiAckGateFrames)
+                                                      : (tcpInFlightNow >= kMaxMediaSendsInFlightWiFi);
+                    if (gateClosed) {
                         OSAtomicIncrement32Barrier(&strongSelf->_wifiPerfPreEncodeDrops);
                         static int wifiTCPPreEncodeDropCount = 0;
                         wifiTCPPreEncodeDropCount++;
                         if (wifiTCPPreEncodeDropCount <= 10 || wifiTCPPreEncodeDropCount % 100 == 0) {
-                            os_log(sLog, "WiFi pre-encode drop: reason=tcp-backpressure inFlight=%d limit=%d totalDropped=%d",
+                            os_log(sLog, "WiFi pre-encode drop: reason=%{public}s unacked=%d ackLimit=%d inFlight=%d limit=%d totalDropped=%d",
+                                   ackUnacked >= 0 ? "ack-gate" : "tcp-backpressure",
+                                   ackUnacked, kWiFiAckGateFrames,
                                    tcpInFlightNow, kMaxMediaSendsInFlightWiFi, wifiTCPPreEncodeDropCount);
+                        }
+                        if (ackUnacked >= 0) {
+                            [strongSelf wifiAckNoteGateHold];
                         }
                         return;
                     }
                     static int wifiTCPPreEncodeAdmitCount = 0;
                     wifiTCPPreEncodeAdmitCount++;
                     if (wifiTCPPreEncodeAdmitCount <= 10 || wifiTCPPreEncodeAdmitCount % 200 == 0) {
-                        os_log(sLog, "WiFi pre-encode admit: reason=tcp-backpressure-clear inFlight=%d limit=%d age=%llums staleThreshold=%llums",
-                               tcpInFlightNow, kMaxMediaSendsInFlightWiFi,
+                        os_log(sLog, "WiFi pre-encode admit: reason=%{public}s unacked=%d inFlight=%d limit=%d age=%llums staleThreshold=%llums",
+                               ackUnacked >= 0 ? "ack-gate-clear" : "tcp-backpressure-clear",
+                               ackUnacked, tcpInFlightNow, kMaxMediaSendsInFlightWiFi,
                                frameAgeValid ? frameAgeMs : 0, staleDropThresholdMs);
                     }
                     strongSelf.wirelessLastEncodeSubmitUs = 0;
@@ -1603,9 +1626,14 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                 OSAtomicIncrement32Barrier(&_wifiPerfTCPSchedulerBurstSends);
             }
             int32_t inFlightBefore = _wifiTCPMediaSendsInFlight;
+            /* Under the ack gate the gate paces; the completion-driven sleeps below only add
+             * latency (tla/WiFiSendLoop.tla header), so they are skipped. */
+            BOOL ackGateActive = [self wifiAckUnackedFrames] >= 0;
             uint64_t schedulerSpacingUs = 0;
             const char *schedulerReason = "none";
-            if (inFlightBefore >= 2 || payloadLen >= kWirelessBurstSevereFrameBytes) {
+            if (ackGateActive) {
+                schedulerReason = "ack-gate";
+            } else if (inFlightBefore >= 2 || payloadLen >= kWirelessBurstSevereFrameBytes) {
                 schedulerSpacingUs = kWirelessTCPSchedulerSevereSpacingUs;
                 schedulerReason = inFlightBefore >= 2 ? "inflight-severe" : "payload-severe";
             } else if (burstWindowTail) {
@@ -1630,7 +1658,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                 recoverySpacingUs = kWirelessTCPSchedulerRecoveryModerateSpacingUs;
                 recoveryReason = "recovery-moderate";
             }
-            if (recoverySpacingUs > 0) {
+            if (!ackGateActive && recoverySpacingUs > 0) {
                 static int wifiTCPSchedulerRecoveryDecisionCount = 0;
                 wifiTCPSchedulerRecoveryDecisionCount++;
                 if (recoverySpacingUs > schedulerSpacingUs) {
@@ -1655,7 +1683,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
             }
             uint64_t completionGuardSpacingUs = 0;
             const char *completionGuardReason = "none";
-            BOOL completionGuardEligible = (inFlightBefore >= 1) &&
+            BOOL completionGuardEligible = !ackGateActive && (inFlightBefore >= 1) &&
                                            (recentSlowCompletions > 0 || recentPreDrops > 0 || recentMaxCompletionMs >= 35);
             uint64_t completionDerivedSpacingUs = 0;
             BOOL completionDerivedGuardApplied = NO;
@@ -1801,35 +1829,10 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                        seq, inFlight, len, schedulerDelayUs, schedulerObservedGapUs, schedulerSpacingUs,
                        schedulerReason, burstWindowSendCount);
             }
-            if (inFlight > kMaxMediaSendsInFlightWiFi) {
-                OSAtomicDecrement32Barrier(&_wifiTCPMediaSendsInFlight);
-                OSAtomicIncrement32Barrier(&_wifiPerfTCPSendDrops);
-                static int wifiTCPSendDropCount = 0;
-                wifiTCPSendDropCount++;
-                uint64_t nowUs = keydrd_host_time_us();
-                uint64_t lastKeyReqUs = self.wifiLastTCPDropKeyframeRequestUs;
-                uint64_t sinceLastReqMs = (lastKeyReqUs > 0 && nowUs > lastKeyReqUs) ? (nowUs - lastKeyReqUs) / 1000 : UINT64_MAX;
-                BOOL requestKeyframe = (lastKeyReqUs == 0 || sinceLastReqMs >= kWirelessTCPDropKeyframeCooldownMs);
-                if (requestKeyframe) {
-                    self.wifiLastTCPDropKeyframeRequestUs = nowUs;
-                    OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeRequests);
-                    [self->_hevcEncoder requestKeyframe];
-                } else {
-                    OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeSuppressed);
-                }
-                if (wifiTCPSendDropCount <= 10 || wifiTCPSendDropCount % 100 == 0) {
-                    os_log(sLog, "WiFi TCP backpressure drop: seq=%u inFlight=%d limit=%d totalDropped=%d action=%{public}s reqCooldownMs=%llums sinceLastReqMs=%llums scheduler[delay=%lluus target=%lluus reason=%{public}s burstCount=%d]",
-                           seq, inFlight - 1, kMaxMediaSendsInFlightWiFi, wifiTCPSendDropCount,
-                           requestKeyframe ? "request-keyframe" : "cooldown-suppressed",
-                           kWirelessTCPDropKeyframeCooldownMs,
-                           sinceLastReqMs == UINT64_MAX ? 0 : sinceLastReqMs,
-                           schedulerDelayUs, schedulerSpacingUs, schedulerReason, burstWindowSendCount);
-                }
-                ftRec.outcome = 'D';
-                ftRec.inFlight = inFlight - 1;
-                ft_mac_record(ftRec);
-                return;
-            }
+            /* No post-encode drop (tla/WiFiSendLoop.tla NoPostDrop): an encoded frame is always
+             * sent, so the iPad never sees a seq gap, enters recovery, or asks for a keyframe.
+             * The pre-encode gate bounds the queue. */
+            [self wifiAckNoteSentSeq:(uint16_t)seq nowUs:keydrd_host_time_us()];
             __weak SessionManager *weakSelf = self;
             ftRec.inFlight = inFlight;
             ftRec.submitUs = keydrd_host_time_us();
@@ -2125,8 +2128,27 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                strongSelf->_wifiAdaptiveHealthyStreak, strongSelf->_wifiAdaptiveMildCongestionStreak,
                (unsigned long)queuedNow, peakQueued, pacingMode);
 
+        [strongSelf logAndResetWiFiAckWindow];
         [strongSelf resetWirelessPerformanceWindow];
     }];
+}
+
+- (void)logAndResetWiFiAckWindow {
+    os_unfair_lock_lock(&_wifiAckLock);
+    BOOL active = _wifiAckActive;
+    int32_t unacked = (_wifiAckActive && _wifiAckHasSent)
+        ? (int32_t)(uint16_t)(_wifiAckLastSentSeq - _wifiAckLastAckedSeq) : -1;
+    int32_t acks = _wifiPerfAcks, stale = _wifiPerfAckStale, holds = _wifiPerfAckGateHolds;
+    int32_t peak = _wifiPerfAckUnackedPeak, samples = _wifiPerfAckRttSamples;
+    uint64_t total = _wifiPerfAckRttTotalUs, maxUs = _wifiPerfAckRttMaxUs;
+    _wifiPerfAcks = 0; _wifiPerfAckStale = 0; _wifiPerfAckGateHolds = 0;
+    _wifiPerfAckUnackedPeak = 0; _wifiPerfAckRttSamples = 0;
+    _wifiPerfAckRttTotalUs = 0; _wifiPerfAckRttMaxUs = 0;
+    os_unfair_lock_unlock(&_wifiAckLock);
+    os_log(sLog, "WiFi ack 1s: active=%d acks=%d stale=%d gateHolds=%d unackedNow=%d unackedPeak=%d rttAvg=%.1fms rttMax=%.1fms limit=%d",
+           active, acks, stale, holds, unacked, peak,
+           samples > 0 ? (double)total / (double)samples / 1000.0 : 0.0,
+           (double)maxUs / 1000.0, kWiFiAckGateFrames);
 }
 
 - (void)stopWirelessPerformanceTimer {
@@ -2445,81 +2467,102 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     [self applyWiFiAdaptiveRateTargetsIfNeededWithReason:reason nowUs:nowUs];
 }
 
-- (BOOL)maybeRecoverWiFiTCPInFlightStallWithInFlight:(int32_t)inFlight nowUs:(uint64_t)nowUs reason:(const char *)reason {
-    if (inFlight < kMaxMediaSendsInFlightWiFi) {
-        self.wifiTCPInFlightSaturatedSinceUs = 0;
-        return NO;
+#pragma mark - Wi-Fi ack gate (tla/WiFiSendLoop.tla)
+
+- (void)wifiAckResetWithReason:(const char *)reason {
+    os_unfair_lock_lock(&_wifiAckLock);
+    BOOL wasActive = _wifiAckActive;
+    int32_t unacked = _wifiAckHasSent ? (int32_t)(uint16_t)(_wifiAckLastSentSeq - _wifiAckLastAckedSeq) : 0;
+    _wifiAckActive = NO;
+    _wifiAckHasSent = NO;
+    _wifiAckLastAckedSeq = _wifiAckLastSentSeq;
+    os_unfair_lock_unlock(&_wifiAckLock);
+    os_log(sLog, "WiFi ack gate reset: reason=%{public}s wasActive=%d unacked=%d",
+           reason ?: "unknown", wasActive, unacked);
+}
+
+/* Frames sent and not yet acknowledged, or -1 before the first ack on this connection. */
+- (int32_t)wifiAckUnackedFrames {
+    os_unfair_lock_lock(&_wifiAckLock);
+    int32_t n = (_wifiAckActive && _wifiAckHasSent)
+        ? (int32_t)(uint16_t)(_wifiAckLastSentSeq - _wifiAckLastAckedSeq) : -1;
+    os_unfair_lock_unlock(&_wifiAckLock);
+    return n;
+}
+
+- (void)wifiAckNoteGateHold {
+    os_unfair_lock_lock(&_wifiAckLock);
+    _wifiPerfAckGateHolds++;
+    os_unfair_lock_unlock(&_wifiAckLock);
+}
+
+- (void)wifiAckNoteSentSeq:(uint16_t)seq nowUs:(uint64_t)nowUs {
+    os_unfair_lock_lock(&_wifiAckLock);
+    BOOL discontinuity = _wifiAckHasSent && seq != (uint16_t)(_wifiAckLastSentSeq + 1);
+    uint16_t prevSent = _wifiAckLastSentSeq;
+    if (!_wifiAckHasSent || discontinuity) {
+        /* First frame, or the encoder renumbered (restart): count from this frame. */
+        _wifiAckLastAckedSeq = (uint16_t)(seq - 1);
     }
+    _wifiAckLastSentSeq = seq;
+    _wifiAckHasSent = YES;
+    _wifiAckSendUs[seq & 0xFF] = nowUs;
+    int32_t unacked = (int32_t)(uint16_t)(seq - _wifiAckLastAckedSeq);
+    if (unacked > _wifiPerfAckUnackedPeak) _wifiPerfAckUnackedPeak = unacked;
+    BOOL active = _wifiAckActive;
+    os_unfair_lock_unlock(&_wifiAckLock);
+    if (discontinuity) {
+        os_log(sLog, "WiFi ack gate seq discontinuity: prevSent=%u seq=%u active=%d -> counting from seq",
+               prevSent, seq, active);
+    }
+}
 
-    @synchronized (self) {
-        uint64_t saturatedSinceUs = self.wifiTCPInFlightSaturatedSinceUs;
-        if (saturatedSinceUs == 0) {
-            self.wifiTCPInFlightSaturatedSinceUs = nowUs;
-            self.wifiTCPStallLastLogUs = nowUs;
-            os_log(sLog, "WiFi TCP saturation enter: reason=%{public}s inFlight=%d limit=%d",
-                   reason ?: "unknown", inFlight, kMaxMediaSendsInFlightWiFi);
-            return NO;
+- (void)handleWiFiFrameAck:(const uint8_t *)data length:(size_t)length {
+    if (length < sizeof(InputEventHeader) + 2) {
+        os_log_error(sLog, "WiFi frame ack too short: length=%zu", length);
+        return;
+    }
+    const uint8_t *p = data + sizeof(InputEventHeader);
+    uint16_t ackSeq = (uint16_t)(p[0] | (p[1] << 8));
+    uint64_t nowUs = keydrd_host_time_us();
+    BOOL accepted = NO, first = NO;
+    uint64_t rttUs = 0;
+    int32_t unackedAfter = -1;
+    os_unfair_lock_lock(&_wifiAckLock);
+    uint16_t lastSent = _wifiAckLastSentSeq;
+    uint16_t lastAcked = _wifiAckLastAckedSeq;
+    if (_wifiAckHasSent) {
+        uint16_t dAck = (uint16_t)(ackSeq - lastAcked);
+        uint16_t dSent = (uint16_t)(lastSent - lastAcked);
+        if (dAck >= 1 && dAck <= dSent) {
+            accepted = YES;
+            first = !_wifiAckActive;
+            _wifiAckActive = YES;
+            _wifiAckLastAckedSeq = ackSeq;
+            uint64_t sentUs = _wifiAckSendUs[ackSeq & 0xFF];
+            if (sentUs > 0 && nowUs > sentUs) rttUs = nowUs - sentUs;
+            unackedAfter = (int32_t)(uint16_t)(lastSent - ackSeq);
         }
-
-        uint64_t saturatedMs = nowUs > saturatedSinceUs ? (nowUs - saturatedSinceUs) / 1000 : 0;
-        uint64_t lastCompletionUs = self.wifiTCPLastCompletionUs;
-        uint64_t noCompletionMs = (lastCompletionUs > 0 && nowUs > lastCompletionUs) ? (nowUs - lastCompletionUs) / 1000 : UINT64_MAX;
-        uint64_t lastRecoveryUs = self.wifiTCPLastStallRecoveryUs;
-        uint64_t sinceRecoveryMs = (lastRecoveryUs > 0 && nowUs > lastRecoveryUs) ? (nowUs - lastRecoveryUs) / 1000 : UINT64_MAX;
-
-        if (saturatedMs < kWirelessTCPStallSaturationThresholdMs ||
-            noCompletionMs < kWirelessTCPStallNoCompletionThresholdMs) {
-            uint64_t lastLogUs = self.wifiTCPStallLastLogUs;
-            if (lastLogUs == 0 || nowUs - lastLogUs >= kWirelessTCPStallLogIntervalMs * 1000) {
-                self.wifiTCPStallLastLogUs = nowUs;
-                os_log(sLog, "WiFi TCP saturation observe: reason=%{public}s inFlight=%d sat=%llums noCompletion=%llums thresholdSat=%llums thresholdNoCompletion=%llums",
-                       reason ?: "unknown", inFlight, saturatedMs,
-                       noCompletionMs == UINT64_MAX ? 0 : noCompletionMs,
-                       kWirelessTCPStallSaturationThresholdMs,
-                       kWirelessTCPStallNoCompletionThresholdMs);
-            }
-            return NO;
+    }
+    if (accepted) {
+        _wifiPerfAcks++;
+        if (rttUs > 0) {
+            _wifiPerfAckRttSamples++;
+            _wifiPerfAckRttTotalUs += rttUs;
+            if (rttUs > _wifiPerfAckRttMaxUs) _wifiPerfAckRttMaxUs = rttUs;
         }
+    } else {
+        _wifiPerfAckStale++;
+    }
+    int32_t staleCount = _wifiPerfAckStale;
+    os_unfair_lock_unlock(&_wifiAckLock);
 
-        if (sinceRecoveryMs != UINT64_MAX && sinceRecoveryMs < kWirelessTCPStallRecoveryCooldownMs) {
-            uint64_t lastLogUs = self.wifiTCPStallLastLogUs;
-            if (lastLogUs == 0 || nowUs - lastLogUs >= kWirelessTCPStallLogIntervalMs * 1000) {
-                self.wifiTCPStallLastLogUs = nowUs;
-                os_log(sLog, "WiFi TCP stall recovery hold: reason=%{public}s inFlight=%d sat=%llums noCompletion=%llums sinceRecovery=%llums cooldown=%llums",
-                       reason ?: "unknown", inFlight, saturatedMs,
-                       noCompletionMs == UINT64_MAX ? 0 : noCompletionMs,
-                       sinceRecoveryMs, kWirelessTCPStallRecoveryCooldownMs);
-            }
-            return NO;
-        }
-
-        int32_t oldInFlight = _wifiTCPMediaSendsInFlight;
-        uint32_t oldGeneration = self.wifiTCPSendGeneration;
-        self.wifiTCPSendGeneration = oldGeneration + 1;
-        _wifiTCPMediaSendsInFlight = 0;
-        self.wifiTCPInFlightSaturatedSinceUs = 0;
-        self.wifiTCPLastStallRecoveryUs = nowUs;
-        self.wifiTCPStallLastLogUs = nowUs;
-        OSAtomicIncrement32Barrier(&_wifiPerfTCPStallRecoveries);
-
-        uint64_t lastKeyReqUs = self.wifiLastTCPDropKeyframeRequestUs;
-        uint64_t sinceLastReqMs = (lastKeyReqUs > 0 && nowUs > lastKeyReqUs) ? (nowUs - lastKeyReqUs) / 1000 : UINT64_MAX;
-        BOOL requestKeyframe = (lastKeyReqUs == 0 || sinceLastReqMs >= kWirelessTCPDropKeyframeCooldownMs);
-        if (requestKeyframe) {
-            self.wifiLastTCPDropKeyframeRequestUs = nowUs;
-            OSAtomicIncrement32Barrier(&_wifiPerfTCPDropKeyframeRequests);
-            [self->_hevcEncoder requestKeyframe];
-        } else {
-            OSAtomicIncrement32Barrier(&self->_wifiPerfTCPDropKeyframeSuppressed);
-        }
-
-        os_log_error(sLog, "WiFi TCP stall recovery: reason=%{public}s action=reset-inflight oldInFlight=%d sat=%llums noCompletion=%llums gen=%u->%u keyframe=%{public}s cooldownMs=%llums",
-                     reason ?: "unknown", oldInFlight, saturatedMs,
-                     noCompletionMs == UINT64_MAX ? 0 : noCompletionMs,
-                     oldGeneration, self.wifiTCPSendGeneration,
-                     requestKeyframe ? "requested" : "cooldown-suppressed",
-                     kWirelessTCPStallRecoveryCooldownMs);
-        return YES;
+    if (first) {
+        os_log(sLog, "WiFi ack gate active: ack=%u lastSent=%u unacked=%d rtt=%lluus limit=%d",
+               ackSeq, lastSent, unackedAfter, rttUs, kWiFiAckGateFrames);
+    } else if (!accepted && (staleCount <= 5 || staleCount % 100 == 0)) {
+        os_log(sLog, "WiFi frame ack ignored: ack=%u lastAcked=%u lastSent=%u (stale or outside window) count=%d",
+               ackSeq, lastAcked, lastSent, staleCount);
     }
 }
 
@@ -2658,6 +2701,10 @@ static const int32_t kUSBLZ4GateInFlight = 2;
     }
 
     switch (header->type) {
+        case KEYDRD_INPUT_FRAME_ACK:
+            [self handleWiFiFrameAck:data length:length];
+            break;
+
         case KEYDRD_INPUT_RES_MATCH_REQUEST:
             [self handleResolutionMatchRequest:data length:length];
             break;

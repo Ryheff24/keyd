@@ -133,6 +133,7 @@ enum InputEventType: UInt8 {
     case peerAddressUpdate  = 0x25  // Mac -> iPad: new USB NCM IP before transport switch
     case geometryUpdate     = 0x23  // Mac -> iPad: new display geometry
     case keepalive          = 0x30
+    case frameAck           = 0x32  // iPad -> Mac (Wi-Fi): u16 LE seq of newest HEVC frame received
     case clockSyncReq       = 0xFE  // iPad -> Mac: Cristian's algorithm probe
     case clockSyncResp      = 0xFD  // Mac -> iPad: clock sync response
     case latencyProbe       = 0xFF

@@ -102,6 +102,8 @@ final class SessionManager {
     private static let latencyProbeInterval: TimeInterval = 1.0
     private var lastKeyframeRequestUs: UInt64 = 0
     private static let keyframeRequestCooldownUs: UInt64 = 500_000
+    /// Wi-Fi frame acks sent (transport queue only).
+    private var framesAcked = 0
 
     // MARK: - Reconnection
 
@@ -1110,6 +1112,10 @@ final class SessionManager {
         if data.count >= MediaFrameHeader.size,
            let mediaHeader = MediaFrameHeader.parse(from: data) {
             FrameTimeline.shared.frameComplete(mediaHeader, bytes: data.count)
+            if mediaHeader.isHEVC && mediaHeader.chunkTotal <= 1 &&
+                wirelessTransport.isConnected && !usbTransport.isConnected {
+                sendFrameAck(seq: mediaHeader.seq)
+            }
             if mediaHeader.chunkTotal > 1 || mediaHeader.isHEVC {
                 if mediaHeader.chunkTotal > 1 && !mediaHeader.isHEVC {
                     print("[CONSOLE] handleInputReceived: routing chunked non-HEVC frame via reassembler seq=\(mediaHeader.seq) chunk=\(mediaHeader.chunkIdx + 1)/\(mediaHeader.chunkTotal)")
@@ -1368,6 +1374,22 @@ final class SessionManager {
         data.append(Data(bytes: &enabled, count: 1))
 
         sendInputEventToMac(data)
+    }
+
+    /// Acknowledge a whole HEVC frame received on the Wi-Fi TCP stream (cumulative seq). The Mac
+    /// encodes only while sent-but-unacked frames stay under its limit (tla/WiFiSendLoop.tla
+    /// AckGate). Runs on the transport queue as the frame is drained, before decode, so the ack
+    /// measures the network queue and nothing else.
+    private func sendFrameAck(seq: UInt16) {
+        let header = InputEventHeader(type: InputEventType.frameAck.rawValue, tsUs: currentTimestampUs())
+        var data = header.serialize()
+        data.append(UInt8(seq & 0xFF))
+        data.append(UInt8(seq >> 8))
+        wirelessTransport.sendInputEvent(data)
+        framesAcked += 1
+        if framesAcked <= 5 || framesAcked % 600 == 0 {
+            print("[CONSOLE] SessionManager: frame ack sent seq=\(seq) count=\(framesAcked)")
+        }
     }
 
     private func requestImmediateKeyframe() {
