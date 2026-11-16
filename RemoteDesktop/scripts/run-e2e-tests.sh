@@ -384,8 +384,8 @@ if [ "$BACKGROUND_CYCLE" = auto ]; then
   if [ "$PROFILE" = "full" ]; then BACKGROUND_CYCLE=true; else BACKGROUND_CYCLE=false; fi
 fi
 if [ "$BACKGROUND_CYCLE" = true ] && [ "$TIMEOUT_SPECIFIED" = false ]; then
-  # background-recovery: ~35 s UI-runner start + away + 30 s measured (iPad budget 120 s + away)
-  TIMEOUT=$((TIMEOUT + 120 + BACKGROUND_SECONDS))
+  # background-recovery: up to two UI-runner starts (~65 s each) + away + 30 s measured (iPad budget 210 s + away)
+  TIMEOUT=$((TIMEOUT + 210 + BACKGROUND_SECONDS))
 fi
 
 if [ -z "$CAPTURE_FILE" ] && [ "$STRESS_CAPTURE" = false ] && [ "$REAL_CAPTURE" = false ]; then
@@ -443,7 +443,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$UITEST_LOG_FILE" "$UITEST_BUILD_LOG" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$UITEST_LOG_FILE" "$UITEST_LOG_FILE.attempt1" "$UITEST_BUILD_LOG" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -1290,8 +1290,22 @@ wait_and_parse_results() {
     fi
     if [ -n "$UITEST_PID" ] && [ "$UITEST_PID" != none ] && [ "${UITEST_REPORTED:-false}" != true ] && \
        ! kill -0 "$UITEST_PID" 2>/dev/null; then
-      UITEST_REPORTED=true
-      log_progress "[CONSOLE] e2e-uitest exit elapsedSec=$ELAPSED $(grep -E '\[UITEST\]|TEST (EXECUTE )?(SUCCEEDED|FAILED)' "$UITEST_LOG_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
+      log_progress "[CONSOLE] e2e-uitest exit attempt=${UITEST_ATTEMPT:-1} elapsedSec=$ELAPSED $(grep -E '\[UITEST\]|TEST (EXECUTE )?(SUCCEEDED|FAILED)|automation mode' "$UITEST_LOG_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
+      # The runner can time out "enabling automation mode" before it touches the app
+      # (2026-11-16 18:08): retry once if the app was never backgrounded.
+      if [ "${UITEST_ATTEMPT:-1}" = 1 ] && ! grep -q "\[UITEST\] background-cycle backgrounded" "$UITEST_LOG_FILE" 2>/dev/null; then
+        UITEST_ATTEMPT=2
+        cp "$UITEST_LOG_FILE" "$UITEST_LOG_FILE.attempt1" 2>/dev/null || true
+        log_progress "[CONSOLE] e2e-uitest retry attempt=2 elapsedSec=$ELAPSED reason=not-backgrounded"
+        TEST_RUNNER_KEYD_BG_SECONDS="$BACKGROUND_SECONDS" xcodebuild test-without-building \
+          -xctestrun "$UITEST_XCTESTRUN" \
+          -destination "id=$IPAD_DEVICE_ID" \
+          -only-testing:RemoteDesktopAppUITests/BackgroundCycleUITests/testBackgroundCycle \
+          > "$UITEST_LOG_FILE" 2>&1 &
+        UITEST_PID=$!
+      else
+        UITEST_REPORTED=true
+      fi
     fi
 
     if [ $ELAPSED -ge "$TIMEOUT" ]; then

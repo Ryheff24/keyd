@@ -2431,8 +2431,9 @@ final class DeviceTestRunner {
     // USB > AWDL > infra, tla/TransportConnections.tla), and decode refusals (FL IpadFail).
 
     private enum BackgroundPhase { case idle, waitingForBackground, backgrounded, measuring }
-    private static let backgroundRecoveryBudget: TimeInterval = 120
-    private static let backgroundRequestTimeout: TimeInterval = 90
+    private static let backgroundRecoveryBudget: TimeInterval = 210
+    /// Two runner attempts (~65 s each when "enabling automation mode" times out) plus start-up.
+    private static let backgroundRequestTimeout: TimeInterval = 180
     private static let backgroundRecoveryWindow: TimeInterval = 30
     private static let backgroundFirstFrameGoalMs = 250.0
     private static let backgroundRecoverGoalMs = 1000.0
