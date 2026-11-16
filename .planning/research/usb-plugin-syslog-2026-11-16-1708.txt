@@ -1,0 +1,876 @@
+Timestamp               Ty Process[PID:TID]
+2026-11-16 17:08:45.016 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:45.032 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:45.032 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:8854415D-F018-42B0-9940-D8B0738BA540 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647634
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647750
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4294970226
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647719
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647627
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647654
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647712
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647632
+2026-11-16 17:08:46.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647638
+2026-11-16 17:08:46.651 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647634
+2026-11-16 17:08:46.651 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647750
+2026-11-16 17:08:46.651 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4294970226
+2026-11-16 17:08:46.652 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647719
+2026-11-16 17:08:46.652 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647627
+2026-11-16 17:08:46.652 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647654
+2026-11-16 17:08:46.652 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647712
+2026-11-16 17:08:46.652 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647632
+2026-11-16 17:08:46.652 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 8854415D-F018-42B0-9940-D8B0738BA540 not entitled to match protected service: 4295647638
+2026-11-16 17:08:46.745 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:8854415D-F018-42B0-9940-D8B0738BA540 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:47.023 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:47.033 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:47.033 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:48.324 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 848 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:48.324 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 733 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:48.324 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 21361 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:48.325 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 645 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:31844EBB-0AB0-47F0-9A60-16AB38C1AF7B pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647634
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647750
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4294970226
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647719
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647627
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647654
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647712
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647632
+2026-11-16 17:08:48.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647638
+2026-11-16 17:08:48.647 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647634
+2026-11-16 17:08:48.647 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647750
+2026-11-16 17:08:48.647 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4294970226
+2026-11-16 17:08:48.647 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647719
+2026-11-16 17:08:48.647 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647627
+2026-11-16 17:08:48.647 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647654
+2026-11-16 17:08:48.648 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647712
+2026-11-16 17:08:48.648 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647632
+2026-11-16 17:08:48.648 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 31844EBB-0AB0-47F0-9A60-16AB38C1AF7B not entitled to match protected service: 4295647638
+2026-11-16 17:08:48.738 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:31844EBB-0AB0-47F0-9A60-16AB38C1AF7B pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:49.023 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:49.036 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:49.036 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:50.638 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647634
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647750
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4294970226
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647719
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647627
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647654
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647712
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647632
+2026-11-16 17:08:50.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647638
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647634
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647750
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4294970226
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647719
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647627
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647654
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647712
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647632
+2026-11-16 17:08:50.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 not entitled to match protected service: 4295647638
+2026-11-16 17:08:50.733 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:7FE4B4AC-7AE2-47A5-85E5-8D535E0CDC34 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:51.071 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:51.078 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:51.078 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:52.139 Df WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM Vendor!
+2026-11-16 17:08:52.139 Df WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM Model!
+2026-11-16 17:08:52.139 Df WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM FirmwareVersion!
+2026-11-16 17:08:52.139 Df WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM HardwareVersion!
+2026-11-16 17:08:52.139 Df WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM UserString!
+2026-11-16 17:08:52.139 E  WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM AccessoryName!
+2026-11-16 17:08:52.139 Df WindowServer[434:268aba2] [com.apple.accessories:AUVDMAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.protocol.AppleUVDM.published)
+2026-11-16 17:08:52.517 Df WindowServer[434:2689e73] [com.apple.accessories:USBAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.USB.published)
+2026-11-16 17:08:52.522 E  usbmuxd[408:10fc] [com.apple.usbmux:daemon] deviceRequiresMuxConfiguration: kCDCDoNotMatchThisDevice is NULL
+2026-11-16 17:08:52.551 Df configd[375:2690abf] (IO80211) Apple80211BindToInterfaceWithService: <private> Sanity test passed. Version - <private>
+2026-11-16 17:08:52.561 Df configd[375:2690abf] (IO80211) Enter: _Apple80211ServiceMatchedCallback
+2026-11-16 17:08:52.561 Df configd[375:2690abf] (IO80211) _Apple80211ServiceMatchedCallback: service:158027 opaque:0x7a9ed60600
+2026-11-16 17:08:52.561 Df configd[375:2690abf] (IO80211) _Apple80211IOUCResume: IOUC already opened for opaque:0x7a9ed60600, connect[274019] port[0x0]
+2026-11-16 17:08:52.561 Df configd[375:2690abf] (IO80211) Apple80211BindToInterfaceWithService: <private> useIOUCWhenPossible TRUE, service:158027 opaque:0x7a9ed60600, ioucQueue[0x0] serviceNotificationQueue[0x7a9ed37880]/dq:'<private>' connect[274019] port[0x0] runLoop[0x0] kretain[28] uretain[1]
+2026-11-16 17:08:52.562 Df configd[375:2690abf] [com.apple.IPConfiguration:Server] Allow Sharing Device Type is true
+2026-11-16 17:08:52.562 Df configd[375:2690abf] (IO80211) Apple80211Close: opaque structure 0x7a9ed60600, IOKit service notifications cancelled, safe to proceed with async teardown
+2026-11-16 17:08:52.562 Df configd[375:2690abf] [com.apple.IPConfiguration:Server] en0: SSID <redacted> BSSID <redacted> NetworkID <redacted> Security WPA2_PSK ConnectionID 24
+2026-11-16 17:08:52.562 Df configd[375:2690abf] (IO80211) _Apple80211Dealloc: opaque structure 0x7a9ed60600, finalizer group finished, deallocating/closing/cleanup/etc
+2026-11-16 17:08:52.563 Df configd[375:2690abf] (IO80211) _Apple80211Dealloc: Freeing opaque structure 0x7a9ed60600 (notifications already cancelled in Apple80211Close)
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:89704EB9-4C80-4ADD-AE3E-E432A079758D pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647634
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647750
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4294970226
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647719
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647627
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647654
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647712
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647632
+2026-11-16 17:08:52.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647638
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647634
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647750
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4294970226
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647719
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647627
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647654
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647712
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647632
+2026-11-16 17:08:52.650 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 89704EB9-4C80-4ADD-AE3E-E432A079758D not entitled to match protected service: 4295647638
+2026-11-16 17:08:52.685 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> Sanity test passed. Version - <private>
+2026-11-16 17:08:52.696 Df configd[375:2690ac0] (IO80211) Enter: _Apple80211ServiceMatchedCallback
+2026-11-16 17:08:52.696 Df configd[375:2690ac0] (IO80211) _Apple80211ServiceMatchedCallback: service:325695 opaque:0x7a9ed60600
+2026-11-16 17:08:52.696 Df configd[375:2690ac0] (IO80211) _Apple80211IOUCResume: IOUC already opened for opaque:0x7a9ed60600, connect[152927] port[0x0]
+2026-11-16 17:08:52.696 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> useIOUCWhenPossible TRUE, service:325695 opaque:0x7a9ed60600, ioucQueue[0x0] serviceNotificationQueue[0x7a9ed37980]/dq:'<private>' connect[152927] port[0x0] runLoop[0x0] kretain[28] uretain[1]
+2026-11-16 17:08:52.697 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] Allow Sharing Device Type is true
+2026-11-16 17:08:52.698 Df configd[375:2690ac0] (IO80211) Apple80211Close: opaque structure 0x7a9ed60600, IOKit service notifications cancelled, safe to proceed with async teardown
+2026-11-16 17:08:52.698 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] en0: SSID <redacted> BSSID <redacted> NetworkID <redacted> Security WPA2_PSK ConnectionID 24
+2026-11-16 17:08:52.698 Df configd[375:2690ac0] (IO80211) _Apple80211Dealloc: opaque structure 0x7a9ed60600, finalizer group finished, deallocating/closing/cleanup/etc
+2026-11-16 17:08:52.698 Df configd[375:2690ac0] (IO80211) _Apple80211Dealloc: Freeing opaque structure 0x7a9ed60600 (notifications already cancelled in Apple80211Close)
+2026-11-16 17:08:52.742 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:89704EB9-4C80-4ADD-AE3E-E432A079758D pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:53.023 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:53.035 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:53.035 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:53.248 Df WindowServer[434:268aba2] [com.apple.accessories:USBAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.USB.published)
+2026-11-16 17:08:53.249 E  usbmuxd[408:10fc] [com.apple.usbmux:daemon] deviceRequiresMuxConfiguration: kCDCDoNotMatchThisDevice is NULL
+2026-11-16 17:08:53.274 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> Sanity test passed. Version - <private>
+2026-11-16 17:08:53.285 Df configd[375:2690ac0] (IO80211) Enter: _Apple80211ServiceMatchedCallback
+2026-11-16 17:08:53.285 Df configd[375:2690ac0] (IO80211) _Apple80211ServiceMatchedCallback: service:157955 opaque:0x7a9ed60600
+2026-11-16 17:08:53.285 Df configd[375:2690ac0] (IO80211) _Apple80211IOUCResume: IOUC already opened for opaque:0x7a9ed60600, connect[332411] port[0x0]
+2026-11-16 17:08:53.285 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> useIOUCWhenPossible TRUE, service:157955 opaque:0x7a9ed60600, ioucQueue[0x0] serviceNotificationQueue[0x7a9ed36200]/dq:'<private>' connect[332411] port[0x0] runLoop[0x0] kretain[28] uretain[1]
+2026-11-16 17:08:53.288 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] Allow Sharing Device Type is true
+2026-11-16 17:08:53.288 Df configd[375:2690ac0] (IO80211) Apple80211Close: opaque structure 0x7a9ed60600, IOKit service notifications cancelled, safe to proceed with async teardown
+2026-11-16 17:08:53.288 Df configd[375:2690abf] (IO80211) _Apple80211Dealloc: opaque structure 0x7a9ed60600, finalizer group finished, deallocating/closing/cleanup/etc
+2026-11-16 17:08:53.288 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] en0: SSID <redacted> BSSID <redacted> NetworkID <redacted> Security WPA2_PSK ConnectionID 24
+2026-11-16 17:08:53.291 Df configd[375:2690abf] (IO80211) _Apple80211Dealloc: Freeing opaque structure 0x7a9ed60600 (notifications already cancelled in Apple80211Close)
+2026-11-16 17:08:53.425 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> Sanity test passed. Version - <private>
+2026-11-16 17:08:53.434 Df configd[375:2690ac0] (IO80211) Enter: _Apple80211ServiceMatchedCallback
+2026-11-16 17:08:53.434 Df configd[375:2690ac0] (IO80211) _Apple80211ServiceMatchedCallback: service:270659 opaque:0x7a9ed60600
+2026-11-16 17:08:53.434 Df configd[375:2690ac0] (IO80211) _Apple80211IOUCResume: IOUC already opened for opaque:0x7a9ed60600, connect[274063] port[0x0]
+2026-11-16 17:08:53.434 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> useIOUCWhenPossible TRUE, service:270659 opaque:0x7a9ed60600, ioucQueue[0x0] serviceNotificationQueue[0x7a9ed35780]/dq:'<private>' connect[274063] port[0x0] runLoop[0x0] kretain[28] uretain[1]
+2026-11-16 17:08:53.436 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] Allow Sharing Device Type is true
+2026-11-16 17:08:53.438 Df configd[375:2690ac0] (IO80211) Apple80211Close: opaque structure 0x7a9ed60600, IOKit service notifications cancelled, safe to proceed with async teardown
+2026-11-16 17:08:53.438 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] en0: SSID <redacted> BSSID <redacted> NetworkID <redacted> Security WPA2_PSK ConnectionID 24
+2026-11-16 17:08:53.438 Df configd[375:2690abf] (IO80211) _Apple80211Dealloc: opaque structure 0x7a9ed60600, finalizer group finished, deallocating/closing/cleanup/etc
+2026-11-16 17:08:53.438 Df configd[375:2690abf] (IO80211) _Apple80211Dealloc: Freeing opaque structure 0x7a9ed60600 (notifications already cancelled in Apple80211Close)
+2026-11-16 17:08:53.851 Df WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM Vendor!
+2026-11-16 17:08:53.851 Df WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM Model!
+2026-11-16 17:08:53.851 Df WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM FirmwareVersion!
+2026-11-16 17:08:53.851 Df WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM HardwareVersion!
+2026-11-16 17:08:53.851 Df WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM UserString!
+2026-11-16 17:08:53.851 E  WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Could not find AUVDM AccessoryName!
+2026-11-16 17:08:53.851 Df WindowServer[434:2689e73] [com.apple.accessories:AUVDMAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.protocol.AppleUVDM.published)
+2026-11-16 17:08:53.962 E  usbmuxd[408:10fc] [com.apple.usbmux:daemon] deviceRequiresMuxConfiguration: kCDCDoNotMatchThisDevice is NULL
+2026-11-16 17:08:53.962 Df WindowServer[434:2689e73] [com.apple.accessories:USBAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.USB.published)
+2026-11-16 17:08:53.987 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] Assigned unit 1 (from database) to <SCNetworkInterface 0x7a9ecfa300 [0x1ec6dcc70]> {type = Ethernet, entity_device = (null), entity_type = Ethernet, name = iPad, name(l) = iPad USB, address = ca:1a:94:13:f6:11, builtin = FALSE, HIDDEN, path = IOService:/AppleARMPE/arm-io/AppleT600xIO/usb-drd2@2280000/AppleT6000USBXHCI@02000000/usb-drd2-port-ss@02200000/iPad@02200000/NCM Control@4/AppleUSBNCM11Control/AppleUSBNCM11Data/AppleUSBHostNCMRestrictedEthernetInterface, entryID = 0x1000a63be, type = 6, USB name = iPad, USB vid/pid = 1452/4779, order = 16 (Tethered)}
+2026-11-16 17:08:53.989 Df usbmuxd[408:26913ce] [com.apple.usbmux:library] USBMuxConnectByPort:585 Connecting to port 32498 (f2, 7e)
+2026-11-16 17:08:53.990 Df configd[375:2690abf] [com.apple.SystemConfiguration:KernelEventMonitor] Process interface attach: anri1
+2026-11-16 17:08:53.995 Df configd[375:2690abf] [com.apple.network:] network_config_check_mobile_asset Checking mobile asset
+2026-11-16 17:08:53.995 Df configd[375:2690abf] [com.apple.network:] network_config_run_probes Running network probes
+2026-11-16 17:08:54.006 Df usbmuxd[408:26913ce] [com.apple.usbmux:library] USBMuxConnectByPort:585 Connecting to port 32498 (f2, 7e)
+2026-11-16 17:08:54.019 Df usbmuxd[408:26913ce] [com.apple.usbmux:library] USBMuxConnectByPort:585 Connecting to port 32498 (f2, 7e)
+2026-11-16 17:08:54.020 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> Sanity test passed. Version - <private>
+2026-11-16 17:08:54.020 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] Known interface named
+  path = IOService:/AppleARMPE/arm-io/AppleT600xIO/usb-drd2@2280000/AppleT6000USBXHCI@02000000/usb-drd2-port-ss@02200000/iPad@02200000/NCM Control@4/AppleUSBNCM11Control/AppleUSBNCM11Data/AppleUSBHostNCMRestrictedEthernetInterface
+  unit = 1
+2026-11-16 17:08:54.020 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] addTimestamp: anri1: 816559734.035174
+2026-11-16 17:08:54.021 Df configd[375:26913dd] [com.apple.SystemConfiguration:QoSMarking] QoS marking policy: anri1: enable (default)
+2026-11-16 17:08:54.021 Df configd[375:26913dd] [com.apple.SystemConfiguration:QoSMarking] QoS marking policy: sysctl net.qos.policy.restrict_avapps=0
+2026-11-16 17:08:54.021 Df configd[375:26913dd] [com.apple.SystemConfiguration:QoSMarking] QoS marking policy: sysctl net.qos.policy.restricted=0
+2026-11-16 17:08:54.021 Df configd[375:26913d6] [com.apple.eapol:Controller] EAPOLController: en13 is no longer configured, stopping to monitor
+2026-11-16 17:08:54.021 Df configd[375:26913d6] [com.apple.eapol:Controller] EAPOLController: en9 is no longer configured, stopping to monitor
+2026-11-16 17:08:54.021 Df configd[375:2690abf] [com.apple.SystemConfiguration:KernelEventMonitor] Process interface link status active: anri1
+2026-11-16 17:08:54.023 Df configd[375:2690ac0] (IO80211) Enter: _Apple80211ServiceMatchedCallback
+2026-11-16 17:08:54.023 Df configd[375:2690ac0] (IO80211) _Apple80211ServiceMatchedCallback: service:153059 opaque:0x7a9ed60600
+2026-11-16 17:08:54.023 Df configd[375:2690ac0] (IO80211) _Apple80211IOUCResume: IOUC already opened for opaque:0x7a9ed60600, connect[271411] port[0x0]
+2026-11-16 17:08:54.030 Df configd[375:26913d6] [com.apple.network:] -[NWConcrete_nw_resolver initWithEndpoint:parameters:path:log_str:] [R1962] created for IPv4#e75e5a58:0 using: generic, attribution: developer
+2026-11-16 17:08:54.030 Df configd[375:26913d6] [com.apple.network:path] nw_path_evaluator_start [2199C5EC-F4E2-498C-A5EE-31EA362CB740 IPv4#e75e5a58:0 generic, attribution: developer]
+	path: <private>
+2026-11-16 17:08:54.030 Df configd[375:26913d6] [com.apple.network:] nw_resolver_set_update_handler_block_invoke [R1962] started
+2026-11-16 17:08:54.047 Df configd[375:2690ac0] (IO80211) Apple80211BindToInterfaceWithService: <private> useIOUCWhenPossible TRUE, service:153059 opaque:0x7a9ed60600, ioucQueue[0x0] serviceNotificationQueue[0x7a9ed37880]/dq:'<private>' connect[271411] port[0x0] runLoop[0x0] kretain[28] uretain[1]
+2026-11-16 17:08:54.048 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] Allow Sharing Device Type is true
+2026-11-16 17:08:54.048 Df configd[375:2690ac0] (IO80211) Apple80211Close: opaque structure 0x7a9ed60600, IOKit service notifications cancelled, safe to proceed with async teardown
+2026-11-16 17:08:54.048 Df configd[375:2690ac0] [com.apple.IPConfiguration:Server] en0: SSID <redacted> BSSID <redacted> NetworkID <redacted> Security WPA2_PSK ConnectionID 24
+2026-11-16 17:08:54.048 Df configd[375:269132c] (IO80211) _Apple80211Dealloc: opaque structure 0x7a9ed60600, finalizer group finished, deallocating/closing/cleanup/etc
+2026-11-16 17:08:54.049 Df configd[375:269132c] (IO80211) _Apple80211Dealloc: Freeing opaque structure 0x7a9ed60600 (notifications already cancelled in Apple80211Close)
+2026-11-16 17:08:54.102 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] copyUnitForEstablishedInterface: <SCNetworkInterface 0x7a9ecfaa00 [0x1ec6dcc70]> {type = Ethernet, entity_device = (null), entity_type = Ethernet, name = iPad, name(l) = iPad USB, address = ce:60:23:13:14:d4, builtin = FALSE, hidden = TRUE, path = IOService:/AppleARMPE/arm-io/AppleT600xIO/usb-drd2@2280000/AppleT6000USBXHCI@02000000/usb-drd2-port-ss@02200000/iPad@02200000/NCM Control@2/AppleUSBNCM11Control/AppleUSBNCM11Data/IOEthernetInterface, entryID = 0x1000a63c3, type = 6, USB name = iPad, USB vid/pid = 1452/4779, order = 16 (Tethered)} has no specific unit
+2026-11-16 17:08:54.102 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] en: 0 reserved units, next built-in unit 0
+2026-11-16 17:08:54.102 Df configd[375:26913df] [com.apple.SystemConfiguration:KernelEventMonitor] Process interface attach: en13
+2026-11-16 17:08:54.102 Df configd[375:26913df] [com.apple.network:] network_config_check_mobile_asset Checking mobile asset
+2026-11-16 17:08:54.102 Df configd[375:26913df] [com.apple.network:] network_config_run_probes Running network probes
+2026-11-16 17:08:54.103 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] New interface named
+  path = IOService:/AppleARMPE/arm-io/AppleT600xIO/usb-drd2@2280000/AppleT6000USBXHCI@02000000/usb-drd2-port-ss@02200000/iPad@02200000/NCM Control@2/AppleUSBNCM11Control/AppleUSBNCM11Data/IOEthernetInterface
+  unit = 13
+2026-11-16 17:08:54.103 Df configd[375:10bc] [com.apple.SystemConfiguration:InterfaceNamer] addTimestamp: en13: 816559734.118237
+2026-11-16 17:08:54.104 Df configd[375:269132c] [com.apple.SystemConfiguration:QoSMarking] QoS marking policy: en13: enable (default)
+2026-11-16 17:08:54.104 Df configd[375:269132c] [com.apple.SystemConfiguration:QoSMarking] QoS marking policy: sysctl net.qos.policy.restrict_avapps=0
+2026-11-16 17:08:54.104 Df configd[375:269132c] [com.apple.SystemConfiguration:QoSMarking] QoS marking policy: sysctl net.qos.policy.restricted=0
+2026-11-16 17:08:54.104 Df configd[375:2690abf] [com.apple.eapol:Controller] EAPOLController: en13 is no longer configured, stopping to monitor
+2026-11-16 17:08:54.104 Df configd[375:2690abf] [com.apple.eapol:Controller] EAPOLController: en9 is no longer configured, stopping to monitor
+2026-11-16 17:08:54.225 Df configd[375:26913e1] [com.apple.IPConfiguration:Server] en13: clearing IPv6 state on first launch
+2026-11-16 17:08:54.235 Df configd[375:26913d6] [com.apple.SystemConfiguration:KernelEventMonitor] Process interface link status active: en13
+2026-11-16 17:08:54.235 Df configd[375:26913e1] [com.apple.IPConfiguration:Server] DHCP en13: start
+2026-11-16 17:08:54.238 Df configd[375:26913e1] [com.apple.IPConfiguration:Server] RTADV en13: start
+2026-11-16 17:08:54.239 Df configd[375:26913d5] [com.apple.eapol:Controller] EAPOLController: en9 is no longer configured, stopping to monitor
+2026-11-16 17:08:54.261 Df configd[375:26913d5] [com.apple.network:path] nw_path_evaluator_cancel [2199C5EC-F4E2-498C-A5EE-31EA362CB740] cancel
+2026-11-16 17:08:54.273 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] en13 link ACTIVE
+2026-11-16 17:08:54.274 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] DHCP en13: INIT
+2026-11-16 17:08:54.274 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] DHCP en13: supplying hostname 'My-MBP'
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] DHCP en13: INIT waiting at 0 for 1.900497
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] RTADV en13: link-local address is ready, starting
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] RTADV en13: Solicit
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] ioctl(en13, SIOCDIFADDR) failed status, Can't assign requested address
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] ioctl(en13, SIOCDIFADDR) failed status, Can't assign requested address
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] ioctl(en13, SIOCDIFADDR) failed status, Can't assign requested address
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] ioctl(en13, SIOCDIFADDR) failed status, Can't assign requested address
+2026-11-16 17:08:54.275 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] RTADV en13: sending Router Solicitation (1 of 3)
+2026-11-16 17:08:54.310 Df configd[375:26913d5] [com.apple.network:] -[NWConcrete_nw_resolver initWithEndpoint:parameters:path:log_str:] [R1963] created for IPv4#e75e5a58:0 using: generic, attribution: developer
+2026-11-16 17:08:54.310 Df configd[375:26913d5] [com.apple.network:path] nw_path_evaluator_start [C3C2C49F-C692-4B49-ABBE-8F4BF1C0B0B1 IPv4#e75e5a58:0 generic, attribution: developer]
+	path: <private>
+2026-11-16 17:08:54.310 Df configd[375:26913d5] [com.apple.network:] nw_resolver_set_update_handler_block_invoke [R1963] started
+2026-11-16 17:08:54.311 Df configd[375:26913d6] [com.apple.network:path] nw_path_evaluator_cancel [C3C2C49F-C692-4B49-ABBE-8F4BF1C0B0B1] cancel
+2026-11-16 17:08:54.638 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:2D92DA80-615F-43C3-81E6-CBF74720F5DB pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647634
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647750
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4294970226
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647719
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647627
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647654
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647712
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647632
+2026-11-16 17:08:54.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647638
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647634
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647750
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4294970226
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647719
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647627
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647654
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647712
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647632
+2026-11-16 17:08:54.645 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 2D92DA80-615F-43C3-81E6-CBF74720F5DB not entitled to match protected service: 4295647638
+2026-11-16 17:08:54.734 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:2D92DA80-615F-43C3-81E6-CBF74720F5DB pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:55.012 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:55.018 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:55.018 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:55.283 Df configd[375:26913d5] [com.apple.network:] -[NWConcrete_nw_resolver initWithEndpoint:parameters:path:log_str:] [R1964] created for IPv4#e75e5a58:0 using: generic, attribution: developer
+2026-11-16 17:08:55.283 Df configd[375:26913d5] [com.apple.network:path] nw_path_evaluator_start [D4C536A3-5F7C-4FEF-923A-63016C138837 IPv4#e75e5a58:0 generic, attribution: developer]
+	path: <private>
+2026-11-16 17:08:55.283 Df configd[375:26913d6] [com.apple.network:] nw_resolver_set_update_handler_block_invoke [R1964] started
+2026-11-16 17:08:55.285 Df configd[375:26913e1] [com.apple.network:path] nw_path_evaluator_cancel [D4C536A3-5F7C-4FEF-923A-63016C138837] cancel
+2026-11-16 17:08:55.970 Df WindowServer[434:2689e73] [com.apple.accessories:USBPDAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.component.USBPD.published)
+2026-11-16 17:08:55.970 Df WindowServer[434:2689e73] [com.apple.accessories:USBPDAnalytics] Sending analytics event... (eventName: com.apple.ioport.transport.component.USBPD.published)
+2026-11-16 17:08:56.179 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] DHCP en13: INIT waiting at 1.90341 for 2.018603
+2026-11-16 17:08:56.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:71188E71-EC40-4ACC-9414-77347DB3CDFE pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647634
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647750
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4294970226
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647719
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647627
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647654
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647712
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647632
+2026-11-16 17:08:56.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647638
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647634
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647750
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4294970226
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647719
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647627
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647654
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647712
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647632
+2026-11-16 17:08:56.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 71188E71-EC40-4ACC-9414-77347DB3CDFE not entitled to match protected service: 4295647638
+2026-11-16 17:08:56.728 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:71188E71-EC40-4ACC-9414-77347DB3CDFE pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:57.005 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:57.012 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:57.012 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:58.204 Df configd[375:26913d6] [com.apple.IPConfiguration:Server] DHCP en13: INIT waiting at 3.92945 for 4.901446
+2026-11-16 17:08:58.599 Df configd[375:26913d6] [com.apple.IPConfiguration:Server] RTADV en13: sending Router Solicitation (2 of 3)
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:A030574D-B336-4D20-A6C7-0A1B7A849787 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647634
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647750
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4294970226
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647719
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647627
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647654
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647712
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647632
+2026-11-16 17:08:58.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647638
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647634
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647750
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4294970226
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647719
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647627
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647654
+2026-11-16 17:08:58.647 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647712
+2026-11-16 17:08:58.648 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647632
+2026-11-16 17:08:58.648 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: A030574D-B336-4D20-A6C7-0A1B7A849787 not entitled to match protected service: 4295647638
+2026-11-16 17:08:58.704 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 848 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:58.704 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 733 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:58.705 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 21361 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:58.705 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 645 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:08:58.753 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:A030574D-B336-4D20-A6C7-0A1B7A849787 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:08:59.021 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:59.021 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:59.021 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:08:59.414 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59c8c0 count:1
+2026-11-16 17:08:59.414 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59c8c0 count:1
+2026-11-16 17:08:59.414 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59f420 count:1
+2026-11-16 17:08:59.414 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59f420 count:1
+2026-11-16 17:08:59.421 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59cb60 count:1
+2026-11-16 17:08:59.421 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59cb60 count:1
+2026-11-16 17:08:59.428 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59db40 count:1
+2026-11-16 17:08:59.428 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59db40 count:1
+2026-11-16 17:08:59.440 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59c8a0 count:1
+2026-11-16 17:08:59.440 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59c8a0 count:1
+2026-11-16 17:08:59.440 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59db40 count:1
+2026-11-16 17:08:59.440 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59db40 count:1
+2026-11-16 17:08:59.441 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) acquire for reason:nodeCoordinatorDidUpdate out of band acq:0x776b59cb60 count:1
+2026-11-16 17:08:59.441 Df WindowServer[434:1078] [com.apple.SkyLight:HIDDispatch] <BSCompoundAssertion:0x776b290000> (GestureEventCollector) invalidate acq:0x776b59cb60 count:1
+2026-11-16 17:08:59.656 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:08:59.656 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:08:59.665 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:08:59.702 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.004 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:00.004 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.082 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:00.085 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.099 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:00.099 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.159 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:BE5F600B-EC53-4C4F-8007-628BEB6ACF2D pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647634
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647750
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4294970226
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647719
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647627
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647654
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647712
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647632
+2026-11-16 17:09:00.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647638
+2026-11-16 17:09:00.650 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647634
+2026-11-16 17:09:00.650 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647750
+2026-11-16 17:09:00.650 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4294970226
+2026-11-16 17:09:00.650 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647719
+2026-11-16 17:09:00.650 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647627
+2026-11-16 17:09:00.650 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647654
+2026-11-16 17:09:00.651 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647712
+2026-11-16 17:09:00.651 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647632
+2026-11-16 17:09:00.651 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: BE5F600B-EC53-4C4F-8007-628BEB6ACF2D not entitled to match protected service: 4295647638
+2026-11-16 17:09:00.743 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:00.743 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.749 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:BE5F600B-EC53-4C4F-8007-628BEB6ACF2D pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:00.809 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:00.962 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:00.962 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.020 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:01.023 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:01.023 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:01.027 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.276 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.276 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.343 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.357 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.357 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.369 E  WindowServer[434:11ce] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2125107
+2026-11-16 17:09:01.414 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.444 E  WindowServer[434:11ce] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2125107
+2026-11-16 17:09:01.507 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.507 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.528 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.528 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.599 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.615 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.615 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.619 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.619 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:01.675 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.675 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.720 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.744 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.744 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.772 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.813 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.813 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.819 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.905 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.922 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.922 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:01.992 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:01.992 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.036 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.057 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.140 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.140 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.192 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.201 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.201 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.283 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.283 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.293 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.349 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.366 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.366 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.461 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.461 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.461 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.520 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.520 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.531 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.584 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:6BBC6FD5-C554-4978-9365-F20F91E4DAEF pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647634
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647750
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4294970226
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647719
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647627
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647654
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647712
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647632
+2026-11-16 17:09:02.639 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647638
+2026-11-16 17:09:02.639 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.639 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647634
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647750
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4294970226
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647719
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647627
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647654
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647712
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647632
+2026-11-16 17:09:02.646 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 6BBC6FD5-C554-4978-9365-F20F91E4DAEF not entitled to match protected service: 4295647638
+2026-11-16 17:09:02.732 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.739 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:6BBC6FD5-C554-4978-9365-F20F91E4DAEF pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:02.746 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.746 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.797 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.881 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.881 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.891 Df configd[375:26913e1] [com.apple.IPConfiguration:Server] RTADV en13: sending Router Solicitation (3 of 3)
+2026-11-16 17:09:02.958 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:02.968 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:02.968 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.021 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:03.039 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.039 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.044 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:03.044 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:03.065 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.107 Df configd[375:26913e1] [com.apple.IPConfiguration:Server] DHCP en13: ARP router: No leases to query for
+2026-11-16 17:09:03.108 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.109 Df configd[375:26913e1] [com.apple.IPConfiguration:Server] DHCP en13: INIT waiting at 8.83305 for 8.669709
+2026-11-16 17:09:03.122 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.122 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.180 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.190 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.190 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.274 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.294 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:03.519 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.519 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.554 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.634 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.634 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.679 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.766 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.766 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.848 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.848 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.857 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.857 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.857 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.862 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.931 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:03.995 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:03.995 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.049 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.049 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.069 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.084 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.084 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.116 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.185 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.197 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.197 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.247 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.247 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.280 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.328 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.328 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.342 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.402 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.417 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.417 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.452 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.452 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.492 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.544 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.552 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.552 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.600 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.600 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.617 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.639 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:836CC068-327D-4FDA-BC0E-F72E676E3155 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647634
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647750
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4294970226
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647719
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647627
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647654
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647712
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647632
+2026-11-16 17:09:04.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647638
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647634
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647750
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4294970226
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647719
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647627
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647654
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647712
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647632
+2026-11-16 17:09:04.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 836CC068-327D-4FDA-BC0E-F72E676E3155 not entitled to match protected service: 4295647638
+2026-11-16 17:09:04.700 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.707 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.707 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.730 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:836CC068-327D-4FDA-BC0E-F72E676E3155 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:04.797 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.797 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.823 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.857 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.888 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:04.888 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:04.985 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.007 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:05.013 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:05.014 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:05.018 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.018 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.116 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.116 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.117 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.203 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.203 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.225 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.277 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.289 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.289 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.352 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.352 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.364 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.419 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:05.454 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.454 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.497 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.526 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.526 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.527 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:05.531 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.594 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:05.617 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.636 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.636 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.688 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.750 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.750 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.828 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.859 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.859 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.943 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:05.943 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:05.958 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.054 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.054 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.064 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.130 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.136 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:06.381 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.381 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.485 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.500 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.500 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.581 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:66845B02-1AED-43C1-9FA5-03DC543BF62B pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:06.642 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647634
+2026-11-16 17:09:06.642 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647750
+2026-11-16 17:09:06.642 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4294970226
+2026-11-16 17:09:06.642 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647719
+2026-11-16 17:09:06.642 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647627
+2026-11-16 17:09:06.642 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647654
+2026-11-16 17:09:06.643 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647712
+2026-11-16 17:09:06.643 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647632
+2026-11-16 17:09:06.643 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647638
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647634
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647750
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4294970226
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647719
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647627
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647654
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647712
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647632
+2026-11-16 17:09:06.655 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 66845B02-1AED-43C1-9FA5-03DC543BF62B not entitled to match protected service: 4295647638
+2026-11-16 17:09:06.657 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.657 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.709 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.715 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.715 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.761 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:66845B02-1AED-43C1-9FA5-03DC543BF62B pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:06.792 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.802 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:06.834 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.834 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.891 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.902 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:06.914 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.914 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.972 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:06.972 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:06.986 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:06.998 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:07.034 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:07.034 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:07.044 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:07.046 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:07.052 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:07.057 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:07.057 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:07.100 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:07.111 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:07.619 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:08.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:73DC3EAF-C780-4F83-96EF-83548B007357 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647634
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647750
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4294970226
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647719
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647627
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647654
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647712
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647632
+2026-11-16 17:09:08.641 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647638
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647634
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647750
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4294970226
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647719
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647627
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647654
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647712
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647632
+2026-11-16 17:09:08.653 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 73DC3EAF-C780-4F83-96EF-83548B007357 not entitled to match protected service: 4295647638
+2026-11-16 17:09:08.753 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:73DC3EAF-C780-4F83-96EF-83548B007357 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:09.036 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:09.047 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:09.048 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:09.102 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:09.102 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:09.259 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:09.376 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 848 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:09:09.376 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 733 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:09:09.376 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 21361 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:09:09.378 Df WindowServer[434:1078] [com.apple.SkyLight:default] pid 645 failed to act on a ping it dequeued before timing out.
+2026-11-16 17:09:10.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:C650BC4F-6AB5-4A04-99AD-75958ADED275 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647634
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647750
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4294970226
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647719
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647627
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647654
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647712
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647632
+2026-11-16 17:09:10.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647638
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647634
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647750
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4294970226
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647719
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647627
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647654
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647712
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647632
+2026-11-16 17:09:10.646 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: C650BC4F-6AB5-4A04-99AD-75958ADED275 not entitled to match protected service: 4295647638
+2026-11-16 17:09:10.733 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:C650BC4F-6AB5-4A04-99AD-75958ADED275 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:11.025 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:11.031 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:11.031 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:11.780 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] DHCP en13: ARP router: No leases to query for
+2026-11-16 17:09:11.781 Df configd[375:26913d5] [com.apple.IPConfiguration:Server] DHCP en13: INIT waiting at 17.5056 for 8.399143
+2026-11-16 17:09:12.194 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:3E0CE9BB-592A-419F-B7A0-3441DA825F8A pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647634
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647750
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4294970226
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647719
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647627
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647654
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647712
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647632
+2026-11-16 17:09:12.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647638
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647634
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647750
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4294970226
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647719
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647627
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647654
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647712
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647632
+2026-11-16 17:09:12.653 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: 3E0CE9BB-592A-419F-B7A0-3441DA825F8A not entitled to match protected service: 4295647638
+2026-11-16 17:09:12.748 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:3E0CE9BB-592A-419F-B7A0-3441DA825F8A pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:12.869 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:13.027 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:13.041 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:13.041 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:13.298 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:13.298 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:13.395 Df configd[375:269132c] [com.apple.IPConfiguration:Server] LINKLOCAL en13: setting 169.254.191.26 netmask 255.255.0.0 broadcast 169.254.255.255
+2026-11-16 17:09:13.399 Df configd[375:269132c] [com.apple.IPConfiguration:Server] LINKLOCAL en13: publish success { IPv4 }
+2026-11-16 17:09:13.419 Df configd[375:26913d5] [com.apple.network:] -[NWConcrete_nw_resolver initWithEndpoint:parameters:path:log_str:] [R1965] created for IPv4#e75e5a58:0 using: generic, attribution: developer
+2026-11-16 17:09:13.419 Df configd[375:26913d5] [com.apple.network:path] nw_path_evaluator_start [B6BCAF17-D89A-43FF-951E-A64DB1ADDE23 IPv4#e75e5a58:0 generic, attribution: developer]
+	path: <private>
+2026-11-16 17:09:13.419 Df configd[375:269132c] [com.apple.network:] nw_resolver_set_update_handler_block_invoke [R1965] started
+2026-11-16 17:09:13.420 Df configd[375:26913d5] [com.apple.SystemConfiguration:IPMonitor] effective_ifindex_get: utun7 (26): effective en0 (14)
+2026-11-16 17:09:13.423 Df configd[375:26913d5] [com.apple.SystemConfiguration:IPMonitor] network changed
+2026-11-16 17:09:13.429 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:13.444 Df configd[375:269132c] [com.apple.network:path] nw_path_evaluator_cancel [B6BCAF17-D89A-43FF-951E-A64DB1ADDE23] cancel
+2026-11-16 17:09:13.533 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:13.533 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:13.627 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:13.709 E  WindowServer[434:1078] [com.apple.SkyLight:default] WSDisplayStreamGetDisplay: display = NULL, displayStream->displayID = 1
+2026-11-16 17:09:13.715 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:13.715 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:13.715 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:13.933 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:13.939 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:13.939 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:14.043 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.044 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.044 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.044 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.044 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.044 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.099 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.237 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.237 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.280 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.573 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.573 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.573 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.574 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.574 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.574 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.574 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.574 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.592 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.592 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.599 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.640 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:DFFABB53-8B59-4442-98CB-0EC3B573AD38 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647634
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647750
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4294970226
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647719
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647627
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647654
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647712
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647632
+2026-11-16 17:09:14.641 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647638
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647634
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647750
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4294970226
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647719
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647627
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647654
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647712
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647632
+2026-11-16 17:09:14.654 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection: DFFABB53-8B59-4442-98CB-0EC3B573AD38 not entitled to match protected service: 4295647638
+2026-11-16 17:09:14.705 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.705 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.706 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.706 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:14.706 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.709 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:14.741 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:DFFABB53-8B59-4442-98CB-0EC3B573AD38 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:14.767 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.025 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:15.029 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:15.029 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:15.063 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.063 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.153 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:15.155 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.155 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.172 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.207 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.207 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.237 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.271 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.271 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.320 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.320 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.320 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.370 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.370 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.409 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.437 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.444 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:15.451 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.451 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.486 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.527 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:15.539 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.539 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.556 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.606 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.619 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:15.700 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.700 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.763 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.763 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.777 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:15.791 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.836 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:15.863 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.863 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.871 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.937 Df WindowServer[434:1078] [com.apple.BackBoard:EventDelivery] destinations for Keyboard event: (<keyboardFocus; Claude.49869; token: viewbridge-key-window>)
+2026-11-16 17:09:15.937 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] delivery manager destinations for kCGSEventKeyDown event: <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:15.947 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:16.011 Df WindowServer[434:1078] [com.apple.SkyLight:KeyboardEvent] kCGSEventKeyUp was part of a sequence with destination <keyboardFocus; pid: 49869; token: viewbridge-key-window>
+2026-11-16 17:09:16.027 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:8A1BE3B6-5157-430D-B8E3-F8678774B1C4 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647634
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647750
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4294970226
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647719
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647627
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647654
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647712
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647632
+2026-11-16 17:09:16.639 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647638
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647634
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647750
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4294970226
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647719
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647627
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647654
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647712
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647632
+2026-11-16 17:09:16.646 Df WindowServer[434:2689e73] [com.apple.iohid:default] Connection: 8A1BE3B6-5157-430D-B8E3-F8678774B1C4 not entitled to match protected service: 4295647638
+2026-11-16 17:09:16.735 Df WindowServer[434:268aba2] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:8A1BE3B6-5157-430D-B8E3-F8678774B1C4 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:17.014 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:17.022 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:17.022 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:18.640 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection added: IOHIDEventSystemConnection uuid:9D3451D1-3890-43A0-8B8F-8D029C46EDA4 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x0 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647634
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647750
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4294970226
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647719
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647627
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647654
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647712
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647632
+2026-11-16 17:09:18.641 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647638
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647634
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647750
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4294970226
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647719
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647627
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647654
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647712
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647632
+2026-11-16 17:09:18.649 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection: 9D3451D1-3890-43A0-8B8F-8D029C46EDA4 not entitled to match protected service: 4295647638
+2026-11-16 17:09:18.751 Df WindowServer[434:268f535] [com.apple.iohid:default] Connection removed: IOHIDEventSystemConnection uuid:9D3451D1-3890-43A0-8B8F-8D029C46EDA4 pid:36050 process:TG Pro type:Rate Controlled entitlements:0x0 caller:TG Pro: TG Pro + 1234384 attributes:(null) state:0x1 events:0 mask:0x0 dropped:0 dropStatus:0 droppedMask:0x0 lastDroppedTime:NONE
+2026-11-16 17:09:19.019 E  WindowServer[434:11c8] [com.apple.foundation:general] __CFRunLoopModeFindSourceForMachPort returned NULL for mode 'kCFRunLoopDefaultMode' livePort: 2205499
+2026-11-16 17:09:19.021 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:19.024 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window
+2026-11-16 17:09:19.024 E  WindowServer[434:1078] [com.apple.SkyLight:default] _CGXPackagesSetWindowConstraints: Invalid window

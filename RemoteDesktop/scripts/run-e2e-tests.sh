@@ -691,7 +691,7 @@ Glass-to-glass latency (median/p95/avg ms): $REPORT_G2G_MEDIAN/$REPORT_G2G_P95/$
 Heavy-load FPS: $REPORT_HEAVY_LOAD_FPS
 Heavy-load pipeline (median/p95 ms): $REPORT_HEAVY_LOAD_MEDIAN/$REPORT_HEAVY_LOAD_P95
 Security rejection: $REPORT_SECURITY_REJECTION
-Overall: $REPORT_OVERALL_PASSED/$REPORT_OVERALL_TOTAL"
+Overall: $REPORT_OVERALL_PASSED/$REPORT_OVERALL_TOTAL" -m "$(cat "$STRICT_REPORT_FILE" 2>/dev/null || echo 'STRICT: not run')"
 }
 
 commit_metrics_to_branch() {
@@ -1511,6 +1511,18 @@ if [ "$FRAMELOOP_RESULT" -ne 0 ]; then
 else
   log_progress "[CONSOLE] frameloop-trace result=conforms"
 fi
+
+# ---- Strict whole-run metrics (scripts/e2e_strict.py): every second of the run, p99.9 and worst
+# second against the METRICS goals, link, decode refusals, handshake-to-key times. Reported in
+# the log and the test-run commit; it does not change RESULT (the user owns gating). ----
+STRICT_REPORT_FILE="/tmp/keyd-e2e-strict.txt"
+rm -f "$STRICT_REPORT_FILE" /tmp/keyd-e2e-strict.csv
+set +e
+python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv > "$STRICT_REPORT_FILE" 2>&1
+STRICT_RESULT=$?
+set -e
+tee -a "$LOG_FILE" < "$STRICT_REPORT_FILE"
+log_progress "[CONSOLE] strict-metrics result=$([ "$STRICT_RESULT" -eq 0 ] && echo pass || echo fail) csv=/tmp/keyd-e2e-strict.csv"
 
 set +e
 run_reporting

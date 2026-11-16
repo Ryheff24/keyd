@@ -395,7 +395,8 @@ struct ViewportReportPayload {
 ///   gaps >= 15 ms.
 final class FrameTimeline {
     static let shared = FrameTimeline()
-    static let enabled = ProcessInfo.processInfo.arguments.contains("--test-mode")
+    /// Always on: manual sessions need the same per-frame data as E2E runs (scripts/e2e_strict.py).
+    static let enabled = true
 
     private struct Record {
         var seq: UInt16
