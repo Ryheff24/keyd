@@ -34,8 +34,10 @@
 #                                 devicectl brings Settings to the front, waits, reactivates the app;
 #                                 no UI automation, so no passcode prompt on the iPad)
 #   --background-seconds N        Time the app stays in the background in that phase (default 15)
-#   --background-app BUNDLE_ID    App brought to the front to background ours (default com.apple.calculator;
-#                                 Settings can open on its Wi-Fi page, whose scanning disturbs AWDL)
+#   --background-app BUNDLE_ID    App brought to the front to background ours (default com.apple.Preferences;
+#                                 Calculator opens as a window beside ours and does not background it)
+#   --background-url URL          URL that app opens (default prefs:root=General, so Settings never sits on
+#                                 its Wi-Fi page, whose network scanning may disturb AWDL (unproven); "" for none)
 #   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
 #
@@ -75,7 +77,8 @@ SUSTAINED_STREAM_SECONDS="90"
 SKIP_TRANSPORT_ROTATION=false
 BACKGROUND_CYCLE=auto
 BACKGROUND_SECONDS=15
-BACKGROUND_APP=com.apple.calculator
+BACKGROUND_APP=com.apple.Preferences
+BACKGROUND_URL="prefs:root=General"
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
@@ -137,6 +140,8 @@ while [[ $# -gt 0 ]]; do
       BACKGROUND_SECONDS="$2"; shift 2 ;;
     --background-app)
       BACKGROUND_APP="$2"; shift 2 ;;
+    --background-url)
+      BACKGROUND_URL="$2"; shift 2 ;;
     --no-peer-to-peer)
       # Diagnostic: both apps stop including peer-to-peer (AWDL) interfaces.
       NO_PEER_TO_PEER=true; shift ;;
@@ -908,8 +913,12 @@ fi
 now_ms() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03d", strftime("%H:%M:%S", localtime $t), ($t * 1000) % 1000'; }
 
 background_cycle() {
-  echo "[CONSOLE] e2e-bgcycle entry away=${BACKGROUND_SECONDS}s app=${BACKGROUND_APP} $(now_ms)"
-  xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" "$BACKGROUND_APP" 2>&1 | tail -1
+  echo "[CONSOLE] e2e-bgcycle entry away=${BACKGROUND_SECONDS}s app=${BACKGROUND_APP} url=${BACKGROUND_URL} $(now_ms)"
+  if [ -n "$BACKGROUND_URL" ]; then
+    xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" --payload-url "$BACKGROUND_URL" "$BACKGROUND_APP" 2>&1 | tail -1
+  else
+    xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" "$BACKGROUND_APP" 2>&1 | tail -1
+  fi
   echo "[CONSOLE] e2e-bgcycle backgrounded $(now_ms)"
   sleep "$BACKGROUND_SECONDS"
   xcrun devicectl device process launch --device "$IPAD_DEVICE_ID" com.ryheff.keyd.remote.app 2>&1 | tail -1
