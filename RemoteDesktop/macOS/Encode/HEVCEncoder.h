@@ -68,6 +68,11 @@ typedef void (^HEVCEncoderOutputBlock)(const void *data, size_t len, MediaFrameH
 /// @param reason  Logging tag explaining why this adaptation was applied.
 - (void)updateStreamingRateWithFPS:(int)fps bitrate:(int)bitrate reason:(nullable NSString *)reason;
 
+/// Congestion floor on frame QP (kVTCompressionPropertyKey_MinAllowedFrameQP); 0 clears it.
+/// Applied only on change; logged.
+- (void)setMinFrameQP:(int)qp reason:(nullable NSString *)reason;
+@property (nonatomic, readonly) int minFrameQP;
+
 /// Stop the encoder and release the compression session.
 - (void)stop;
 

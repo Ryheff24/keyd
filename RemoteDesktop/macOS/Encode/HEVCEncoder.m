@@ -51,6 +51,11 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
     int _currentBitrate;
     float _currentQuality;
     uint16_t _seq;
+    /* Congestion floor on frame QP (0 = none). Bounds frame size while the Wi-Fi ack gate drops
+     * captures: AverageBitRate and DataRateLimits do not bound a single low-latency frame
+     * (bench 2026-11-16: every 5th video frame at 12/s, p99.9 190 KB; MinAllowedFrameQP 30 -> 74 KB). */
+    int _minFrameQP;
+    uint32_t _minFrameQPChanges;
     atomic_int _pendingFrameCount;
     atomic_bool _forceNextKeyframe;
     atomic_uint _droppedOutputCount;
@@ -106,6 +111,7 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
     _currentBitrate = bitrate;
     _currentQuality = quality;
     _quality = quality;
+    _minFrameQP = 0;   /* a new session starts without the congestion floor */
 
     /* Encoder specification: enable low-latency rate control */
     NSDictionary *encoderSpec = @{
@@ -216,6 +222,37 @@ static const int kEncodePendingSaturationHardDropPendingThreshold = 3;
 - (void)requestKeyframe {
     if (!_isActive || !_session) return;
     atomic_store_explicit(&_forceNextKeyframe, true, memory_order_relaxed);
+}
+
+- (void)setMinFrameQP:(int)qp reason:(NSString *)reason {
+    @synchronized (self) {
+        if (!_isActive || !_session || qp == _minFrameQP) {
+            return;
+        }
+        OSStatus status;
+        if (qp > 0) {
+            CFNumberRef qpRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &qp);
+            status = VTSessionSetProperty(_session, kVTCompressionPropertyKey_MinAllowedFrameQP, qpRef);
+            CFRelease(qpRef);
+        } else {
+            int none = 0;
+            CFNumberRef qpRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &none);
+            status = VTSessionSetProperty(_session, kVTCompressionPropertyKey_MinAllowedFrameQP, qpRef);
+            CFRelease(qpRef);
+        }
+        _minFrameQPChanges++;
+        os_log(hevc_log(), "HEVC min frame QP %d -> %d status=%d changes=%u reason=%{public}s",
+               _minFrameQP, qp, (int)status, _minFrameQPChanges, reason.UTF8String ?: "none");
+        if (status == noErr) {
+            _minFrameQP = qp;
+        }
+    }
+}
+
+- (int)minFrameQP {
+    @synchronized (self) {
+        return _minFrameQP;
+    }
 }
 
 - (void)updateStreamingRateWithFPS:(int)fps bitrate:(int)bitrate reason:(NSString *)reason {

@@ -155,3 +155,93 @@ First USB runs since 061f6a0. Strict whole-run analysis (now with nettop + inter
   before scenePhase .active; frames older than the clock-synced present time by > ~1 s should be dropped.
 - Analyser fixes: USB capture->decode used ~60 HEVC frames only (p50 "55 ms"); now LZ4 frames use the
   ready time (p50 ~10 ms). Mac encode-rate gate is n/a on LZ4/USB (no FT-M there).
+
+## AWDL at 120 fps: the Mac's HEVC encoder is the ceiling (2026-11-16, M1 Max)
+
+Every number below is p99.9 unless marked. Source: the scratch bench `encbench` (VTCompressionSession set up
+like `HEVCEncoder.m`, fed 90 real frames from the E2E ProRes video at a fixed rate) and E2E a698b19.
+
+- **E2E a698b19 (`--mac-default wireless-fps=120`, ack gate 5) vs fc7ad53 (60 fps):**
+
+  | Metric | 60 fps (fc7ad53) | 120 fps (a698b19) |
+  |---|---|---|
+  | Frame interval p99.9 | 166.7 ms | 208.3 ms |
+  | Glass-to-glass p99.9 | 510 ms | 580 ms |
+  | Capture→decode p99.9 | 492 ms | 561 ms |
+  | Mac encode latency p99 | 20 ms | 40 ms |
+  | Ack-gate pre-encode drops | 942 | 6680 |
+  | Mac encoded per second p50 | 60 | 76 |
+  | Seconds below 60 fps | 218 | 79 |
+
+  The 120 fps run had more seconds at 60 fps or better, but it is worse at every p99.9.
+- **The encoder in low-latency mode (`EnableLowLatencyRateControl`) runs one frame at a time:**
+
+  | Frame size | Max fps | Latency at 120 fps | Latency at 60 fps |
+  |---|---|---|---|
+  | 2752×1786 (panel) | 67–69 | 80–87 ms (queueing) | 22 ms |
+  | 2496×1620 | 74–80 | 74–76 ms | 21 ms |
+
+  None of these change it: 420 instead of BGRA input, the H.264 codec, RealTime off, ReferenceBufferCount 1,
+  or MaxFrameDelayCount on or off. PrioritizeEncodingSpeedOverQuality and SpatialAdaptiveQPLevel both return
+  -12900.
+  Buffer properties ruled out:
+  - Real 420v frames copied into fresh buffers with no attachments run at 68 fps, p99.9 80 ms.
+  - Real frames with their attachments removed run at 67 fps.
+  - Only synthetic noise written into 420v buffers reaches 120 fps, and tagging that noise 709 keeps it at
+    120 fps.
+
+  So encode time depends on content. Real clips at 2 s, 20 s, 35 s, 50 s and 68 s of the E2E video all run
+  at 64–69 fps at panel size, and the E2E itself encoded 76 frames/s at 2496×1620.
+- **Normal rate control (low-latency off):** 120 fps at panel size, but it buffers about 4 frames. Latency
+  p99.9 is 45–47 ms at 120 fps and 72–81 ms at 60 fps, so it cannot be used.
+- **Two low-latency sessions at once, each encoding half the frame (2752×893):** both encode engines run
+  (~115 fps each), but a half frame still costs ~8.8 ms (per-frame fixed cost ~3 ms). Each half sits at its
+  limit, so latency p99.9 is ~51 ms at 120 fps. Estimated best with two halves is ~113 fps; four quarters would
+  be worse.
+- **What this means:**
+  - With HEVC low-latency on this Mac, AWDL cannot reach 120 fps at panel size. The limit is about 68 fps for
+    one stream, or about 113 fps with a two-session split (protocol change).
+  - What sets the p99.9 interval and glass-to-glass is still open: radio holds, resume/disconnect frames,
+    and stale frames on resume are all candidates. One 120 fps run against two 60 fps runs is within run noise
+    for the p99.9 rows. Encode latency, gate drops (6680 vs 942–1813) and replaced-before-present (2079 vs
+    586–761) are clearly worse at 120.
+  - Default stays 60. `-wireless-fps` / `-wifi-ack-gate` remain as measurement overrides
+    (`run-e2e-tests.sh --mac-default KEY=VALUE`).
+
+## AWDL p99.9 glass-to-glass: slow-link seconds, two kinds (2026-11-16)
+
+The worst seconds by max g2g (480–780 ms) are mostly in the video phases. In those seconds the Mac encoded
+only 9–20 frames, about the same as the iPad presented, so the delay is on frames that were sent, not on
+frames that were skipped.
+
+Retransmits don't explain it (`retx_align.py`, run a698b19): the worst seconds carry 0–53 KB of
+retransmitted data, and seconds with no retransmit still reach 623 ms.
+
+The Mac's `WiFi ack 1s` and `WiFi perf 1s` lines show two kinds of slow second:
+
+1. **Oversized frames (a feedback loop):**
+
+   | Run | Seconds | Delivered | Encoded | Gate drops | Avg frame | ack RTT avg / max |
+   |---|---|---|---|---|---|---|
+   | fc7ad53 | 19:46:35–37 | 17–24 Mb/s | 10–16 /s | 44–50 /s | 130–178 KB | 312–458 / 594 ms |
+   | 0380171 | 19:01:03 | 70 Mb/s | 10 /s | 50 /s | 170 KB | 399 / 674 ms |
+   | 0380171 | 19:02:46 | 26 Mb/s | 14 /s | 46 /s | 171 KB | 358 / 432 ms |
+   | a698b19 | 20:54:09–10 | 21–25 Mb/s | 13–19 /s | 101–107 /s | 113–147 KB | 303–320 / 502 ms |
+
+   - VT's AverageBitRate is per second. When the gate drops captures, the frames that are encoded share the
+     whole 30 Mb budget, so each gets 2–3 times the normal size (normal is ~62 KB at 60 fps).
+   - The gate counts frames, not bytes. Five ~170 KB frames is ~850 KB in flight, which takes ~400 ms to
+     clear at ~17 Mb/s. That matches the measured ack RTT.
+   - The rate controller treats gate holds as pacing (WiFiRateControl.tla), so the bitrate stays at
+     30 Mbps and the loop never breaks.
+2. **Link stalls with small frames:**
+   - 0380171 19:03:46 and 19:03:50: 17–31 KB frames, delivery 14 Mb/s, ack RTT avg 400–642 ms, max 1.1–1.3 s.
+   - a698b19 20:54:26: 50 KB frames, RTT avg 452 ms.
+   - Frame size cannot fix these.
+
+**Fix for kind 1 (needs the WiFiRateControl / WiFiSendLoop TLA+ models first):** keep each frame's size
+bounded by the admitted frame rate. Lower the encoder bitrate while the gate is dropping captures, and/or gate
+on bytes in flight against the measured delivery rate.
+
+A delivery-following bitrate was rejected before (run ddfd000: radio-burst samples after holds read
+40–460 Mb/s). This differs: the trigger is the gate's own drop count, and the cap is per frame.

@@ -148,6 +148,29 @@ static int32_t WiFiAckGateFramesSetting(void) {
     return value;
 }
 #define kWiFiAckGateFrames (WiFiAckGateFramesSetting())
+/* Congestion frame-QP floor (measurement override, default off). While the ack gate drops
+ * captures, frames that do get encoded carry several captures' change and grew to 130-180 KB
+ * (fc7ad53 19:46:35-37), so five in flight took ~400 ms to clear a ~17 Mb/s link.
+ * `-wifi-congestion-minqp N` (1..51) floors the encoder QP from the first gate drop until the gate
+ * has admitted for `-wifi-congestion-hold-ms M` (default 500) with no drop. */
+static int WiFiCongestionMinQPSetting(void) {
+    static int value = 0;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"wifi-congestion-minqp"];
+        if (n >= 1 && n <= 51) value = (int)n;
+    });
+    return value;
+}
+static uint64_t WiFiCongestionHoldUsSetting(void) {
+    static uint64_t value = 500000;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"wifi-congestion-hold-ms"];
+        if (n >= 1 && n <= 10000) value = (uint64_t)n * 1000;
+    });
+    return value;
+}
 /* Rate under the ack gate (tla/WiFiRateControl.tla). Gate holds are pacing, not congestion: the
  * frame rate stays at kWirelessAdaptiveMaxFPS and the bitrate steps toward the fixed
  * kWirelessHEVCBitrate; the gate skips captures the link cannot take. A bitrate following
@@ -463,6 +486,7 @@ static const int32_t kUSBLZ4GateInFlight = 2;
 @end
 
 @implementation SessionManager {
+    _Atomic uint64_t _wifiCongestionLastDropUs;   /* last ack-gate drop while the QP floor is on */
     /* Wi-Fi ack gate (tla/WiFiSendLoop.tla AckGate), guarded by _wifiAckLock. */
     os_unfair_lock _wifiAckLock;
     uint32_t _sessionWirelessEpoch;   // tla/Lifecycle.tla RestartOnNewConn: epoch the session was started on
@@ -1590,6 +1614,13 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                         }
                         if (ackUnacked >= 0) {
                             [strongSelf wifiAckNoteGateHold];
+                            int congestionQP = WiFiCongestionMinQPSetting();
+                            if (congestionQP > 0) {
+                                strongSelf->_wifiCongestionLastDropUs = (uint64_t)(CACurrentMediaTime() * 1e6);
+                                if (strongSelf->_hevcEncoder.minFrameQP != congestionQP) {
+                                    [strongSelf->_hevcEncoder setMinFrameQP:congestionQP reason:@"ack-gate-drop"];
+                                }
+                            }
                         }
                         return;
                     }
@@ -1600,6 +1631,13 @@ static const int32_t kUSBLZ4GateInFlight = 2;
                                ackUnacked >= 0 ? "ack-gate-clear" : "tcp-backpressure-clear",
                                ackUnacked, tcpInFlightNow, kMaxMediaSendsInFlightWiFi,
                                frameAgeValid ? frameAgeMs : 0, staleDropThresholdMs);
+                    }
+                    if (WiFiCongestionMinQPSetting() > 0 && strongSelf->_hevcEncoder.minFrameQP > 0) {
+                        uint64_t nowUs = (uint64_t)(CACurrentMediaTime() * 1e6);
+                        uint64_t lastDropUs = strongSelf->_wifiCongestionLastDropUs;
+                        if (nowUs > lastDropUs && nowUs - lastDropUs >= WiFiCongestionHoldUsSetting()) {
+                            [strongSelf->_hevcEncoder setMinFrameQP:0 reason:@"gate-clear-held"];
+                        }
                     }
                     strongSelf.wirelessLastEncodeSubmitUs = 0;
                 } else {
@@ -3536,9 +3574,10 @@ static NSString * const kFLLastEpochDefaultsKey = @"FLLastHandshakeEpoch";
         [self resetWiFiAdaptiveControlState];
     } else {
         bitrate = [self wirelessTargetBitrate];
-        os_log(sLog, "Wireless HEVC start: link=%{public}s bitrate=%.1fMbps fps=%d ackGate=%d",
+        os_log(sLog, "Wireless HEVC start: link=%{public}s bitrate=%.1fMbps fps=%d ackGate=%d congestionMinQP=%d holdMs=%llu",
                _wirelessTransport.isAWDL ? "awdl" : "infra", bitrate / 1e6,
-               kWirelessHEVCFPS, kWiFiAckGateFrames);
+               kWirelessHEVCFPS, kWiFiAckGateFrames, WiFiCongestionMinQPSetting(),
+               WiFiCongestionHoldUsSetting() / 1000);
         quality = 0.0f;     /* bitrate-based */
         fps = kWirelessHEVCFPS;
         _capture.captureFPS = fps;
