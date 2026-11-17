@@ -440,6 +440,21 @@ BGCYCLE_LOG_FILE="/tmp/keyd-e2e-bgcycle.log"
 # reads it. A wired USB link should not retransmit: losses there collapse the congestion window.
 NETTOP_PID=""
 NETTOP_FILE="/tmp/keyd-e2e-nettop.csv"
+# Mac USB NCM interface queue counters (netstat -I IF -q) at start and end: "drop overflow" there is
+# the Mac dropping its own TCP segments when the interface queue (2048 pkts) fills.
+IFQ_START_FILE="/tmp/keyd-e2e-ifq-start.txt"
+IFQ_END_FILE="/tmp/keyd-e2e-ifq-end.txt"
+snapshot_ncm_ifq() {
+  local out="$1" ifname
+  : > "$out"
+  for ifname in $(ifconfig -l); do
+    case "$ifname" in en0|lo0|awdl*|llw*|utun*|anpi*|ap*|bridge*|gif*|stf*) continue ;; esac
+    if ifconfig "$ifname" 2>/dev/null | grep -q "inet 169\.254\."; then
+      echo "IFACE $ifname" >> "$out"
+      netstat -I "$ifname" -q >> "$out" 2>&1 || true
+    fi
+  done
+}
 
 cleanup() {
   echo ""
@@ -459,7 +474,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$NETTOP_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$NETTOP_FILE" "$IFQ_START_FILE" "$IFQ_END_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -1083,6 +1098,7 @@ if [ -z "$MAC_PID" ]; then
   exit 1
 fi
 echo "Mac agent PID: $MAC_PID (launched via LaunchServices; stdout: $MAC_STDOUT_LOG)"
+snapshot_ncm_ifq "$IFQ_START_FILE"
 if command -v nettop >/dev/null 2>&1; then
   nettop -p "$MAC_PID" -m tcp -L 0 -s 1 -n -x -J time,interface,state,bytes_in,bytes_out,re-tx,rtt_avg,rcvsize,tx_win,cc_algo > "$NETTOP_FILE" 2>&1 &
   NETTOP_PID=$!
@@ -1597,7 +1613,8 @@ STRICT_REPORT_FILE="/tmp/keyd-e2e-strict.txt"
 rm -f "$STRICT_REPORT_FILE" /tmp/keyd-e2e-strict.csv
 set +e
 [ -n "$NETTOP_PID" ] && kill "$NETTOP_PID" 2>/dev/null || true
-python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv --nettop "$NETTOP_FILE" > "$STRICT_REPORT_FILE" 2>&1
+snapshot_ncm_ifq "$IFQ_END_FILE"
+python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv --nettop "$NETTOP_FILE" --ifq "$IFQ_START_FILE" "$IFQ_END_FILE" > "$STRICT_REPORT_FILE" 2>&1
 STRICT_RESULT=$?
 set -e
 tee -a "$LOG_FILE" < "$STRICT_REPORT_FILE"

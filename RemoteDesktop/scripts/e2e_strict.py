@@ -129,6 +129,34 @@ def parse_nettop(path):
     return conns
 
 
+def parse_ifq(path):
+    """Harness snapshot of `netstat -I IF -q` per USB NCM interface: {iface: (dequeued, dropped,
+    overflow, flow_control)} summed over classes."""
+    out = {}
+    cur = None
+    try:
+        lines = open(path, errors="replace").read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("IFACE "):
+            cur = line.split()[1]
+            out[cur] = [0, 0, 0, 0]
+            continue
+        if cur is None:
+            continue
+        m = re.search(r"dequeued pkts:\s+(\d+)\s+bytes:\s+\d+\s+dropped pkts:\s+(\d+)", line)
+        if m:
+            out[cur][0], out[cur][1] = int(m.group(1)), int(m.group(2))
+        m = re.search(r"drop overflow:\s+(\d+)", line)
+        if m:
+            out[cur][2] += int(m.group(1))
+        m = re.search(r"flow control:\s+(\d+)", line)
+        if m:
+            out[cur][3] += int(m.group(1))
+    return out
+
+
 def parse_mac(path):
     enc = {}
     peers = []
@@ -158,6 +186,8 @@ def main():
     ap.add_argument("--goal-pipe", type=float, default=7.0)
     ap.add_argument("--panel", default="2752x1786")
     ap.add_argument("--nettop", help="harness nettop CSV (per-connection TCP retransmits)")
+    ap.add_argument("--ifq", nargs=2, metavar=("START", "END"),
+                    help="harness `netstat -I IF -q` snapshots of the Mac USB NCM interface")
     a = ap.parse_args()
 
     frames, phases, offset_ms, fails, keys, links, sizes, away = parse_ipad(a.ipad_log)
@@ -340,6 +370,20 @@ def main():
                 b, r, n, nr, _ = by_link["usb"]
                 gate("USB link retransmits", r == 0,
                      f"{r / 1e3:.0f} KB in {nr}/{n} s (a wired link should lose nothing; each loss shrinks the TCP window)")
+
+    if a.ifq:
+        q0, q1 = parse_ifq(a.ifq[0]), parse_ifq(a.ifq[1])
+        if not q0 or not q1:
+            print(f"  Mac USB interface queue: no snapshot ({a.ifq[0]} / {a.ifq[1]})")
+        else:
+            tot_drop = 0
+            for ifn in sorted(set(q0) & set(q1)):
+                d = [b - c for b, c in zip(q1[ifn], q0[ifn])]
+                tot_drop += d[1]
+                print(f"  Mac USB interface {ifn} queue: {d[0]} pkts sent, {d[1]} dropped "
+                      f"({d[2]} overflow), flow-control events {d[3]}")
+            gate("Mac USB interface queue drops", tot_drop == 0,
+                 f"{tot_drop} packets dropped by the Mac's own NCM queue (each one is a TCP loss)")
 
     if a.csv:
         with open(a.csv, "w") as f:
