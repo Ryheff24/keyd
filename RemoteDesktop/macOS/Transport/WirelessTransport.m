@@ -35,11 +35,13 @@ static const uint64_t kLinkSilenceDeadlineNs = 4000000000ULL;
  * tracks it (scratchpad pingcorr, run 1c199bd), so the traffic class and ACK timing are tested
  * empirically here.
  *   wifi-service-class: bestEffort|interactiveVideo|interactiveVoice|responsiveData|signaling|
- *                       background (unset = Network.framework default)
+ *                       background|default (unset = interactiveVideo; default = Network.framework's)
  *   wifi-disable-ack-stretching: YES = ACK every other segment (nw_tcp_options_set_disable_ack_stretching) */
 static nw_service_class_t keydrd_wifi_service_class(const char **nameOut) {
-    static nw_service_class_t cls = nw_service_class_best_effort;
-    static const char *name = "default";
+    /* Default interactiveVideo: E2E 8ab4123/5fd537d/e4143de vs 1c199bd (AWDL ping max/s p50 35 -> 18-21 ms,
+     * frame interval p99 142 -> 50-58 ms). "default" leaves Network.framework's choice. */
+    static nw_service_class_t cls = nw_service_class_interactive_video;
+    static const char *name = "interactiveVideo";
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSString *v = [[NSUserDefaults standardUserDefaults] stringForKey:@"wifi-service-class"];
@@ -49,21 +51,24 @@ static nw_service_class_t keydrd_wifi_service_class(const char **nameOut) {
         else if ([v isEqualToString:@"signaling"]) { cls = nw_service_class_signaling; name = "signaling"; }
         else if ([v isEqualToString:@"background"]) { cls = nw_service_class_background; name = "background"; }
         else if ([v isEqualToString:@"bestEffort"]) { cls = nw_service_class_best_effort; name = "bestEffort"; }
+        else if ([v isEqualToString:@"default"]) { cls = nw_service_class_best_effort; name = "default"; }
     });
     if (nameOut) *nameOut = name;
     return cls;
 }
 
-/* wifi-heartbeat-ms (20..1000, default 1000): heartbeat send period. The heartbeat is new data on
+/* wifi-heartbeat-ms (20..1000, default 50): heartbeat send period. The heartbeat is new data on
  * the media TCP connection; while the ack gate holds, nothing else is sent, so a lost tail segment
  * waits for an RTO or the next heartbeat (run 8ab4123: 1.15 s ack-gate stall with AWDL pings at
- * 26 ms and 16 KB retransmitted). Quiet/lost thresholds stay on kLinkHeartbeatIntervalNs. */
+ * 26 ms and 16 KB retransmitted). At 50 ms (runs 5fd537d, e4143de) no iPad receive silence reached
+ * 0.5 s and glass-to-glass p99.9 fell to 254-289 ms from 381-391. Quiet/lost thresholds stay on
+ * kLinkHeartbeatIntervalNs. */
 static uint64_t keydrd_heartbeat_period_ns(void) {
     static uint64_t ns = 0;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSInteger ms = [[NSUserDefaults standardUserDefaults] integerForKey:@"wifi-heartbeat-ms"];
-        if (ms < 20 || ms > 1000) ms = 1000;
+        if (ms < 20 || ms > 1000) ms = 50;
         ns = (uint64_t)ms * 1000000ULL;
     });
     return ns;

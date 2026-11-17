@@ -42,14 +42,15 @@ final class WirelessTransport {
         return on
     }()
 
-    /// Experiment `--wifi-service-class=NAME` (interactiveVideo, interactiveVoice, responsiveData,
-    /// signaling, bestEffort, background): traffic class of the media/control TCP connection.
+    /// `--wifi-service-class=NAME` (interactiveVideo [default], interactiveVoice, responsiveData,
+    /// signaling, bestEffort, background, default = Network.framework's): traffic class of the
+    /// media/control TCP connection.
     /// AWDL ping RTT runs 100-170 ms in low-traffic seconds (run 1c199bd); tested empirically.
     static let serviceClassOverride: NWParameters.ServiceClass? = {
         let arg = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--wifi-service-class=") }
         let name = arg.map { String($0.dropFirst("--wifi-service-class=".count)) }
         let cls: NWParameters.ServiceClass?
-        switch name {
+        switch name ?? "interactiveVideo" {
         case "interactiveVideo": cls = .interactiveVideo
         case "interactiveVoice": cls = .interactiveVoice
         case "responsiveData": cls = .responsiveData
@@ -58,7 +59,7 @@ final class WirelessTransport {
         case "background": cls = .background
         default: cls = nil
         }
-        print("[CONSOLE] WirelessTransport: serviceClass=\(name ?? "default") applied=\(cls != nil)")
+        print("[CONSOLE] WirelessTransport: serviceClass=\(name ?? "interactiveVideo") applied=\(cls != nil)")
         return cls
     }()
 
@@ -194,13 +195,13 @@ final class WirelessTransport {
     /// Shared/protocol.h KEYDRD_LINK_HEARTBEAT.
     static let linkHeartbeatType: UInt8 = 0x31
     private let linkHeartbeatInterval: TimeInterval = 1.0
-    /// Experiment `--wifi-heartbeat-ms=N` (20...1000): heartbeat send period. A heartbeat is new data
+    /// `--wifi-heartbeat-ms=N` (20...1000, default 50; runs 5fd537d, e4143de): heartbeat send period. A heartbeat is new data
     /// behind a lost tail segment (the frame ACKs share this connection), so recovery need not wait
     /// for an RTO or the 1 s tick (run 8ab4123). Quiet/lost thresholds keep linkHeartbeatInterval.
     static let linkHeartbeatPeriod: TimeInterval = {
         let arg = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--wifi-heartbeat-ms=") }
-        var ms = arg.flatMap { Int($0.dropFirst("--wifi-heartbeat-ms=".count)) } ?? 1000
-        if ms < 20 || ms > 1000 { ms = 1000 }
+        var ms = arg.flatMap { Int($0.dropFirst("--wifi-heartbeat-ms=".count)) } ?? 50
+        if ms < 20 || ms > 1000 { ms = 50 }
         print("[CONSOLE] WirelessTransport: linkHeartbeatPeriodMs=\(ms)")
         return TimeInterval(ms) / 1000.0
     }()
