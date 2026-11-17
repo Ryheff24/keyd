@@ -456,9 +456,14 @@ AWDL_PING_PID=""
 AWDL_PING_FILE="/tmp/keyd-e2e-awdl-ping.txt"
 awdl_ping_loop() {
   local cur="" pid="" peer
+  set +e +o pipefail   # an empty grep before the connection exists must not end the loop
   trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; exit 0' TERM INT EXIT
   while kill -0 "$MAC_PID" 2>/dev/null; do
-    peer=$(tail -200 "$NETTOP_FILE" 2>/dev/null | grep Established | grep -oE '<->fe80::[0-9a-f:]+%awdl0' | tail -1 | sed 's/<->//')
+    peer=$(tail -200 "$NETTOP_FILE" 2>/dev/null | grep Established | grep -oE '<->fe80::[0-9a-f:]+%awdl0' | tail -1 | sed 's/<->//' || true)
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      cur=""   # ping6 exited (e.g. no route during a disconnect): start it again
+      pid=""
+    fi
     if [ -n "$peer" ] && [ "$peer" != "$cur" ]; then
       [ -n "$pid" ] && kill "$pid" 2>/dev/null
       echo "PEER $peer at $(now_ms)" >> "$AWDL_PING_FILE"
