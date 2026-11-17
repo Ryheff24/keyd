@@ -11,7 +11,12 @@ source "$SCRIPT_DIR/async-index.sh"
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 SCHEME="RemoteDesktopApp"
 BUNDLE_ID="com.ryheff.keyd.remote.app"
-DEVICE_ID="00000000-00000000000000A1"
+__keyd_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DEVICE_ID="${DEVICE_ID:-$(sed -n 's/^IPAD_DEVICE[[:space:]]*:=[[:space:]]*//p' "$__keyd_root/device-config.mk" 2>/dev/null)}"
+if [ -z "$DEVICE_ID" ]; then
+  echo "No iPad device ID: set IPAD_DEVICE in device-config.mk (copy device-config.mk.example) or export DEVICE_ID" >&2
+  exit 2
+fi
 CONFIG="Release"
 LOG_SUBSYSTEM="com.ryheff.keyd.remote.app"
 

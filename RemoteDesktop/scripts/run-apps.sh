@@ -42,7 +42,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- Configuration ----
-IPAD_DEVICE_ID="00000000-0000-0000-0000-00000000000A"
+__keyd_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+IPAD_DEVICE_ID="${IPAD_DEVICE_ID:-$(sed -n 's/^IPAD_DEVICE[[:space:]]*:=[[:space:]]*//p' "$__keyd_root/device-config.mk" 2>/dev/null)}"
+if [ -z "$IPAD_DEVICE_ID" ]; then
+  echo "No iPad device ID: set IPAD_DEVICE in device-config.mk (copy device-config.mk.example) or export IPAD_DEVICE_ID" >&2
+  exit 2
+fi
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 IPAD_SCHEME="RemoteDesktopApp"
 MAC_PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"

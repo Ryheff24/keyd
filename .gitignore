@@ -71,3 +71,6 @@ RemoteDesktop/2026-04-02 10-55-42.mkv
 __pycache__/
 *.pyc
 *.profraw
+
+# Codex project config holds absolute local paths
+.codex/config.toml

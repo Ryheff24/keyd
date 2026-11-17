@@ -17,7 +17,7 @@
 #   --notes TEXT                  Required; added to the report commit message and
 #                                  metrics changelog
 #   --capture-file PATH           Use a file-backed synthetic frame source on Mac
-#                                  (default: ./RemoteDesktop/2026-04-02 10-55-42-prores.mov)
+#                                  (default: <repo>/RemoteDesktop/2026-04-02 10-55-42-prores.mov)
 #   --stress-capture              Force procedural full-frame stress source on Mac
 #   --real-capture                Use live ScreenCaptureKit desktop capture instead
 #   --sustained-stream-seconds N  Keep streaming for N seconds after heavy-load
@@ -357,7 +357,12 @@ configure_default_timeout() {
 }
 
 # ---- Configuration ----
-IPAD_DEVICE_ID="00000000-0000-0000-0000-00000000000A"
+__keyd_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+IPAD_DEVICE_ID="${IPAD_DEVICE_ID:-$(sed -n 's/^IPAD_DEVICE[[:space:]]*:=[[:space:]]*//p' "$__keyd_root/device-config.mk" 2>/dev/null)}"
+if [ -z "$IPAD_DEVICE_ID" ]; then
+  echo "No iPad device ID: set IPAD_DEVICE in device-config.mk (copy device-config.mk.example) or export IPAD_DEVICE_ID" >&2
+  exit 2
+fi
 WORKSPACE="RemoteDesktop/RemoteDesktop.xcworkspace"
 IPAD_SCHEME="RemoteDesktopApp"
 MAC_PROJECT="RemoteDesktop/macOS/RemoteDesktopAgent.xcodeproj"
@@ -377,7 +382,7 @@ IPAD_INSTALL_LOG="/tmp/keyd-e2e-install-ipad.log"
 QR_PAYLOAD_FILE="/tmp/keydrd-test-qr.json"
 QR_READY_LOG="Test mode: QR payload written to /tmp/keydrd-test-qr.json"
 QR_SHOWN_LOG="Test mode: auto-showing QR"
-DEFAULT_CAPTURE_FILE="./RemoteDesktop/2026-04-02 10-55-42-prores.mov"
+DEFAULT_CAPTURE_FILE="$(cd "$SCRIPT_DIR/../.." && pwd)/RemoteDesktop/2026-04-02 10-55-42-prores.mov"
 # The .mov stress video produces incompressible frames (~19.7MB) that tank FPS.
 # A static desktop screenshot gives realistic LZ4 deltas (~1-50KB per frame),
 # representing actual desktop usage (idle, text editing, cursor movement).

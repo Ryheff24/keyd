@@ -12,7 +12,7 @@ The user will ONLY perform simple physical actions on devices (tap buttons, scan
 ### Debug Scripts
 - **iPad:** `./RemoteDesktop/scripts/ipad-debug.sh [timeout_seconds]` — builds, installs, launches with console log capture
 - **macOS:** `./RemoteDesktop/scripts/mac-debug.sh [timeout_seconds]` — builds, launches with log streaming
-- iPad device ID: `00000000-0000-0000-0000-00000000000A`
+- iPad device ID: `IPAD_DEVICE` in `device-config.mk` (gitignored; scripts read it from there)
 
 ### E2E Tests
 - Use the canonical Wi-Fi repro when running the current streaming/debugging E2E path:
@@ -23,7 +23,7 @@ The user will ONLY perform simple physical actions on devices (tap buttons, scan
     --notes "brief one-line run note"
   ```
 - `--notes` is required on every E2E run.
-- `run-e2e-tests.sh` now defaults to capture file `./RemoteDesktop/2026-04-02 10-55-42-prores.mov` and sustained stream `90` seconds for `--profile full`.
+- `run-e2e-tests.sh` now defaults to capture file `RemoteDesktop/2026-04-02 10-55-42-prores.mov` (repo-relative, gitignored) and sustained stream `90` seconds for `--profile full`.
 - Use `--transport-rotation wifi` for this repro (`--transports` still works as a deprecated alias).
 - Do not substitute a different capture file unless the repro itself is being changed.
 
