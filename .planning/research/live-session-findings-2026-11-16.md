@@ -327,3 +327,12 @@ the heartbeat alone (without interactiveVideo) was not run.
 - One TCP-only silence ≥0.5 s.
 
 A deeper gate lets the slow-link queue grow (kind 1), and that outweighs the RTT cap. The default stays 5.
+
+**Ack gate depth 4, run 0930c3e: promising, one run only.**
+- g2g p99.9 / max: 214 / 303 ms (gate 5: 251–289 / 360–388).
+- Interval p99.9: 158 ms.
+- Intervals >100 ms: 56.
+- fps p5 / p50: 44 / 57.
+- No silences.
+
+Repeat this before changing the default.

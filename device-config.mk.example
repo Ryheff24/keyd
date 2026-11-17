@@ -1,2 +1,4 @@
-IPAD_DEVICE := 00000000-0000-0000-0000-00000000000A
-IPHONE_DEVICE := 00000000-0000-0000-0000-00000000000B
+# Copy to device-config.mk (gitignored) and fill in your devices' CoreDevice identifiers
+# (`xcrun devicectl list devices`).
+IPAD_DEVICE := 00000000-0000-0000-0000-000000000000
+IPHONE_DEVICE := 00000000-0000-0000-0000-000000000000

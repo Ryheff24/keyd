@@ -66,3 +66,8 @@ fastlane/test_output
 .DS_Store
 RemoteDesktop/2026-04-02 10-55-42-prores.mov
 RemoteDesktop/2026-04-02 10-55-42.mkv
+
+# Python bytecode and coverage output
+__pycache__/
+*.pyc
+*.profraw
