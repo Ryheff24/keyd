@@ -1196,8 +1196,14 @@ final class WirelessTransport {
 
         browserRestartAttempt += 1
         let cappedAttempt = min(browserRestartAttempt, 4)
-        let delay = 0.25 * pow(2.0, Double(cappedAttempt - 1))
-        print("[CONSOLE] WirelessTransport: scheduling browser restart attempt=\(browserRestartAttempt) reason=\(reason) delay=\(String(format: "%.2f", delay))s connectedServiceName=\(connectedServiceName ?? "nil") tUs=\(keydrdHostTimeUs())")
+        // The silence clock includes suspension: this first restart is wake recovery,
+        // not a repeated browser/dial failure. Keep exponential backoff for failures
+        // and subsequent attempts so a broken browser/link cannot spin on the queue.
+        // TransportConnections models discovery/redial, not this scheduling delay.
+        let resumeFastRetry = browserRestartAttempt == 1 && spannedSuspension &&
+            (reason == "link-silent" || reason == "resume-after-suspension")
+        let delay = resumeFastRetry ? 0.0 : 0.25 * pow(2.0, Double(cappedAttempt - 1))
+        print("[CONSOLE] WirelessTransport: scheduling browser restart attempt=\(browserRestartAttempt) reason=\(reason) delay=\(String(format: "%.2f", delay))s resumeFastRetry=\(resumeFastRetry) spannedSuspension=\(spannedSuspension) connectedServiceName=\(connectedServiceName ?? "nil") tUs=\(keydrdHostTimeUs())")
         log.info("Scheduling browser restart attempt=\(self.browserRestartAttempt) reason=\(reason)")
 
         transportQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
