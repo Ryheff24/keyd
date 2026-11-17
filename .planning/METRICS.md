@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `55.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.760` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `31 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `82 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `39 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `51 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `92 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `57 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `51.5 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `27 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `140 ms` | `8 ms` | `7 ms` | ❌ |
+| FPS | `55.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.664` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `33 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `79 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `40 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `53 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `95 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `59 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `55.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `30 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `59 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `85.1%` | `100.0%` | `100.0%` | ❌ |
 
@@ -190,3 +190,4 @@ Rules:
 | 2026-11-16 | 22:02:22 EST | `1c43c60` | `2752x1786` | `2496x1620` | `54.2 fps` | `0.836` | `34/99/43 ms` | `54/104/62 ms` | `57.3 fps, 30/56 ms` | `1` | `41/47` | AWDL: QP floor 30 now default; harness pings iPad AWDL addr every 100 ms to tell radio absence from TCP stall |
 | 2026-11-16 | 22:09:23 EST | `1c199bd` | `2752x1786` | `2496x1620` | `52.1 fps` | `0.915` | `33/123/44 ms` | `53/129/63 ms` | `55.0 fps, 29/71 ms` | `1` | `40/47` | AWDL: QP floor default (repeat); AWDL ping sampler fixed (survives set -e, restarts ping6) |
 | 2026-11-16 | 22:18:36 EST | `8ab4123` | `2752x1786` | `2496x1620` | `55.5 fps` | `0.760` | `31/82/39 ms` | `51/92/57 ms` | `51.5 fps, 27/140 ms` | `1` | `40/47` | AWDL: service class interactiveVideo both sides (ping RTT 100-170ms at low traffic); strict ping coverage fix |
+| 2026-11-16 | 22:26:17 EST | `5fd537d` | `2752x1786` | `2496x1620` | `55.6 fps` | `0.664` | `33/79/40 ms` | `53/95/59 ms` | `55.7 fps, 30/59 ms` | `1` | `40/47` | AWDL: interactiveVideo + 50ms heartbeat both sides (new data behind lost tail; 1s ack-gate stalls with radio up) |
