@@ -318,3 +318,12 @@ windows.
 
 No second below 30 fps in any of the three heartbeat runs; baseline had 4. The single-variable effect of
 the heartbeat alone (without interactiveVideo) was not run.
+
+**Ack gate depth 8 on the new defaults, run 002c96a: rejected.**
+- g2g p99.9 / max: 657 / 1023 ms.
+- Interval p99.9: 183 ms.
+- Intervals >100 ms: 154.
+- fps p5: 24.
+- One TCP-only silence ≥0.5 s.
+
+A deeper gate lets the slow-link queue grow (kind 1), and that outweighs the RTT cap. The default stays 5.
