@@ -278,3 +278,43 @@ filler for 3 s; in qp30a it produced 931–997 ms g2g while TCP RTT was 11–35 
 - During these, frames are small (3–9 KB) and a few KB is retransmitted.
 - The mechanism is unproven: a radio absence, or TCP timer recovery while only a few small frames are in
   flight. Frame size cannot fix it.
+
+## AWDL 1 s stalls: tail loss behind a closed ack gate; fixed with a 50 ms heartbeat (2026-11-16 late)
+
+**Evidence.** The harness now pings the iPad's awdl0 address every 100 ms during E2E
+(`/tmp/keyd-e2e-awdl-ping.txt`). `e2e_strict.py` judges each iPad receive silence ≥0.5 s against the
+pings, skipping windows outside ping coverage.
+- **Run 8ab4123** (interactiveVideo only). Two silences, 903 ms and 1359 ms, were **TCP-only**: pings
+  answered at 26–36 ms throughout.
+  - At 22:17:41.75 the Mac queued five frames (~300 KB), then the ack gate stayed closed for 1.15 s
+    with no app ACKs. nettop shows +16.6 KB retransmitted in that second.
+  - The radio was up. A tail segment was lost while the gate was stopping all new data, so nothing
+    could trigger SACK or fast retransmit. Recovery waited for an RTO or for the 1 s link heartbeat or
+    latency probe, the next data on the connection.
+  - Codex's review of runs bg10/qp30a/qp30b (docs/research/awdl-1s-silence-codex.md) found the same
+    pattern in the reverse direction. Six silences began after all media was parsed. The stalled data
+    was the iPad's frame ACKs, and the recovery callbacks were 26-byte control messages.
+- **Separate effect: AWDL latency depends on load.** Ping RTT was 100–170 ms in seconds where we sent
+  only 0.3–2 Mb/s, against 5–9 ms on an idle link. Correlation of ping max/s with Mb/s: −0.40 (run
+  1c199bd). App-ACK RTT follows ping RTT (corr 0.59), so ack-gate depth 5 caps frame rate near 5/RTT.
+
+**Changes**, now defaults on both sides, with overrides kept:
+- `wifi-service-class` (Mac default) / `--wifi-service-class=` (iPad): **interactiveVideo**.
+- `wifi-heartbeat-ms` / `--wifi-heartbeat-ms=`: **50 ms**, up from 1000. The heartbeat is the new data
+  that sits behind a lost tail segment. The link quiet and lost thresholds are unchanged (2 s / 4 s).
+- `wifi-disable-ack-stretching` / `--tcp-disable-ack-stretching`: added, not yet measured.
+- Harness: `--ipad-arg ARG` passes extra arguments to the iPad app.
+
+**Results.** p99.9 / max over the whole run; "excl" leaves out the deliberate-disconnect and background
+windows.
+
+| run | config | g2g p99.9 / max | interval p99.9 | >100 ms intervals | g2g worst seconds excl | fps p1 / p5 excl | silences ≥0.5 s |
+|---|---|---|---|---|---|---|---|
+| 1c199bd | baseline | 391 / 468 | 192 | 168 | 468, 463, 441 | 25 / 37 | 1 (no ping coverage) |
+| 8ab4123 | interactiveVideo | 381 / 1409 | 167 | 79 | 1409, 1230, 393 | 22 / 45 | 2 TCP-only |
+| 5fd537d | + 50 ms heartbeat | 289 / 1375 (disconnect resume) | 150 | 48 | 414, 309, 290 | 42 / 47 | 0 |
+| e4143de | same (repeat) | 254 / 360 | 150 | 30 | 360, 320, 298 | 39 / 49 | 0 |
+| 7bfa804 | new defaults, no overrides | 251 / 388 | 158 | 62 | 388, 334, 295 | 42 / 46 | 0 |
+
+No second below 30 fps in any of the three heartbeat runs; baseline had 4. The single-variable effect of
+the heartbeat alone (without interactiveVideo) was not run.
