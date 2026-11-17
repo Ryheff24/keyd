@@ -42,6 +42,33 @@ final class WirelessTransport {
         return on
     }()
 
+    /// Experiment `--wifi-service-class=NAME` (interactiveVideo, interactiveVoice, responsiveData,
+    /// signaling, bestEffort, background): traffic class of the media/control TCP connection.
+    /// AWDL ping RTT runs 100-170 ms in low-traffic seconds (run 1c199bd); tested empirically.
+    static let serviceClassOverride: NWParameters.ServiceClass? = {
+        let arg = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--wifi-service-class=") }
+        let name = arg.map { String($0.dropFirst("--wifi-service-class=".count)) }
+        let cls: NWParameters.ServiceClass?
+        switch name {
+        case "interactiveVideo": cls = .interactiveVideo
+        case "interactiveVoice": cls = .interactiveVoice
+        case "responsiveData": cls = .responsiveData
+        case "signaling": cls = .signaling
+        case "bestEffort": cls = .bestEffort
+        case "background": cls = .background
+        default: cls = nil
+        }
+        print("[CONSOLE] WirelessTransport: serviceClass=\(name ?? "default") applied=\(cls != nil)")
+        return cls
+    }()
+
+    /// Experiment `--tcp-disable-ack-stretching`: TCP ACK every other segment on the iPad side.
+    static let disableAckStretching: Bool = {
+        let on = ProcessInfo.processInfo.arguments.contains("--tcp-disable-ack-stretching")
+        print("[CONSOLE] WirelessTransport: disableAckStretching=\(on)")
+        return on
+    }()
+
     /// Whether this build ever dials AWDL (the product does unless `--no-peer-to-peer`).
     static var prefersAWDL: Bool { includePeerToPeer || pinAWDL }
 
@@ -348,7 +375,13 @@ final class WirelessTransport {
 
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
+        if WirelessTransport.disableAckStretching {
+            tcpOptions.disableAckStretching = true
+        }
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
+        if let cls = WirelessTransport.serviceClassOverride {
+            params.serviceClass = cls
+        }
         WirelessTransport.applyInterfacePolicy(params)
         // OneLink + AwdlFirst. An AWDL dial turns peer-to-peer on and prohibits every
         // infrastructure interface the Bonjour result listed (results list only en0 even when the

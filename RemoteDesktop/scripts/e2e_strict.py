@@ -146,22 +146,36 @@ def ping_report(mac_log, ipad_log, offset_ms, path):
         print("  AWDL ping: no FT-M lines to align clocks")
         return
     wall_off = sorted(diffs)[len(diffs) // 2]
-    sil = []
+    sil, sil_all = [], []
     for line in open(ipad_log, errors="replace"):
         f = FT_IRX.search(line)
         if not f:
             continue
         for e in f.group(1).split(";"):
             p3 = e.split(",")
-            if len(p3) == 3 and 500_000 <= int(p3[1]) <= 3_000_000:
+            if len(p3) == 3 and 100_000 <= int(p3[1]) <= 3_000_000:
                 start = (int(p3[0]) + offset_ms * 1000) / 1e6 + wall_off
-                sil.append((start, int(p3[1]) / 1e6))
+                sil_all.append((start, int(p3[1]) / 1e6))
+                if int(p3[1]) >= 500_000:
+                    sil.append((start, int(p3[1]) / 1e6))
     rts = [r for _, r in replies]
     gaps = [(b[0] - a[0], a[0]) for a, b in zip(replies, replies[1:]) if b[0] - a[0] > 0.3]
     print(f"  AWDL ping (100 ms): {len(replies)} replies  rtt ms p99.9 {pct(rts, 99.9):.1f} max {max(rts):.1f}  "
           f"reply gaps >300 ms: {len(gaps)}")
-    radio = tcp = 0
+    for g, t in sorted(gaps, reverse=True)[:8]:
+        # iPad receive callback gaps overlapping this ping gap (media went quiet too?)
+        over = [d for s0, d in sil_all if s0 < t + g and s0 + d > t]
+        hh, rem = divmod(t, 3600)
+        mm, ss = divmod(rem, 60)
+        print(f"    ping gap {g * 1000:.0f} ms after ~{int(hh):02d}:{int(mm):02d}:{ss:06.3f}: "
+              f"overlapping iPad receive gaps >=100 ms: {[round(d * 1000) for d in over] or 'none'}")
+    radio = tcp = nocov = 0
+    first, last = replies[0][0], replies[-1][0]
     for start, dur in sil:
+        if start < first or start + dur > last:
+            nocov += 1
+            print(f"    iPad silence {dur * 1000:.0f} ms at ~{start:.3f}s-of-day: outside ping coverage")
+            continue
         inside = [r for t, r in replies if start <= t <= start + dur]
         frac = len(inside) / max(1.0, dur / 0.1)
         if frac >= 0.5:
@@ -174,7 +188,8 @@ def ping_report(mac_log, ipad_log, offset_ms, path):
         mm, ss = divmod(rem, 60)
         print(f"    iPad silence {dur * 1000:.0f} ms at ~{int(hh):02d}:{int(mm):02d}:{ss:06.3f}: "
               f"{len(inside)} ping replies of ~{dur / 0.1:.0f} (rtt max {max(inside or [0]):.0f} ms) -> {verdict}")
-    print(f"  iPad silences 0.5-3 s: {len(sil)}  link-down {radio}  TCP-only {tcp}  partial {len(sil) - radio - tcp}")
+    print(f"  iPad silences 0.5-3 s: {len(sil)}  link-down {radio}  TCP-only {tcp}  "
+          f"partial {len(sil) - radio - tcp - nocov}  no ping coverage {nocov}")
 
 
 def parse_nettop(path):

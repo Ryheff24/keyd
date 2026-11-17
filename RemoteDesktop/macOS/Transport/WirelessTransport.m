@@ -30,6 +30,39 @@ static const uint64_t kTransientMediaGapControlRecoveryGraceNs = 1500000000ULL;
 static const uint64_t kLinkHeartbeatIntervalNs = 1000000000ULL;
 static const uint64_t kLinkSilenceDeadlineNs = 4000000000ULL;
 
+/* Media/control TCP experiment overrides (NSUserDefaults / `-KEY VALUE` launch args, E2E
+ * `--mac-default`). AWDL ping RTT runs 100-170 ms in low-traffic seconds and the app ACK RTT
+ * tracks it (scratchpad pingcorr, run 1c199bd), so the traffic class and ACK timing are tested
+ * empirically here.
+ *   wifi-service-class: bestEffort|interactiveVideo|interactiveVoice|responsiveData|signaling|
+ *                       background (unset = Network.framework default)
+ *   wifi-disable-ack-stretching: YES = ACK every other segment (nw_tcp_options_set_disable_ack_stretching) */
+static nw_service_class_t keydrd_wifi_service_class(const char **nameOut) {
+    static nw_service_class_t cls = nw_service_class_best_effort;
+    static const char *name = "default";
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *v = [[NSUserDefaults standardUserDefaults] stringForKey:@"wifi-service-class"];
+        if ([v isEqualToString:@"interactiveVideo"]) { cls = nw_service_class_interactive_video; name = "interactiveVideo"; }
+        else if ([v isEqualToString:@"interactiveVoice"]) { cls = nw_service_class_interactive_voice; name = "interactiveVoice"; }
+        else if ([v isEqualToString:@"responsiveData"]) { cls = nw_service_class_responsive_data; name = "responsiveData"; }
+        else if ([v isEqualToString:@"signaling"]) { cls = nw_service_class_signaling; name = "signaling"; }
+        else if ([v isEqualToString:@"background"]) { cls = nw_service_class_background; name = "background"; }
+        else if ([v isEqualToString:@"bestEffort"]) { cls = nw_service_class_best_effort; name = "bestEffort"; }
+    });
+    if (nameOut) *nameOut = name;
+    return cls;
+}
+
+static BOOL keydrd_wifi_disable_ack_stretching(void) {
+    static BOOL on = NO;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        on = [[NSUserDefaults standardUserDefaults] boolForKey:@"wifi-disable-ack-stretching"];
+    });
+    return on;
+}
+
 static uint64_t keydrd_mach_delta_ns(uint64_t newerTicks, uint64_t olderTicks) {
     if (newerTicks <= olderTicks) {
         return 0;
@@ -281,8 +314,18 @@ static bool wireless_include_peer_to_peer(void) {
         },
         ^(nw_protocol_options_t tcp_options) {
             nw_tcp_options_set_no_delay(tcp_options, true);
+            if (keydrd_wifi_disable_ack_stretching()) {
+                nw_tcp_options_set_disable_ack_stretching(tcp_options, true);
+            }
         });
 
+    const char *svcName = NULL;
+    nw_service_class_t svc = keydrd_wifi_service_class(&svcName);
+    if (strcmp(svcName, "default") != 0) {
+        nw_parameters_set_service_class(tcpParams, svc);
+    }
+    os_log(wireless_log(), "Wireless TCP params: serviceClass=%{public}s disableAckStretching=%d",
+           svcName, keydrd_wifi_disable_ack_stretching());
     return tcpParams;
 }
 

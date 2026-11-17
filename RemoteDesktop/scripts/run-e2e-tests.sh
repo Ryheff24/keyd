@@ -42,6 +42,8 @@
 #                                 kUSBDefaultPacingMbps)
 #   --mac-default KEY=VALUE       Pass `-KEY VALUE` to the Mac agent (an NSUserDefaults override for this run,
 #                                 e.g. wireless-fps=120, wifi-ack-gate=8); repeatable
+#   --ipad-arg ARG                Append ARG to the iPad app's launch arguments (e.g.
+#                                 --wifi-service-class=interactiveVideo); repeatable
 #   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
 #
@@ -85,6 +87,7 @@ BACKGROUND_APP=com.apple.Preferences
 BACKGROUND_URL="prefs:root=General"
 USB_PACING_MBPS=""
 MAC_DEFAULTS=()
+IPAD_EXTRA_ARGS=()
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
@@ -150,6 +153,8 @@ while [[ $# -gt 0 ]]; do
       BACKGROUND_URL="$2"; shift 2 ;;
     --usb-pacing-mbps)
       USB_PACING_MBPS="$2"; shift 2 ;;
+    --ipad-arg)
+      IPAD_EXTRA_ARGS+=("$2"); shift 2 ;;
     --mac-default)
       case "$2" in
         *=*) MAC_DEFAULTS+=("$2") ;;
@@ -1308,6 +1313,9 @@ elif [ "$WIRELESS_ONLY" = true ]; then
   IPAD_LAUNCH_ARGS+=(--wireless-only)
 fi
 
+if [ "${#IPAD_EXTRA_ARGS[@]}" -gt 0 ]; then
+  IPAD_LAUNCH_ARGS+=("${IPAD_EXTRA_ARGS[@]}")
+fi
 log_progress "iPad launch args: ${IPAD_LAUNCH_ARGS[*]}"
 
 # Pass the QR payload as a launch argument (--qr-payload <base64>)
