@@ -134,3 +134,24 @@ interval p99.9 <= 12.5 ms is not reachable over AWDL as the radio behaves now. C
 WiFiAware framework (real-time performance modes) is `@available(macOS, unavailable)` on every
 symbol in the MacOSX27.2 SDK, so it is not an option for a Mac peer. USB is where the strict goals
 are physically reachable; USB has not been run since 061f6a0 (2026-11-15, ~95-100 fps).
+
+## USB: the Mac drops its own packets (2026-11-16 night; runs 85e0378, 6673290, 82059b6, f9c82b2, 7890dae)
+First USB runs since 061f6a0. Strict whole-run analysis (now with nettop + interface-queue gates):
+- 85e0378: 89 fps; s23-31 at 4-13 fps, frames 2.4-11 MB arriving 230-690 ms apart, link carrying 74-216
+  Mb/s, then climbing back 275 -> 3622 Mb/s over 6 s (congestion-window recovery). Repeat 6673290 did not
+  collapse (94 fps, interval p99.9 41.7 ms): intermittent.
+- Cause, measured: the Mac's USB NCM interface queue (en13, FQ_CODEL, 2048 pkts ~ 3 MB, class BE)
+  overflows: `netstat -I en13 -q` "drop overflow" 1482 packets in one control run (f9c82b2), matching
+  ~2.4 MB of TCP retransmits in 118 of 233 s (nettop re-tx). "flow control: 0": the TCP flow gets no
+  flow-advisory before the drop. Every drop shrinks the window; a burst of drops is the collapse.
+  The iPad's advertised window is ~4 MB (nettop tx_win), more than the queue holds, and the queue
+  still overflows when paced at 2.5 Gb/s, so the iPad side pauses taking packets for >10 ms at times.
+- Pacing (`nw_tcp_set_max_pacing_rate`, macOS 27) is not the fix: 4000 Mb/s 1.7 MB re-tx; 2500 Mb/s
+  426 queue drops (vs 1482) but mean 76 fps vs 87, g2g p99.9 141 vs 84 ms. Default left off;
+  `-usb-pacing-mbps N` / harness `--usb-pacing-mbps N` for experiments.
+- Fix direction: bound the agent's own TCP backlog below the queue (nw_tcp_get_available_send_buffer,
+  submit large frames in pieces while unacked + piece <= budget ~1.5 MB). Send-loop change: model first.
+- Also seen: a frame captured 0.45 s after Home was presented on wake 14 s later (USB, 7890dae seq 257),
+  before scenePhase .active; frames older than the clock-synced present time by > ~1 s should be dropped.
+- Analyser fixes: USB capture->decode used ~60 HEVC frames only (p50 "55 ms"); now LZ4 frames use the
+  ready time (p50 ~10 ms). Mac encode-rate gate is n/a on LZ4/USB (no FT-M there).

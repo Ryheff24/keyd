@@ -58,7 +58,18 @@ static const int kEcoWidth  = 1920;
 static const int kEcoHeight = 1080;
 static const int kEcoFPS    = 30;
 static const int kEcoBitrate = 8000000; /* 8 Mbps */
-static const int kWirelessHEVCFPS = 60;
+/* Wireless capture/encode rate. Default 60; `-wireless-fps N` (30..120) overrides it per launch
+ * for measurement (the E2E source video is 120 fps, so 60 caps AWDL at half the goal). */
+static int WirelessMaxFPSSetting(void) {
+    static int value = 60;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"wireless-fps"];
+        if (n >= 30 && n <= 120) value = (int)n;
+    });
+    return value;
+}
+#define kWirelessHEVCFPS (WirelessMaxFPSSetting())
 static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps — reasonable WiFi LAN starting point */
 /* AWDL target (WiFiRateControl T on AWDL). Run a470989 on AWDL: target 10 Mbps, actual ~7 Mbps
  * (16 KB/frame at 56 fps), visibly soft; big frames moved at p10 27 / p50 59 Mb/s. 20 Mbps keeps a
@@ -69,7 +80,7 @@ static const int kWirelessHEVCBitrate = 10000000; /* 10 Mbps — reasonable WiFi
 static const int kAWDLHEVCBitrate = 30000000;
 static const int kWirelessAdaptiveMinFPS = 30;
 static const int kWirelessAdaptiveMidFPS = 52;
-static const int kWirelessAdaptiveMaxFPS = 60;
+#define kWirelessAdaptiveMaxFPS (WirelessMaxFPSSetting())
 static const int kWirelessAdaptiveMinBitrate = 5000000;  /* 5 Mbps floor — readable text at 2496x1620 */
 static const int kWirelessAdaptiveMaxBitrate = 30000000; /* 30 Mbps ceiling — LAN WiFi can handle this */
 static const int kWirelessAdaptiveBitrateStepDown = 1500000; /* 1.5 Mbps — proportional to new range */
@@ -125,7 +136,18 @@ static const int32_t kMaxMediaSendsInFlightWiFi = 3;
  * (KEYDRD_INPUT_FRAME_ACK), a capture is encoded only while sent-but-unacked frames < this.
  * The gate caps throughput at depth / ack RTT: at 3, run b95e17d's slow windows (RTT p50 ~99 ms
  * during link holds) were held to ~30 fps. TLAPS (WiFiSendLoopProofs) covers any depth. */
-static const int32_t kWiFiAckGateFrames = 5;
+/* `-wifi-ack-gate N` (1..32) overrides the depth per launch for measurement. The gate counts frames,
+ * so at 120 fps the same depth covers half the time. */
+static int32_t WiFiAckGateFramesSetting(void) {
+    static int32_t value = 5;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"wifi-ack-gate"];
+        if (n >= 1 && n <= 32) value = (int32_t)n;
+    });
+    return value;
+}
+#define kWiFiAckGateFrames (WiFiAckGateFramesSetting())
 /* Rate under the ack gate (tla/WiFiRateControl.tla). Gate holds are pacing, not congestion: the
  * frame rate stays at kWirelessAdaptiveMaxFPS and the bitrate steps toward the fixed
  * kWirelessHEVCBitrate; the gate skips captures the link cannot take. A bitrate following
@@ -3514,8 +3536,9 @@ static NSString * const kFLLastEpochDefaultsKey = @"FLLastHandshakeEpoch";
         [self resetWiFiAdaptiveControlState];
     } else {
         bitrate = [self wirelessTargetBitrate];
-        os_log(sLog, "Wireless HEVC start: link=%{public}s bitrate=%.1fMbps",
-               _wirelessTransport.isAWDL ? "awdl" : "infra", bitrate / 1e6);
+        os_log(sLog, "Wireless HEVC start: link=%{public}s bitrate=%.1fMbps fps=%d ackGate=%d",
+               _wirelessTransport.isAWDL ? "awdl" : "infra", bitrate / 1e6,
+               kWirelessHEVCFPS, kWiFiAckGateFrames);
         quality = 0.0f;     /* bitrate-based */
         fps = kWirelessHEVCFPS;
         _capture.captureFPS = fps;

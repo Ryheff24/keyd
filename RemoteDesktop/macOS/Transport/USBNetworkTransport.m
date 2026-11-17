@@ -59,7 +59,7 @@ static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
  * segments almost every second (nettop re-tx, E2E 6673290: 2.3 MB in 119 of 238 s) and each
  * loss shrinks the congestion window: windows of 80-130 Mb/s with 230-690 ms frame gaps
  * (E2E 85e0378 s23-31). Override per launch with `-usb-pacing-mbps N` (0 = off). */
-static const NSInteger kUSBDefaultPacingMbps = 4000;
+static const NSInteger kUSBDefaultPacingMbps = 0;   /* off: 4000 and 2500 still overflowed the queue and cost fps (E2E 82059b6, 7890dae) */
 
 static BOOL buildUSBChunkedTCPBatch(const void *payload,
                                     size_t payloadLen,

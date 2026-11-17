@@ -40,6 +40,8 @@
 #                                 its Wi-Fi page, whose network scanning may disturb AWDL (unproven); "" for none)
 #   --usb-pacing-mbps N           Mac USB TCP pacing cap in Mb/s for this run (0 = off; default: the agent's
 #                                 kUSBDefaultPacingMbps)
+#   --mac-default KEY=VALUE       Pass `-KEY VALUE` to the Mac agent (an NSUserDefaults override for this run,
+#                                 e.g. wireless-fps=120, wifi-ack-gate=8); repeatable
 #   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
 #
@@ -82,6 +84,7 @@ BACKGROUND_SECONDS=15
 BACKGROUND_APP=com.apple.Preferences
 BACKGROUND_URL="prefs:root=General"
 USB_PACING_MBPS=""
+MAC_DEFAULTS=()
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
@@ -147,6 +150,12 @@ while [[ $# -gt 0 ]]; do
       BACKGROUND_URL="$2"; shift 2 ;;
     --usb-pacing-mbps)
       USB_PACING_MBPS="$2"; shift 2 ;;
+    --mac-default)
+      case "$2" in
+        *=*) MAC_DEFAULTS+=("$2") ;;
+        *) echo "--mac-default needs KEY=VALUE, got '$2'" >&2; exit 2 ;;
+      esac
+      shift 2 ;;
     --no-peer-to-peer)
       # Diagnostic: both apps stop including peer-to-peer (AWDL) interfaces.
       NO_PEER_TO_PEER=true; shift ;;
@@ -1033,6 +1042,10 @@ MAC_LAUNCH_ARGS=(--test-mode --automation-mode)
 if [ -n "$USB_PACING_MBPS" ]; then
   MAC_LAUNCH_ARGS+=(-usb-pacing-mbps "$USB_PACING_MBPS")
 fi
+for kv in ${MAC_DEFAULTS[@]+"${MAC_DEFAULTS[@]}"}; do
+  MAC_LAUNCH_ARGS+=("-${kv%%=*}" "${kv#*=}")
+  echo "Mac default override: ${kv%%=*}=${kv#*=}"
+done
 if [ "${NO_PEER_TO_PEER:-false}" = true ]; then
   MAC_LAUNCH_ARGS+=(--no-peer-to-peer)
 fi
