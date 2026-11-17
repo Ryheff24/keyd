@@ -19,17 +19,17 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `89.0 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.292` | `0.011` | `0.007` | ❌ |
+| FPS | `94.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.550` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `9 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `36 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `14 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `26 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `11 ms` | `7 ms` | `6 ms` | ❌ |
 | Glass-to-glass latency median | `31 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `56 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `35 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `93.8 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `7 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `37 ms` | `8 ms` | `7 ms` | ❌ |
+| Glass-to-glass latency p95 | `47 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `32 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `101.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `8 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `21 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
 | Overall pass rate | `89.4%` | `100.0%` | `100.0%` | ❌ |
 
@@ -180,3 +180,4 @@ Rules:
 | 2026-11-16 | 19:05:30 EST | `0380171` | `2752x1786` | `2496x1620` | `50.1 fps` | `1.458` | `33/130/48 ms` | `54/144/67 ms` | `48.5 fps, 31/140 ms` | `1` | `40/47` | background via Settings opened on General; recovery = 90% held 3s |
 | 2026-11-16 | 19:49:14 EST | `fc7ad53` | `2752x1786` | `2496x1620` | `54.1 fps` | `0.767` | `32/87/43 ms` | `52/104/62 ms` | `58.0 fps, 28/48 ms` | `1` | `40/47` | resume: no browser-restart delay on first suspension silence (Codex) |
 | 2026-11-16 | 19:54:41 EST | `85e0378` | `2752x1786` | `2752x1786` | `89.0 fps` | `1.292` | `9/36/14 ms` | `31/56/35 ms` | `93.8 fps, 7/37 ms` | `1` | `42/47` | USB regression check (first USB run since 061f6a0), strict per-second analysis |
+| 2026-11-16 | 20:03:18 EST | `6673290` | `2752x1786` | `2752x1786` | `94.4 fps` | `0.550` | `9/26/11 ms` | `31/47/32 ms` | `101.3 fps, 8/21 ms` | `1` | `42/47` | USB repeat with nettop TCP sampling (re-tx hypothesis for 80-100 Mbps windows) |
