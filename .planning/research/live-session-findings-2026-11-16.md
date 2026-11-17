@@ -104,3 +104,33 @@ test-mode only; now always on, so manual sessions can be judged the same way.
 6. Local cursor overlay.
 7. Sharpness: matched-size source (Mac display mode / virtual display); needs the user's call.
 8. Trackpad gestures (pinch/rotate/swipes) as Phase 3 input work.
+
+## Background-recovery scenario (E2E phase, devicectl cycle, 15 s away, AWDL)
+No UI automation: XCUITest asks for the iPad passcode on every run. The harness opens Settings
+(`--payload-url prefs:root=General`) to background the app and relaunches it to resume. Calculator
+does not work (it opens as a window beside ours; the app is never backgrounded). Goals are mine,
+not METRICS: first frame <= 250 ms after resume; 90% of the reference rate held 3 s within 1 s;
+steady >= 90% of reference. Reference = max(5 s before Home, sustained-stream average).
+
+| run | first frame | 90% held 3 s | per-second fps after resume (first 8 s) | dial->ready |
+|---|---|---|---|---|
+| bg7 150e9f2 | 218 ms | 2010 ms (replayed) | 24,43,48,56,55,56,55,61 | 177 ms |
+| bg8 cf8305c | 293 ms | 6602 ms (replayed) | 42,28,20,22,19,20,34,60 | 331 ms |
+| bg10 0380171 | 592 ms | 592 ms | 18,56,51,51,54,54,57,57 | 569 ms |
+
+bg8's sag was the link, not the iPad: decode stayed 6-8 ms, capture->first byte rose to 140-220 ms,
+AWDL carried about 15-20 Mbps (RTT 150-225 ms) for 6 s, then 190 Mbps at 15 ms. A fresh AWDL link
+at session start and after the rotation's reconnect did not do this. Settings may have opened on its
+Wi-Fi page (scanning); bg8 and earlier did not pin the page. Unproven: one clean run since. The old
+check ("one 1 s window at 90%") passed bg8 at 293 ms; it now must hold for 3 s.
+First frame after resume = wake + 0.25 s browser-restart delay + Bonjour ~75 ms + AWDL TCP/TLS
+177-569 ms + handshake + first key ~150 ms, minus the ~0.6 s between process wake and `.active`.
+
+## AWDL ceiling (2026-11-16 evening)
+Canonical run 0380171 by test phase: the 90 s heavy video on AWDL has 10 s below 30 fps, 22 s below 45,
+30 s with a gap > 100 ms. The iPad radio holds packets 100-150 ms at a time (see the wifi-stutter
+memory/research), and a hold is a visible gap of at least that length whatever the sender does, so
+interval p99.9 <= 12.5 ms is not reachable over AWDL as the radio behaves now. Checked: Apple's
+WiFiAware framework (real-time performance modes) is `@available(macOS, unavailable)` on every
+symbol in the MacOSX27.2 SDK, so it is not an option for a Mac peer. USB is where the strict goals
+are physically reachable; USB has not been run since 061f6a0 (2026-11-15, ~95-100 fps).
