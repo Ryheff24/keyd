@@ -38,6 +38,8 @@
 #                                 Calculator opens as a window beside ours and does not background it)
 #   --background-url URL          URL that app opens (default prefs:root=General, so Settings never sits on
 #                                 its Wi-Fi page, whose network scanning may disturb AWDL (unproven); "" for none)
+#   --usb-pacing-mbps N           Mac USB TCP pacing cap in Mb/s for this run (0 = off; default: the agent's
+#                                 kUSBDefaultPacingMbps)
 #   --wired-only                  Shorthand for --transport-rotation usb
 #   --full-suite                  Run all test combinations sequentially
 #
@@ -79,6 +81,7 @@ BACKGROUND_CYCLE=auto
 BACKGROUND_SECONDS=15
 BACKGROUND_APP=com.apple.Preferences
 BACKGROUND_URL="prefs:root=General"
+USB_PACING_MBPS=""
 FULL_SUITE=false
 WIRED_ONLY=false
 REPORT_NOTES=""
@@ -142,6 +145,8 @@ while [[ $# -gt 0 ]]; do
       BACKGROUND_APP="$2"; shift 2 ;;
     --background-url)
       BACKGROUND_URL="$2"; shift 2 ;;
+    --usb-pacing-mbps)
+      USB_PACING_MBPS="$2"; shift 2 ;;
     --no-peer-to-peer)
       # Diagnostic: both apps stop including peer-to-peer (AWDL) interfaces.
       NO_PEER_TO_PEER=true; shift ;;
@@ -431,12 +436,16 @@ IPAD_PID=""
 MAC_LOG_PID=""
 BGCYCLE_PID=""
 BGCYCLE_LOG_FILE="/tmp/keyd-e2e-bgcycle.log"
+# Per-second TCP stats of the agent's connections (retransmits, RTT, send window); e2e_strict.py
+# reads it. A wired USB link should not retransmit: losses there collapse the congestion window.
+NETTOP_PID=""
+NETTOP_FILE="/tmp/keyd-e2e-nettop.csv"
 
 cleanup() {
   echo ""
   echo "=== Cleaning up ==="
   # SIGTERM first, then SIGKILL after 2s if still alive
-  for pid in "$BGCYCLE_PID" "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
+  for pid in "$NETTOP_PID" "$BGCYCLE_PID" "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
     [ -n "$pid" ] && [ "$pid" != none ] && kill "$pid" 2>/dev/null || true
   done
   sleep 2
@@ -450,7 +459,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$NETTOP_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -1006,6 +1015,9 @@ if [ -n "$CAPTURE_FILE" ] && [ "$REAL_CAPTURE" = true ]; then
 fi
 
 MAC_LAUNCH_ARGS=(--test-mode --automation-mode)
+if [ -n "$USB_PACING_MBPS" ]; then
+  MAC_LAUNCH_ARGS+=(-usb-pacing-mbps "$USB_PACING_MBPS")
+fi
 if [ "${NO_PEER_TO_PEER:-false}" = true ]; then
   MAC_LAUNCH_ARGS+=(--no-peer-to-peer)
 fi
@@ -1071,6 +1083,11 @@ if [ -z "$MAC_PID" ]; then
   exit 1
 fi
 echo "Mac agent PID: $MAC_PID (launched via LaunchServices; stdout: $MAC_STDOUT_LOG)"
+if command -v nettop >/dev/null 2>&1; then
+  nettop -p "$MAC_PID" -m tcp -L 0 -s 1 -n -x -J time,interface,state,bytes_in,bytes_out,re-tx,rtt_avg,rcvsize,tx_win,cc_algo > "$NETTOP_FILE" 2>&1 &
+  NETTOP_PID=$!
+  echo "TCP stats sampler: nettop pid=$NETTOP_PID -> $NETTOP_FILE"
+fi
 
 # ---- Step 5: Wait for Mac to be ready and write the QR payload file ----
 log_progress "=== [5/6] Waiting for Mac QR readiness ==="
@@ -1579,7 +1596,8 @@ fi
 STRICT_REPORT_FILE="/tmp/keyd-e2e-strict.txt"
 rm -f "$STRICT_REPORT_FILE" /tmp/keyd-e2e-strict.csv
 set +e
-python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv > "$STRICT_REPORT_FILE" 2>&1
+[ -n "$NETTOP_PID" ] && kill "$NETTOP_PID" 2>/dev/null || true
+python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv --nettop "$NETTOP_FILE" > "$STRICT_REPORT_FILE" 2>&1
 STRICT_RESULT=$?
 set -e
 tee -a "$LOG_FILE" < "$STRICT_REPORT_FILE"

@@ -68,7 +68,7 @@ def parse_ipad(path):
                 offs = [int(x) for x in f[5:]]
                 ab = [first + o if o >= 0 else None for o in offs]
                 frames[ts] = dict(seq=seq, bytes=by, key=bool(fl & 1), first=first,
-                                  complete=ab[1], decdone=ab[3], target=ab[6])
+                                  complete=ab[1], decdone=ab[3], ready=ab[4], target=ab[6])
                 last_us = ab[1] or first
             continue
         m = OFFSET.search(line)
@@ -100,6 +100,35 @@ def parse_ipad(path):
     return frames, phases, offset_ms, fails, keys, links, sizes, [tuple(w) for w in away if w[1]]
 
 
+def link_of_iface(iface):
+    if iface.startswith(("awdl", "llw")):
+        return "awdl"
+    if iface == "en0":
+        return "wifi"
+    if re.fullmatch(r"en\d+", iface):
+        return "usb"
+    return iface or "?"
+
+
+def parse_nettop(path):
+    """nettop -x CSV (harness): per connection, cumulative bytes_out and re-tx bytes each second.
+    Returns {conn: [(time str, iface, bytes_out, retx, rtt str)]} for established connections."""
+    conns = defaultdict(list)
+    try:
+        lines = open(path, errors="replace").read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        f = line.split(",")
+        if len(f) < 9 or f[3] != "Established" or "<->" not in f[1]:
+            continue
+        try:
+            conns[f[1]].append((f[0], f[2], int(f[5] or 0), int(f[6] or 0), f[7]))
+        except ValueError:
+            continue
+    return conns
+
+
 def parse_mac(path):
     enc = {}
     peers = []
@@ -128,6 +157,7 @@ def main():
     ap.add_argument("--goal-g2g", type=float, default=25.0)
     ap.add_argument("--goal-pipe", type=float, default=7.0)
     ap.add_argument("--panel", default="2752x1786")
+    ap.add_argument("--nettop", help="harness nettop CSV (per-connection TCP retransmits)")
     a = ap.parse_args()
 
     frames, phases, offset_ms, fails, keys, links, sizes, away = parse_ipad(a.ipad_log)
@@ -179,8 +209,9 @@ def main():
             s = int((tgt - t0) // 1_000_000)
             per_g2g[s] = max(per_g2g[s], v)
         for ts, r in frames.items():
-            if r["decdone"]:
-                pipe.append((r["decdone"] - (ts - off)) / 1000.0)
+            done = r["decdone"] or r["ready"]   # LZ4 frames log no decode time; ready = decoded
+            if done:
+                pipe.append((done - (ts - off)) / 1000.0)
         for ts, eo in enc.items():
             s = int(((eo - off) - t0) // 1_000_000)
             if 0 <= s < nsec:
@@ -247,8 +278,11 @@ def main():
              f"{pct(g2g, 99.9):.1f} ms (goal {a.goal_g2g:.0f})")
         gate("capture->decode p99.9", pct(pipe, 99.9) <= a.goal_pipe,
              f"{pct(pipe, 99.9):.1f} ms (goal {a.goal_pipe:.0f})")
-        gate("Mac encode rate", min(per_enc) >= a.goal_fps,
-             f"worst second {min(per_enc)} encoded (goal {a.goal_fps:.0f}; source rate caps fps)")
+        if enc:
+            gate("Mac encode rate", min(per_enc) >= a.goal_fps,
+                 f"worst second {min(per_enc)} encoded (goal {a.goal_fps:.0f}; source rate caps fps)")
+        else:
+            print("  Mac encode rate: n/a (no FT-M lines; the LZ4/USB send path logs none)")
 
     linkset = defaultdict(int)
     for l in per_link:
@@ -277,6 +311,35 @@ def main():
         print(f"  frame sizes seen: {sorted(sizes)}  panel {pw}x{ph}")
         gate("delivered frame == panel", all(s == (pw, ph) for s in sizes),
              f"{sorted(sizes)} vs {pw}x{ph}")
+
+    if a.nettop:
+        conns = parse_nettop(a.nettop)
+        if conns is None:
+            print(f"  TCP (nettop): {a.nettop} missing")
+        else:
+            by_link = defaultdict(lambda: [0, 0, 0, 0, 0])  # bytes, retx, secs, secs with retx, max/s
+            worst_s = defaultdict(list)
+            for c, rows in conns.items():
+                link = link_of_iface(rows[-1][1])
+                L = by_link[link]
+                L[0] += rows[-1][2]
+                L[1] += rows[-1][3]
+                for (t0_, _, b0, r0, _), (t1_, _, b1, r1, rtt) in zip(rows, rows[1:]):
+                    L[2] += 1
+                    d = r1 - r0
+                    if d > 0:
+                        L[3] += 1
+                        L[4] = max(L[4], d)
+                        worst_s[link].append((d, t1_[:8], (b1 - b0) * 8 / 1e6))
+            for link, (b, r, n, nr, mx) in sorted(by_link.items()):
+                top = sorted(worst_s[link], reverse=True)[:3]
+                print(f"  TCP {link}: {b / 1e6:.0f} MB sent, retransmitted {r / 1e3:.0f} KB "
+                      f"({100.0 * r / b if b else 0:.4f}%), {nr}/{n} s with retransmits, max {mx / 1e3:.0f} KB/s; "
+                      f"worst {[(f'{d / 1e3:.0f}KB', t, f'{m:.0f}Mbps') for d, t, m in top]}")
+            if "usb" in by_link:
+                b, r, n, nr, _ = by_link["usb"]
+                gate("USB link retransmits", r == 0,
+                     f"{r / 1e3:.0f} KB in {nr}/{n} s (a wired link should lose nothing; each loss shrinks the TCP window)")
 
     if a.csv:
         with open(a.csv, "w") as f:

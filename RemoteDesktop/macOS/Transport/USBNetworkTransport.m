@@ -54,6 +54,12 @@ static const NSUInteger kUSBMediaEntryLogInterval = 240;
 static const NSUInteger kUSBMediaChunkAppendLogInterval = 64;
 static const NSUInteger kUSBMediaSendSuccessLogInterval = 240;
 static const uint64_t kUSBMediaSendSlowThresholdMs = 12;
+/* TCP pacing cap on the USB media/input connection (macOS 27 nw_tcp_set_max_pacing_rate).
+ * Unpaced, multi-MB frames leave the Mac as 10 Gb/s line-rate bursts; the link then loses
+ * segments almost every second (nettop re-tx, E2E 6673290: 2.3 MB in 119 of 238 s) and each
+ * loss shrinks the congestion window: windows of 80-130 Mb/s with 230-690 ms frame gaps
+ * (E2E 85e0378 s23-31). Override per launch with `-usb-pacing-mbps N` (0 = off). */
+static const NSInteger kUSBDefaultPacingMbps = 4000;
 
 static BOOL buildUSBChunkedTCPBatch(const void *payload,
                                     size_t payloadLen,
@@ -1143,6 +1149,7 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
 
             if (state == nw_connection_state_ready) {
                 os_log(transport_log(), "TLS input connection READY (TLS handshake complete)");
+                [self3 applyUSBPacing:connection];
                 self3.isConnected = YES;
                 if (self3.onInputConnectionReady) {
                     self3.onInputConnectionReady();
@@ -1172,6 +1179,32 @@ static BOOL buildUSBChunkedTCPBatch(const void *payload,
     });
 
     nw_listener_start(_inputListener);
+}
+
+#pragma mark - Private: TCP pacing
+
+- (void)applyUSBPacing:(nw_connection_t)connection {
+    NSInteger mbps = kUSBDefaultPacingMbps;
+    id override = [[NSUserDefaults standardUserDefaults] objectForKey:@"usb-pacing-mbps"];
+    if (override) mbps = [override integerValue];
+    if (mbps <= 0) {
+        os_log(transport_log(), "USB pacing off (usb-pacing-mbps=%ld)", (long)mbps);
+        return;
+    }
+    if (@available(macOS 27.0, *)) {
+        nw_protocol_definition_t tcpDef = nw_protocol_copy_tcp_definition();
+        nw_protocol_metadata_t md = nw_connection_copy_protocol_metadata(connection, tcpDef);
+        if (!md) {
+            os_log_error(transport_log(), "USB pacing FAILED: no TCP metadata (rateMbps=%ld)", (long)mbps);
+            return;
+        }
+        uint64_t bytesPerSec = (uint64_t)mbps * 1000000ull / 8ull;
+        int rc = nw_tcp_set_max_pacing_rate(md, bytesPerSec);
+        os_log(transport_log(), "USB pacing set rateMbps=%ld bytesPerSec=%llu rc=%d source=%{public}s",
+               (long)mbps, (unsigned long long)bytesPerSec, rc, override ? "override" : "default");
+    } else {
+        os_log(transport_log(), "USB pacing unavailable (macOS < 27), rateMbps=%ld ignored", (long)mbps);
+    }
 }
 
 #pragma mark - Private: Receive Loops
