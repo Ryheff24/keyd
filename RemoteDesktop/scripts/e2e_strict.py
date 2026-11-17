@@ -110,6 +110,9 @@ def link_of_iface(iface):
     return iface or "?"
 
 
+DIAGNOSTIC_PHASES = {"bw-probe"}
+
+
 def parse_nettop(path):
     """nettop -x CSV (harness): per connection, cumulative bytes_out and re-tx bytes each second.
     Returns {conn: [(time str, iface, bytes_out, retx, rtt str)]} for established connections."""
@@ -214,39 +217,6 @@ def main():
         for k in range(max(0, int((e - t0) // 1_000_000)), min(nsec, int((r - t0) // 1_000_000) + 1)):
             per_away[k] = True
 
-    intervals = []
-    for i, (tgt, ts) in enumerate(pres):
-        s = int((tgt - t0) // 1_000_000)
-        per_fps[s] += 1
-        if i:
-            prev = pres[i - 1][0]
-            for e, r in away:
-                if prev < r <= tgt:
-                    prev = r
-            d = (tgt - prev) / 1000.0
-            intervals.append(d)
-            # charge an interval to every second it spans, so a long gap shows in each
-            s0 = int((pres[i - 1][0] - t0) // 1_000_000)
-            for k in range(s0, s + 1):
-                per_maxint[k] = max(per_maxint[k], d)
-
-    g2g, pipe = [], []
-    if offset_ms is not None:
-        off = offset_ms * 1000
-        for tgt, ts in pres:
-            v = (tgt - (ts - off)) / 1000.0
-            g2g.append(v)
-            s = int((tgt - t0) // 1_000_000)
-            per_g2g[s] = max(per_g2g[s], v)
-        for ts, r in frames.items():
-            done = r["decdone"] or r["ready"]   # LZ4 frames log no decode time; ready = decoded
-            if done:
-                pipe.append((done - (ts - off)) / 1000.0)
-        for ts, eo in enc.items():
-            s = int(((eo - off) - t0) // 1_000_000)
-            if 0 <= s < nsec:
-                per_enc[s] += 1
-
     for us, name in phases:
         s = int((us - t0) // 1_000_000)
         if 0 <= s < nsec:
@@ -263,6 +233,47 @@ def main():
     for s in range(nsec):
         cur = per_link[s] or cur
         per_link[s] = cur
+    # Test-only diagnostics that deliberately load the media link (bw-probe floods it with 64 KB
+    # filler for 3 s) are not what a user sees: their seconds are left out of every gated number
+    # and reported on their own line.
+    per_diag = [per_phase[k] in DIAGNOSTIC_PHASES for k in range(nsec)]
+    diag_intervals, diag_g2g = [], []
+
+    intervals = []
+    for i, (tgt, ts) in enumerate(pres):
+        s = int((tgt - t0) // 1_000_000)
+        per_fps[s] += 1
+        if i:
+            prev = pres[i - 1][0]
+            for e, r in away:
+                if prev < r <= tgt:
+                    prev = r
+            d = (tgt - prev) / 1000.0
+            (diag_intervals if per_diag[s] else intervals).append(d)
+            # charge an interval to every second it spans, so a long gap shows in each
+            s0 = int((pres[i - 1][0] - t0) // 1_000_000)
+            for k in range(s0, s + 1):
+                per_maxint[k] = max(per_maxint[k], d)
+
+    g2g, pipe = [], []
+    if offset_ms is not None:
+        off = offset_ms * 1000
+        for tgt, ts in pres:
+            v = (tgt - (ts - off)) / 1000.0
+            s = int((tgt - t0) // 1_000_000)
+            (diag_g2g if per_diag[s] else g2g).append(v)
+            per_g2g[s] = max(per_g2g[s], v)
+        for ts, r in frames.items():
+            done = r["decdone"] or r["ready"]   # LZ4 frames log no decode time; ready = decoded
+            if r["target"] and per_diag[min(nsec - 1, max(0, int((r["target"] - t0) // 1_000_000)))]:
+                continue
+            if done:
+                pipe.append((done - (ts - off)) / 1000.0)
+        for ts, eo in enc.items():
+            s = int(((eo - off) - t0) // 1_000_000)
+            if 0 <= s < nsec:
+                per_enc[s] += 1
+
     for s in range(nsec):
         if per_away[s]:
             per_phase[s] = "app-backgrounded"
@@ -272,16 +283,20 @@ def main():
     def gate(name, ok, detail):
         gates.append((name, ok, detail))
 
-    on_fps = [f for f, aw in zip(per_fps, per_away) if not aw]
+    on_fps = [f for f, aw, dg in zip(per_fps, per_away, per_diag) if not aw and not dg]
     worst = min(on_fps)
-    ws = next(s for s in range(nsec) if not per_away[s] and per_fps[s] == worst)
+    ws = next(s for s in range(nsec) if not per_away[s] and not per_diag[s] and per_fps[s] == worst)
     sorted_fps = sorted(on_fps)
     print(f"STRICT whole run: {nsec} s, {len(pres)} presented frames, "
           f"{len(enc)} encoded (Mac), clock offset {'%d ms' % offset_ms if offset_ms is not None else 'none (g2g n/a)'}")
     print(f"  per-second presented fps: worst {worst} (s{ws}, phase={per_phase[ws] or '-'}, "
           f"link={per_link[ws] or '-'})  p1 {pct(on_fps, 1)}  p5 {pct(on_fps, 5)}  "
           f"p50 {pct(on_fps, 50)}  mean {len(pres) / len(on_fps):.1f}"
-          f"{'  (%d s app-backgrounded excluded)' % (nsec - len(on_fps)) if away else ''}")
+          f"{'  (%d s app-backgrounded excluded)' % sum(per_away) if away else ''}"
+          f"{'  (%d s diagnostic %s excluded)' % (sum(per_diag), sorted(DIAGNOSTIC_PHASES)) if any(per_diag) else ''}")
+    if any(per_diag):
+        print(f"  diagnostic seconds (not gated): fps {[per_fps[k] for k in range(nsec) if per_diag[k]]}  "
+              f"interval max {max(diag_intervals or [0]):.1f} ms  g2g max {max(diag_g2g or [0]):.1f} ms")
     print(f"  seconds below goal {a.goal_fps:.0f}: {sum(f < a.goal_fps for f in on_fps)}/{len(on_fps)}   "
           f"below 60: {sum(f < 60 for f in on_fps)}   below 30: {sum(f < 30 for f in on_fps)}   "
           f"zero: {sum(f == 0 for f in on_fps)}")
