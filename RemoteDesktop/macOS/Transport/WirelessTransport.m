@@ -54,6 +54,21 @@ static nw_service_class_t keydrd_wifi_service_class(const char **nameOut) {
     return cls;
 }
 
+/* wifi-heartbeat-ms (20..1000, default 1000): heartbeat send period. The heartbeat is new data on
+ * the media TCP connection; while the ack gate holds, nothing else is sent, so a lost tail segment
+ * waits for an RTO or the next heartbeat (run 8ab4123: 1.15 s ack-gate stall with AWDL pings at
+ * 26 ms and 16 KB retransmitted). Quiet/lost thresholds stay on kLinkHeartbeatIntervalNs. */
+static uint64_t keydrd_heartbeat_period_ns(void) {
+    static uint64_t ns = 0;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSInteger ms = [[NSUserDefaults standardUserDefaults] integerForKey:@"wifi-heartbeat-ms"];
+        if (ms < 20 || ms > 1000) ms = 1000;
+        ns = (uint64_t)ms * 1000000ULL;
+    });
+    return ns;
+}
+
 static BOOL keydrd_wifi_disable_ack_stretching(void) {
     static BOOL on = NO;
     static dispatch_once_t once;
@@ -1339,8 +1354,9 @@ static bool wireless_include_peer_to_peer(void) {
     _linkHeartbeatsSent = 0;
     _linkHeartbeatsReceived = 0;
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _transportQueue);
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)kLinkHeartbeatIntervalNs),
-                              kLinkHeartbeatIntervalNs, kLinkHeartbeatIntervalNs / 10);
+    uint64_t periodNs = keydrd_heartbeat_period_ns();
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)periodNs),
+                              periodNs, periodNs / 10);
     __weak WirelessTransport *weakSelf = self;
     /* Strong capture: the timer is cancelled on every stop, which releases the connection. */
     dispatch_source_set_event_handler(timer, ^{
@@ -1351,7 +1367,7 @@ static bool wireless_include_peer_to_peer(void) {
     _linkHeartbeatTimer = timer;
     dispatch_resume(timer);
     os_log(wireless_log(), "Link heartbeat started intervalMs=%llu deadlineMs=%llu",
-           kLinkHeartbeatIntervalNs / 1000000ULL, kLinkSilenceDeadlineNs / 1000000ULL);
+           periodNs / 1000000ULL, kLinkSilenceDeadlineNs / 1000000ULL);
 }
 
 - (void)stopLinkHeartbeatWithReason:(const char *)reason {

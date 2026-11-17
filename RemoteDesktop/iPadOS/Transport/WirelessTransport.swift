@@ -194,6 +194,16 @@ final class WirelessTransport {
     /// Shared/protocol.h KEYDRD_LINK_HEARTBEAT.
     static let linkHeartbeatType: UInt8 = 0x31
     private let linkHeartbeatInterval: TimeInterval = 1.0
+    /// Experiment `--wifi-heartbeat-ms=N` (20...1000): heartbeat send period. A heartbeat is new data
+    /// behind a lost tail segment (the frame ACKs share this connection), so recovery need not wait
+    /// for an RTO or the 1 s tick (run 8ab4123). Quiet/lost thresholds keep linkHeartbeatInterval.
+    static let linkHeartbeatPeriod: TimeInterval = {
+        let arg = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--wifi-heartbeat-ms=") }
+        var ms = arg.flatMap { Int($0.dropFirst("--wifi-heartbeat-ms=".count)) } ?? 1000
+        if ms < 20 || ms > 1000 { ms = 1000 }
+        print("[CONSOLE] WirelessTransport: linkHeartbeatPeriodMs=\(ms)")
+        return TimeInterval(ms) / 1000.0
+    }()
     private let linkSilenceDeadline: TimeInterval = 4.0
     private var avoidAWDL = false
     private var lastDialAWDL = false
@@ -1420,14 +1430,15 @@ final class WirelessTransport {
         linkHeartbeatsSent = 0
         linkHeartbeatsReceived = 0
         let timer = DispatchSource.makeTimerSource(queue: transportQueue)
-        timer.schedule(deadline: .now() + linkHeartbeatInterval, repeating: linkHeartbeatInterval)
+        timer.schedule(deadline: .now() + WirelessTransport.linkHeartbeatPeriod,
+                       repeating: WirelessTransport.linkHeartbeatPeriod)
         timer.setEventHandler { [weak self, weak connection] in
             guard let self = self, let connection = connection else { return }
             self.linkHeartbeatTick(connection)
         }
         linkHeartbeatTimer = timer
         timer.resume()
-        print("[CONSOLE] WirelessTransport: link heartbeat started interval=\(linkHeartbeatInterval)s deadline=\(linkSilenceDeadline)s")
+        print("[CONSOLE] WirelessTransport: link heartbeat started interval=\(WirelessTransport.linkHeartbeatPeriod)s deadline=\(linkSilenceDeadline)s")
     }
 
     private func stopLinkHeartbeat(reason: String) {
