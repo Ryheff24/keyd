@@ -11,6 +11,7 @@ Committed one timing-only win on branch `resume-time`.
 [C] TLA+: no rows run, no model edits, no TLAPS run (installed). Applied the task's pure-timing exception: `TransportConnections.tla:194` abstracts loss into discovery; `:201` enables dial without a browser-backoff clock. This changes only the unmodelled dispatch delay. FrameLoop and Lifecycle transitions are unchanged; no formal timing claim is made.
 
 [C] Compile checks used the discovered app schemes, generic iOS/macOS destinations, `CODE_SIGNING_ALLOWED=NO`, and derived data under `build-dd/`:
+
 - Mac `RemoteDesktopAgent`: BUILD SUCCEEDED, exit 0.
 - iPad `RemoteDesktopApp`: BUILD FAILED, exit 65; `CompileMetalFile` cannot execute `metal` because the Metal Toolchain is unavailable. Swift compilation was not reached.
 - Modified Swift source: `swiftc -frontend -parse` passed; this is syntax validation, not an iPad compile pass.
@@ -20,6 +21,7 @@ Committed one timing-only win on branch `resume-time`.
 [C] Deferred Mac encoder deduplication: `SessionManager.m:1195` and `:1254` both start it; startup also reconfigures capture and sends geometry. Avoided changing this sequencing in the cheap pass. No saving claimed there.
 
 For the integrator's next E2E logs:
+
 - Suspension-related silence: attempt 1, `resumeFastRetry=true spannedSuspension=true delay=0.00s`; firing should follow scheduling without the old ~251 ms gap.
 - Ordinary failures: `resumeFastRetry=false` and the existing backoff; no repeated immediate-restart loop.
 - Follow `LC IpadDial` -> `LC IpadReady` on AWDL -> accepted `FL IpadHs` -> `FL IpadKey`, then the E2E first-new-frame-after-active metric. Confirm <=250 ms using that metric, not key arrival alone.
