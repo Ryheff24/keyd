@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `87.7 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.553` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `9 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `27 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `12 ms` | `7 ms` | `6 ms` | ❌ |
+| FPS | `76.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.751` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `10 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `48 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `18 ms` | `7 ms` | `6 ms` | ❌ |
 | Glass-to-glass latency median | `27 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `49 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `30 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `98.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `8 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `22 ms` | `8 ms` | `7 ms` | ❌ |
+| Glass-to-glass latency p95 | `71 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `35 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `82.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `12 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `47 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `93.6%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `89.4%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -183,3 +183,4 @@ Rules:
 | 2026-11-16 | 20:03:18 EST | `6673290` | `2752x1786` | `2752x1786` | `94.4 fps` | `0.550` | `9/26/11 ms` | `31/47/32 ms` | `101.3 fps, 8/21 ms` | `1` | `42/47` | USB repeat with nettop TCP sampling (re-tx hypothesis for 80-100 Mbps windows) |
 | 2026-11-16 | 20:11:24 EST | `82059b6` | `2752x1786` | `2752x1786` | `83.5 fps` | `0.586` | `10/35/14 ms` | `31/59/33 ms` | `94.8 fps, 9/30 ms` | `1` | `32/47` | USB TCP pacing 4000 Mb/s (nw_tcp_set_max_pacing_rate); nettop retransmit gate |
 | 2026-11-16 | 20:18:11 EST | `f9c82b2` | `2752x1786` | `2752x1786` | `87.7 fps` | `0.553` | `9/27/12 ms` | `27/49/30 ms` | `98.3 fps, 8/22 ms` | `1` | `44/47` | USB control: pacing off, per-run NCM queue drop counters |
+| 2026-11-16 | 20:23:30 EST | `7890dae` | `2752x1786` | `2752x1786` | `76.5 fps` | `0.751` | `10/48/18 ms` | `27/71/35 ms` | `82.4 fps, 12/47 ms` | `1` | `42/47` | USB pacing 2500 Mb/s vs NCM queue overflow drops |
