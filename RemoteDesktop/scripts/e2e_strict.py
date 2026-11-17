@@ -111,6 +111,70 @@ def link_of_iface(iface):
 
 
 DIAGNOSTIC_PHASES = {"bw-probe"}
+FT_IRX = re.compile(r"FT-IRX n=\d+ (\S+)")
+PING_REPLY = re.compile(r"^(\d\d):(\d\d):(\d\d\.\d+) \d+ bytes from \S+ icmp_seq=(\d+) \S+ time=([\d.]+) ms")
+
+
+def ping_report(mac_log, ipad_log, offset_ms, path):
+    """Each iPad media receive silence of 0.5-3 s against the harness AWDL ping replies in the same
+    window (Mac wall clock). Replies keep coming = the radio was up and the TCP stream alone stalled;
+    replies stop too = the link was gone. Longer silences are the test's deliberate disconnects."""
+    try:
+        lines = open(path, errors="replace").read().splitlines()
+    except OSError:
+        return
+    replies = []          # (wall s-of-day, rtt ms)
+    for line in lines:
+        m = PING_REPLY.match(line)
+        if m:
+            replies.append((int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)), float(m.group(5))))
+    if not replies or offset_ms is None:
+        print(f"  AWDL ping: {len(replies)} replies{' (no clock offset)' if offset_ms is None else ''}")
+        return
+    # Mac host clock -> wall clock, from FT-M batches (the line is logged right after its last record)
+    diffs = []
+    for line in open(mac_log, errors="replace"):
+        m, f = MAC_TS.match(line), FT_M.search(line)
+        if not (m and f):
+            continue
+        hms = m.group(1).split(" ")[1].split(":")
+        wall = int(hms[0]) * 3600 + int(hms[1]) * 60 + float(hms[2])
+        eos = [int(e.split(",")[4]) for e in f.group(1).split(";") if e.count(",") == 8]
+        if eos:
+            diffs.append(wall - max(eos) / 1e6)
+    if not diffs:
+        print("  AWDL ping: no FT-M lines to align clocks")
+        return
+    wall_off = sorted(diffs)[len(diffs) // 2]
+    sil = []
+    for line in open(ipad_log, errors="replace"):
+        f = FT_IRX.search(line)
+        if not f:
+            continue
+        for e in f.group(1).split(";"):
+            p3 = e.split(",")
+            if len(p3) == 3 and 500_000 <= int(p3[1]) <= 3_000_000:
+                start = (int(p3[0]) + offset_ms * 1000) / 1e6 + wall_off
+                sil.append((start, int(p3[1]) / 1e6))
+    rts = [r for _, r in replies]
+    gaps = [(b[0] - a[0], a[0]) for a, b in zip(replies, replies[1:]) if b[0] - a[0] > 0.3]
+    print(f"  AWDL ping (100 ms): {len(replies)} replies  rtt ms p99.9 {pct(rts, 99.9):.1f} max {max(rts):.1f}  "
+          f"reply gaps >300 ms: {len(gaps)}")
+    radio = tcp = 0
+    for start, dur in sil:
+        inside = [r for t, r in replies if start <= t <= start + dur]
+        frac = len(inside) / max(1.0, dur / 0.1)
+        if frac >= 0.5:
+            verdict, tcp = "TCP-only (pings answered)", tcp + 1
+        elif frac <= 0.1:
+            verdict, radio = "link-down (pings stopped too)", radio + 1
+        else:
+            verdict = "partial (some pings answered)"
+        hh, rem = divmod(start, 3600)
+        mm, ss = divmod(rem, 60)
+        print(f"    iPad silence {dur * 1000:.0f} ms at ~{int(hh):02d}:{int(mm):02d}:{ss:06.3f}: "
+              f"{len(inside)} ping replies of ~{dur / 0.1:.0f} (rtt max {max(inside or [0]):.0f} ms) -> {verdict}")
+    print(f"  iPad silences 0.5-3 s: {len(sil)}  link-down {radio}  TCP-only {tcp}  partial {len(sil) - radio - tcp}")
 
 
 def parse_nettop(path):
@@ -189,6 +253,7 @@ def main():
     ap.add_argument("--goal-pipe", type=float, default=7.0)
     ap.add_argument("--panel", default="2752x1786")
     ap.add_argument("--nettop", help="harness nettop CSV (per-connection TCP retransmits)")
+    ap.add_argument("--ping", help="harness AWDL ping6 --apple-time log")
     ap.add_argument("--ifq", nargs=2, metavar=("START", "END"),
                     help="harness `netstat -I IF -q` snapshots of the Mac USB NCM interface")
     a = ap.parse_args()
@@ -356,6 +421,9 @@ def main():
         print(f"  frame sizes seen: {sorted(sizes)}  panel {pw}x{ph}")
         gate("delivered frame == panel", all(s == (pw, ph) for s in sizes),
              f"{sorted(sizes)} vs {pw}x{ph}")
+
+    if a.ping:
+        ping_report(a.mac_log, a.ipad_log, offset_ms, a.ping)
 
     if a.nettop:
         conns = parse_nettop(a.nettop)

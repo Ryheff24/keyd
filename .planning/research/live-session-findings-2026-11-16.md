@@ -245,3 +245,36 @@ on bytes in flight against the measured delivery rate.
 
 A delivery-following bitrate was rejected before (run ddfd000: radio-burst samples after holds read
 40–460 Mb/s). This differs: the trigger is the gate's own drop count, and the cap is per frame.
+
+## Congestion QP floor: E2E results, and the 1 s silences (2026-11-16)
+
+**What the floor is:** `--mac-default wifi-congestion-minqp=30` sets the encoder's MinAllowedFrameQP from the
+first ack-gate drop until the gate has admitted captures for 500 ms with no drop. On the bench it bounds
+frame size (p99.9 190 → 74 KB); AverageBitRate and DataRateLimits do not bound a single low-latency frame.
+
+**How the runs are scored:** the strict analyser now leaves the test-only `bw-probe` seconds out of every
+gated number and reports them on their own line. That phase floods the media TCP connection with 64 KB
+filler for 3 s; in qp30a it produced 931–997 ms g2g while TCP RTT was 11–35 ms with no retransmits.
+
+| Run | Config | g2g p99.9 | g2g p99 | Capture→decode p99.9 | Interval p99.9 | fps/s p5 |
+|---|---|---|---|---|---|---|
+| 0380171 | 60 fps | 540 ms | 284 ms | 521 ms | 258 ms | 13 |
+| fc7ad53 | 60 fps | 510 ms | 242 ms | 518 ms | 167 ms | 19 |
+| 8c945f4 | QP floor 30 | 457 ms | 195 ms | 450 ms | 242 ms | 28 |
+| 51b9edb | QP floor 30 | 499 ms | 209 ms | 500 ms | 217 ms | 22 |
+
+**Reading:** g2g p99 is lower in both floor runs (195–209 vs 242–284 ms), and p99.9 a little lower
+(457–499 vs 510–540). Two runs each is not conclusive. The interval p99.9 did not improve.
+
+**What remains at the top of p99.9 and max:**
+- The iPad receives nothing at all for 1.0–1.2 s at a time:
+
+  | Run | Silences |
+  |---|---|
+  | 0380171 (baseline, no floor) | 1211, 1023, 1055 ms |
+  | 8c945f4 | 1043, 1030 ms |
+  | 51b9edb | 1092, 1019 ms |
+
+- During these, frames are small (3–9 KB) and a few KB is retransmitted.
+- The mechanism is unproven: a radio absence, or TCP timer recovery while only a few small frames are in
+  flight. Frame size cannot fix it.

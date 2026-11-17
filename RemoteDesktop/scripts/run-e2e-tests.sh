@@ -449,6 +449,26 @@ BGCYCLE_LOG_FILE="/tmp/keyd-e2e-bgcycle.log"
 # reads it. A wired USB link should not retransmit: losses there collapse the congestion window.
 NETTOP_PID=""
 NETTOP_FILE="/tmp/keyd-e2e-nettop.csv"
+# ICMPv6 echo to the iPad's AWDL link-local address every 100 ms (peer taken from nettop, restarted
+# when it changes). Tells a radio absence (pings stop too) from a TCP-only stall (pings keep
+# answering while the media stream is silent). e2e_strict.py reads it.
+AWDL_PING_PID=""
+AWDL_PING_FILE="/tmp/keyd-e2e-awdl-ping.txt"
+awdl_ping_loop() {
+  local cur="" pid="" peer
+  trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; exit 0' TERM INT EXIT
+  while kill -0 "$MAC_PID" 2>/dev/null; do
+    peer=$(tail -200 "$NETTOP_FILE" 2>/dev/null | grep Established | grep -oE '<->fe80::[0-9a-f:]+%awdl0' | tail -1 | sed 's/<->//')
+    if [ -n "$peer" ] && [ "$peer" != "$cur" ]; then
+      [ -n "$pid" ] && kill "$pid" 2>/dev/null
+      echo "PEER $peer at $(now_ms)" >> "$AWDL_PING_FILE"
+      ping6 --apple-time -i 0.1 -n "$peer" >> "$AWDL_PING_FILE" 2>&1 &
+      pid=$!
+      cur=$peer
+    fi
+    sleep 2
+  done
+}
 # Mac USB NCM interface queue counters (netstat -I IF -q) at start and end: "drop overflow" there is
 # the Mac dropping its own TCP segments when the interface queue (2048 pkts) fills.
 IFQ_START_FILE="/tmp/keyd-e2e-ifq-start.txt"
@@ -469,7 +489,7 @@ cleanup() {
   echo ""
   echo "=== Cleaning up ==="
   # SIGTERM first, then SIGKILL after 2s if still alive
-  for pid in "$NETTOP_PID" "$BGCYCLE_PID" "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
+  for pid in "$AWDL_PING_PID" "$NETTOP_PID" "$BGCYCLE_PID" "$IPAD_PID" "$MAC_LOG_PID" "$MAC_PID" "$IPAD_INSTALL_PID" "$IPAD_BUILD_PID" "$MAC_BUILD_PID"; do
     [ -n "$pid" ] && [ "$pid" != none ] && kill "$pid" 2>/dev/null || true
   done
   sleep 2
@@ -483,7 +503,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- Clean state ----
-rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$NETTOP_FILE" "$IFQ_START_FILE" "$IFQ_END_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
+rm -f "$LOG_FILE" "$IPAD_LOG_FILE" "$IPAD_LOG_FILE.pre-relaunch" "$BGCYCLE_LOG_FILE" "$NETTOP_FILE" "$AWDL_PING_FILE" "$IFQ_START_FILE" "$IFQ_END_FILE" "$MAC_LOG_FILE" "$MAC_BUILD_LOG" "$IPAD_BUILD_LOG" "$IPAD_INSTALL_LOG" "$QR_PAYLOAD_FILE"
 mkdir -p "$MAC_DERIVED_DATA" "$IPAD_DERIVED_DATA"
 
 # Write progress to log file so user can monitor it
@@ -1116,6 +1136,9 @@ if command -v nettop >/dev/null 2>&1; then
   nettop -p "$MAC_PID" -m tcp -L 0 -s 1 -n -x -J time,interface,state,bytes_in,bytes_out,re-tx,rtt_avg,rcvsize,tx_win,cc_algo > "$NETTOP_FILE" 2>&1 &
   NETTOP_PID=$!
   echo "TCP stats sampler: nettop pid=$NETTOP_PID -> $NETTOP_FILE"
+  awdl_ping_loop &
+  AWDL_PING_PID=$!
+  echo "AWDL ping sampler: pid=$AWDL_PING_PID -> $AWDL_PING_FILE"
 fi
 
 # ---- Step 5: Wait for Mac to be ready and write the QR payload file ----
@@ -1626,8 +1649,9 @@ STRICT_REPORT_FILE="/tmp/keyd-e2e-strict.txt"
 rm -f "$STRICT_REPORT_FILE" /tmp/keyd-e2e-strict.csv
 set +e
 [ -n "$NETTOP_PID" ] && kill "$NETTOP_PID" 2>/dev/null || true
+[ -n "$AWDL_PING_PID" ] && kill "$AWDL_PING_PID" 2>/dev/null || true
 snapshot_ncm_ifq "$IFQ_END_FILE"
-python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv --nettop "$NETTOP_FILE" --ifq "$IFQ_START_FILE" "$IFQ_END_FILE" > "$STRICT_REPORT_FILE" 2>&1
+python3 RemoteDesktop/scripts/e2e_strict.py "$MAC_LOG_FILE" "$IPAD_LOG_FILE" --csv /tmp/keyd-e2e-strict.csv --nettop "$NETTOP_FILE" --ifq "$IFQ_START_FILE" "$IFQ_END_FILE" --ping "$AWDL_PING_FILE" > "$STRICT_REPORT_FILE" 2>&1
 STRICT_RESULT=$?
 set -e
 tee -a "$LOG_FILE" < "$STRICT_REPORT_FILE"

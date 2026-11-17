@@ -148,17 +148,22 @@ static int32_t WiFiAckGateFramesSetting(void) {
     return value;
 }
 #define kWiFiAckGateFrames (WiFiAckGateFramesSetting())
-/* Congestion frame-QP floor (measurement override, default off). While the ack gate drops
+/* Congestion frame-QP floor (default 30; `-wifi-congestion-minqp 0` turns it off). While the ack gate drops
  * captures, frames that do get encoded carry several captures' change and grew to 130-180 KB
  * (fc7ad53 19:46:35-37), so five in flight took ~400 ms to clear a ~17 Mb/s link.
  * `-wifi-congestion-minqp N` (1..51) floors the encoder QP from the first gate drop until the gate
- * has admitted for `-wifi-congestion-hold-ms M` (default 500) with no drop. */
+ * has admitted for `-wifi-congestion-hold-ms M` (default 500) with no drop.
+ * E2E (bw-probe excluded): g2g p99 242/284 ms -> 195/209 ms, p99.9 510/540 -> 457/499 ms
+ * (fc7ad53, 0380171 vs 8c945f4, 51b9edb). */
 static int WiFiCongestionMinQPSetting(void) {
-    static int value = 0;
+    static int value = 30;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"wifi-congestion-minqp"];
-        if (n >= 1 && n <= 51) value = (int)n;
+        id o = [[NSUserDefaults standardUserDefaults] objectForKey:@"wifi-congestion-minqp"];
+        if (o) {
+            NSInteger n = [o integerValue];
+            value = (n >= 1 && n <= 51) ? (int)n : 0;
+        }
     });
     return value;
 }
