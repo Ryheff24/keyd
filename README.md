@@ -101,3 +101,8 @@ attributes those permissions to the app rather than to your terminal.
 Much of this code was written with AI coding agents. Agent configuration and tooling is committed:
 - `CLAUDE.md`, `agents.md`;
 - `.claude/`, `.codex/`, `.cursor/`, `.github/`.
+
+## License
+
+Apache-2.0, the same as agentlog. See [LICENSE](LICENSE). `RemoteDesktop/Shared/lz4.c` and `lz4.h`
+are LZ4 by Yann Collet, under their own BSD 2-Clause license (see their headers).
