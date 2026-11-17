@@ -19,19 +19,19 @@ Rules:
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
 | Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
 | Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
-| FPS | `53.4 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `1.127` | `0.011` | `0.007` | ❌ |
+| FPS | `54.2 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `0.836` | `0.011` | `0.007` | ❌ |
 | Pipeline latency median | `34 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `88 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `42 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `99 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `43 ms` | `7 ms` | `6 ms` | ❌ |
 | Glass-to-glass latency median | `54 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `102 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `61 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `52.0 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `31 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `108 ms` | `8 ms` | `7 ms` | ❌ |
+| Glass-to-glass latency p95 | `104 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `62 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `57.3 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `30 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `56 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `85.1%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `87.2%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -187,3 +187,4 @@ Rules:
 | 2026-11-16 | 20:57:46 EST | `a698b19` | `2752x1786` | `2496x1620` | `64.6 fps` | `1.145` | `55/160/72 ms` | `75/177/91 ms` | `74.7 fps, 52/94 ms` | `1` | `40/47` | AWDL capture 120 fps via -wireless-fps 120 (default 60); ack gate 5 |
 | 2026-11-16 | 21:40:34 EST | `8c945f4` | `2752x1786` | `2496x1620` | `53.2 fps` | `1.136` | `33/87/42 ms` | `53/102/61 ms` | `54.6 fps, 31/64 ms` | `1` | `39/47` | AWDL congestion QP floor 30 while ack gate drops (hold 500ms), 60fps, gate 5 |
 | 2026-11-16 | 21:48:05 EST | `51b9edb` | `2752x1786` | `2496x1620` | `53.4 fps` | `1.127` | `34/88/42 ms` | `54/102/61 ms` | `52.0 fps, 31/108 ms` | `1` | `40/47` | AWDL congestion QP floor 30 repeat (b); strict now excludes bw-probe diagnostic seconds |
+| 2026-11-16 | 22:02:22 EST | `1c43c60` | `2752x1786` | `2496x1620` | `54.2 fps` | `0.836` | `34/99/43 ms` | `54/104/62 ms` | `57.3 fps, 30/56 ms` | `1` | `41/47` | AWDL: QP floor 30 now default; harness pings iPad AWDL addr every 100 ms to tell radio absence from TCP stall |
