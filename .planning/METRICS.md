@@ -17,21 +17,21 @@ Rules:
 |--------|---------|------|------|--------|
 | Viewport width | `2752 px` | `2752 px` | `2752 px` | ✅ |
 | Viewport height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| Delivered frame width | `2752 px` | `2752 px` | `2752 px` | ✅ |
-| Delivered frame height | `1786 px` | `1786 px` | `1786 px` | ✅ |
-| FPS | `76.5 fps` | `120.0 fps` | `120.0 fps` | ❌ |
-| Frame pacing CV | `0.751` | `0.011` | `0.007` | ❌ |
-| Pipeline latency median | `10 ms` | `7 ms` | `6 ms` | ❌ |
-| Pipeline latency p95 | `48 ms` | `8 ms` | `7 ms` | ❌ |
-| Pipeline latency avg | `18 ms` | `7 ms` | `6 ms` | ❌ |
-| Glass-to-glass latency median | `27 ms` | `23 ms` | `20 ms` | ❌ |
-| Glass-to-glass latency p95 | `71 ms` | `27 ms` | `25 ms` | ❌ |
-| Glass-to-glass latency avg | `35 ms` | `26 ms` | `20 ms` | ❌ |
-| Heavy-load FPS | `82.4 fps` | `119.8 fps` | `120.0 fps` | ❌ |
-| Heavy-load pipeline median | `12 ms` | `6 ms` | `6 ms` | ❌ |
-| Heavy-load pipeline p95 | `47 ms` | `8 ms` | `7 ms` | ❌ |
+| Delivered frame width | `2496 px` | `2752 px` | `2752 px` | ❌ |
+| Delivered frame height | `1620 px` | `1786 px` | `1786 px` | ❌ |
+| FPS | `64.6 fps` | `120.0 fps` | `120.0 fps` | ❌ |
+| Frame pacing CV | `1.145` | `0.011` | `0.007` | ❌ |
+| Pipeline latency median | `55 ms` | `7 ms` | `6 ms` | ❌ |
+| Pipeline latency p95 | `160 ms` | `8 ms` | `7 ms` | ❌ |
+| Pipeline latency avg | `72 ms` | `7 ms` | `6 ms` | ❌ |
+| Glass-to-glass latency median | `75 ms` | `23 ms` | `20 ms` | ❌ |
+| Glass-to-glass latency p95 | `177 ms` | `27 ms` | `25 ms` | ❌ |
+| Glass-to-glass latency avg | `91 ms` | `26 ms` | `20 ms` | ❌ |
+| Heavy-load FPS | `74.7 fps` | `119.8 fps` | `120.0 fps` | ❌ |
+| Heavy-load pipeline median | `52 ms` | `6 ms` | `6 ms` | ❌ |
+| Heavy-load pipeline p95 | `94 ms` | `8 ms` | `7 ms` | ❌ |
 | Security rejection | `1` | `1` | `1` | ✅ |
-| Overall pass rate | `89.4%` | `100.0%` | `100.0%` | ❌ |
+| Overall pass rate | `85.1%` | `100.0%` | `100.0%` | ❌ |
 
 ## Changelog
 
@@ -184,3 +184,4 @@ Rules:
 | 2026-11-16 | 20:11:24 EST | `82059b6` | `2752x1786` | `2752x1786` | `83.5 fps` | `0.586` | `10/35/14 ms` | `31/59/33 ms` | `94.8 fps, 9/30 ms` | `1` | `32/47` | USB TCP pacing 4000 Mb/s (nw_tcp_set_max_pacing_rate); nettop retransmit gate |
 | 2026-11-16 | 20:18:11 EST | `f9c82b2` | `2752x1786` | `2752x1786` | `87.7 fps` | `0.553` | `9/27/12 ms` | `27/49/30 ms` | `98.3 fps, 8/22 ms` | `1` | `44/47` | USB control: pacing off, per-run NCM queue drop counters |
 | 2026-11-16 | 20:23:30 EST | `7890dae` | `2752x1786` | `2752x1786` | `76.5 fps` | `0.751` | `10/48/18 ms` | `27/71/35 ms` | `82.4 fps, 12/47 ms` | `1` | `42/47` | USB pacing 2500 Mb/s vs NCM queue overflow drops |
+| 2026-11-16 | 20:57:46 EST | `a698b19` | `2752x1786` | `2496x1620` | `64.6 fps` | `1.145` | `55/160/72 ms` | `75/177/91 ms` | `74.7 fps, 52/94 ms` | `1` | `40/47` | AWDL capture 120 fps via -wireless-fps 120 (default 60); ack gate 5 |
